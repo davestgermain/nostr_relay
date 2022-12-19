@@ -43,6 +43,14 @@ class Event:
         self.tags = tags
         self.sig = sig
 
+    @property
+    def is_ephemeral(self):
+        return self.kind >= 20000 and self.kind < 30000
+
+    @property
+    def is_replaceable(self):
+        return self.kind >= 10000 and self.kind < 20000
+
     @staticmethod
     def serialize(public_key: str, created_at: int, kind: int, tags: "list[list[str]]", content: str) -> bytes:
         data = [0, public_key, created_at, kind, tags, content]

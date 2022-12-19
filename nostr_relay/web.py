@@ -74,10 +74,10 @@ class Client:
                 message = self.messages.popleft()
                 LOG.debug("RECEIVED: %s", message)
                 if message[0] == 'REQ':
-                    sub_id = message[1]
+                    sub_id = str(message[1])
                     storage.subscribe(client_id, sub_id, message[2:])
                 elif message[0] == 'CLOSE':
-                    sub_id = message[1]
+                    sub_id = str(message[1])
                     storage.unsubscribe(client_id, sub_id)
                 elif message[0] == 'EVENT':
                     result, event = await storage.add_event(message[1])

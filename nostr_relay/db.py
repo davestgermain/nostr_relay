@@ -85,6 +85,18 @@ class Storage:
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
+        if event.is_ephemeral:
+            # don't save ephemeral events
+            return None
+        elif event.is_replaceable:
+            # check for older event from same pubkey
+            await cursor.execute('select * from events where pubkey = ? and kind = ? and created_at < ?', (event.pubkey, event.kind, event.created_at))
+            row = await cursor.fetchone()
+            if row:
+                old_id = row[0]
+                old_ts = row[2]
+                LOG.info("Replacing event %s from %s@%s with %s", old_id, event.pubkey, old_ts, event.id)
+                await cursor.execute('delete from events where id = ?', (old_id, ))
         return event
 
     async def post_process(self, cursor, event):
@@ -193,7 +205,7 @@ class Subscription:
                     self.queue.append(None)
                 duration = int((time.time() - start) * 1000)
 
-                LOG.debug('waiting %s %s runs:%s queue:%s duration:%dms', self.sub_id, runs, len(self.queue), duration)
+                LOG.debug('waiting %s runs:%s queue:%s duration:%dms', self.sub_id, runs, len(self.queue), duration)
                 await asyncio.sleep(self.interval)
             except Exception:
                 LOG.exception("subscription")
@@ -216,7 +228,11 @@ class Subscription:
         for filter_obj in filters:
             subwhere = []
             if 'ids' in filter_obj:
-                ids = set(filter_obj['ids'])
+
+                ids = filter_obj['ids']
+                if not isinstance(ids, list):
+                    ids = [ids]
+                ids = set(ids)
                 eq = ''
                 while ids:
                     eid = validate_id(ids.pop())
