@@ -56,7 +56,11 @@ class Client:
             while ws.ready and not self.messages:
                 sent = 0
                 for sub_id, event in storage.read_subscriptions(client_id):
-                    message = ["EVENT", sub_id, event.to_json_object()]
+                    if event is not None:
+                        message = ["EVENT", sub_id, event.to_json_object()]
+                    else:
+                        # done with stored events
+                        message = ["EOSE", sub_id]
                     await ws.send_media(message)
                     sent += 1
                 if sent:
@@ -104,7 +108,7 @@ class Resource:
             'description': 'relay written in python',
             'pubkey': '',
             'contact': '',
-            'supported_nips': ['20'],
+            'supported_nips': [1, 2, 11, 12, 15, 20],
             'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
             'version': '0.1',
             # 'active_subscriptions': (await self.storage.num_subscriptions())['total']

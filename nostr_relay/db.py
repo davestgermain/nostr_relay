@@ -188,6 +188,9 @@ class Subscription:
                             continue
                         seen_ids.add(event.id)
                         self.queue.append(event)
+                if runs == 1 and len(seen_ids) < 1000:
+                    # send a sentinel to indicate we have no more events
+                    self.queue.append(None)
                 duration = int((time.time() - start) * 1000)
 
                 LOG.debug('waiting %s %s runs:%s queue:%s duration:%dms', self.sub_id, runs, len(self.queue), duration)
