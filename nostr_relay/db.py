@@ -1,9 +1,10 @@
 import asyncio
 import sqlite3
-import aiosqlite
-import rapidjson
+import time
 import collections
 import traceback
+import aiosqlite
+import rapidjson
 from .event import Event, EventKind
 
 
@@ -11,18 +12,6 @@ def validate_id(obj_id):
     obj_id = obj_id.lower().strip()
     if obj_id.isalnum():
         return obj_id
-
-def row_to_event(row):
-    obj = {
-        'id': row[0],
-        'pubkey': row[1],
-        'created_at': row[2],
-        'kind': row[3],
-        'tags': rapidjson.loads(row[4]),
-        'content': row[5],
-        'sig': row[6]
-    }
-    return obj
 
 
 class Storage:
@@ -187,6 +176,7 @@ class Subscription:
         while self.running:
             runs += 1
             try:
+                start = time.time()
                 async with aiosqlite.connect(self.db) as db:
                     for query in self.queries:
                         async with db.execute(query) as cursor:
@@ -196,7 +186,8 @@ class Subscription:
                                     continue
                                 seen_ids.add(event.id)
                                 self.queue.append(event)
-                # print(f'waiting {self.sub_id} runs:{runs} queue:{len(self.queue)}')
+                duration = int((time.time() - start) * 1000)
+                print(f'waiting {self.sub_id} runs:{runs} queue:{len(self.queue)} duration:{duration}ms')
                 await asyncio.sleep(self.interval)
             except Exception:
                 traceback.print_exc()
