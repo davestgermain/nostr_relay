@@ -63,7 +63,6 @@ class Storage:
         event = Event(**event_json)
 
         if self.validate_event(event):
-            LOG.info(f'Adding {event.id} from {event.pubkey}')
             async with self.db.cursor() as cursor:
                 event = await self.pre_process(cursor, event)
                 if event:
@@ -120,22 +119,23 @@ class Storage:
             yield from sub.read()
 
     def subscribe(self, client_id, sub_id, filters):
-        LOG.debug(f'Subscribing {client_id} {sub_id} to {filters}')
+        LOG.debug('%s %s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             self.unsubscribe(client_id, sub_id)
         sub = Subscription(self.db, sub_id, filters)
         if sub.prepare():
             task = asyncio.create_task(sub.start())
             self.clients[client_id][sub_id] = (task, sub)
+            LOG.info("%s +sub %s", client_id, sub_id)
 
     def unsubscribe(self, client_id, sub_id=None):
-        LOG.debug(f'Unsubscribing {client_id} {sub_id}')
         if sub_id:
             try:
                 task, sub = self.clients[client_id][sub_id]
                 sub.cancel()
                 task.cancel()
                 del self.clients[client_id][sub_id]
+                LOG.info("%s -sub %s", client_id, sub_id)
             except KeyError:
                 pass
         else:
@@ -144,6 +144,14 @@ class Storage:
                 task.cancel()
             del self.clients[client_id]
 
+    async def num_subscriptions(self, byclient=False):
+        subs = {}
+        for client_id, client in self.clients.items():
+            subs[client_id] = len(client)
+        if byclient:
+            return subs
+        else:
+            return {'total': sum(subs.values())}
 
 
 class Subscription:
@@ -161,16 +169,16 @@ class Subscription:
             ids = filter_obj.get('ids', []) or []
             authors = filter_obj.get('authors', []) or []
             kinds = filter_obj.get('kinds', []) or []
-            assert isinstance(ids, list)
-            assert isinstance(authors, list)
-            assert isinstance(kinds, list)
             since = filter_obj.get('since', 0) or 0
             until = filter_obj.get('until', 0) or 0
             limit = filter_obj.get('limit', None)
             ptag = filter_obj.get('#p', None) or []
             etag = filter_obj.get('#e', None) or []
             try:
-                query = build_query(
+                assert isinstance(ids, list)
+                assert isinstance(authors, list)
+                assert isinstance(kinds, list)
+                query = self.build_query(
                     ids=ids,
                     authors=authors,
                     kinds=kinds,
@@ -182,8 +190,7 @@ class Subscription:
                 )
                 self.queries.add(query)
             except Exception:
-                traceback.print_exc()
-                print(f"Bad query {filter_obj}")
+                log.exception("Bad query {}", filter_obj)
         return bool(self.queries)
 
     async def start(self):
@@ -205,7 +212,8 @@ class Subscription:
                         seen_ids.add(event.id)
                         self.queue.append(event)
                 duration = int((time.time() - start) * 1000)
-                LOG.debug(f'waiting {self.sub_id} runs:{runs} queue:{len(self.queue)} duration:{duration}ms')
+
+                LOG.debug('waiting %s %s runs:%s queue:%s duration:%dms', self.sub_id, runs, len(self.queue), duration)
                 await asyncio.sleep(self.interval)
             except Exception:
                 LOG.exception("subscription")
@@ -221,60 +229,65 @@ class Subscription:
         self.running = False
 
 
-def build_query(ids=None, authors=None, kinds=None, etag=None, ptag=None, since=0, until=None, limit=None):
-    select = 'select events.* from events '
-    where = 'where 1 '
-    if ids:
-        ids = set(ids)
-        eq = ''
-        while ids:
-            eid = validate_id(ids.pop())
-            if eid:
-                eq += "id like '%s%%'" % eid
-                if ids:
-                    eq += ' OR '
-            else:
-                pass
-        if eq:
-            where += f' AND ({eq})'
+    def build_query(self, ids=None, authors=None, kinds=None, etag=None, ptag=None, since=0, until=None, limit=None):
+        select = 'select events.* from events '
+        where = 'where 1 '
+        if ids:
+            ids = set(ids)
+            eq = ''
+            while ids:
+                eid = validate_id(ids.pop())
+                if eid:
+                    eq += "id like '%s%%'" % eid
+                    if ids:
+                        eq += ' OR '
+                else:
+                    pass
+            if eq:
+                where += f' AND ({eq})'
 
-    if authors:
-        astr = ','.join("'%s'" % validate_id(a) for a in set(authors))
-        if astr:
-            where += 'AND pubkey in ({})'.format(astr)
-        # while authors:
-        #     author = validate_id(authors.pop())
-        #     if author:
-        #         aq += "pubkey like '%s%%'" % author
-        #         if authors:
-        #             aq += ' OR '
+        if authors:
+            astr = ','.join("'%s'" % validate_id(a) for a in set(authors))
+            if astr:
+                where += 'AND pubkey in ({})'.format(astr)
+            # while authors:
+            #     author = validate_id(authors.pop())
+            #     if author:
+            #         aq += "pubkey like '%s%%'" % author
+            #         if authors:
+            #             aq += ' OR '
 
-    if ptag or etag:
-        select += ' LEFT JOIN tags on tags.id = events.id '
+        if ptag or etag:
+            select += ' LEFT JOIN tags on tags.id = events.id '
 
-        pstr = ','.join("'%s'" % validate_id(a) for a in set(ptag))
-        if pstr:
-            where += f' AND (tags.name = "p" and tags.value in ({pstr})) '
-        estr = ','.join("'%s'" % validate_id(a) for a in set(etag))
-        if estr:
-            where += f' AND (tags.name = "e" and tags.value in ({estr})) '
+            pstr = ','.join("'%s'" % validate_id(a) for a in set(ptag))
+            if pstr:
+                where += f' AND (tags.name = "p" and tags.value in ({pstr})) '
+                #
+                # BEWARE SIDEEFFECTS
+                # adjust the interval to be shorter when searching for
+                # posts from contacts, because this query is used for realtime convos
+                self.interval = 5
+            estr = ','.join("'%s'" % validate_id(a) for a in set(etag))
+            if estr:
+                where += f' AND (tags.name = "e" and tags.value in ({estr})) '
 
-    if kinds:
-        where += ' AND kind in ({})'.format(','.join(str(int(k)) for k in kinds))
+        if kinds:
+            where += ' AND kind in ({})'.format(','.join(str(int(k)) for k in kinds))
 
-    if since:
-        where += ' AND created_at >= %d' % int(since)
+        if since:
+            where += ' AND created_at >= %d' % int(since)
 
-    if until:
-        where += ' AND created_at < %d' % int(until)
+        if until:
+            where += ' AND created_at < %d' % int(until)
 
-    query = select + where
-    # query += ' ORDER BY created_at'
-    # limit = int(limit or 1000)
-    # if limit > 1000:
-    #     limit = 1000
-    # query += ' LIMIT %d' % limit
+        query = select + where
+        # query += ' ORDER BY created_at'
+        # limit = int(limit or 1000)
+        # if limit > 1000:
+        #     limit = 1000
+        # query += ' LIMIT %d' % limit
 
-    return query
+        return query
 
 
