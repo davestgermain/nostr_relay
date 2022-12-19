@@ -11,6 +11,7 @@ LOG = logging.getLogger('nostr_relay.web')
 import falcon.asgi
 
 from .db import Storage
+from . import __version__
 
 
 class Client:
@@ -110,7 +111,7 @@ class Resource:
             'contact': '',
             'supported_nips': [1, 2, 11, 12, 15, 20],
             'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
-            'version': '0.1',
+            'version': __version__,
             # 'active_subscriptions': (await self.storage.num_subscriptions())['total']
         }
         resp.media = media
@@ -144,6 +145,8 @@ class SetupMiddleware:
         self.storage = storage
 
     async def process_startup(self, scope, event):
+        import random
+        await asyncio.sleep(random.random() * 2)
         await self.storage.setup_db()
 
     async def process_shutdown(self, scope, event):
