@@ -162,43 +162,20 @@ class Subscription:
         self.queue = collections.deque()
         self.running = True
         self.interval = 60
-        self.queries = set()
 
     def prepare(self):
-        for filter_obj in self.filters:
-            ids = filter_obj.get('ids', []) or []
-            authors = filter_obj.get('authors', []) or []
-            kinds = filter_obj.get('kinds', []) or []
-            since = filter_obj.get('since', 0) or 0
-            until = filter_obj.get('until', 0) or 0
-            limit = filter_obj.get('limit', None)
-            ptag = filter_obj.get('#p', None) or []
-            etag = filter_obj.get('#e', None) or []
-            try:
-                assert isinstance(ids, list)
-                assert isinstance(authors, list)
-                assert isinstance(kinds, list)
-                query = self.build_query(
-                    ids=ids,
-                    authors=authors,
-                    kinds=kinds,
-                    since=since,
-                    until=until,
-                    limit=limit,
-                    ptag=ptag,
-                    etag=etag,
-                )
-                self.queries.add(query)
-            except Exception:
-                log.exception("Bad query {}", filter_obj)
-        return bool(self.queries)
+        try:
+            self.query = self.build_query(self.filters)
+        except Exception:
+            LOG.exception("build_query")
+            return False
+        return True
 
     async def start(self):
         LOG.debug(f'Starting {self.sub_id}')
         seen_ids = set()
         runs = 0
-        query = ' UNION '.join(self.queries)
-        query += ' ORDER BY created_at DESC LIMIT 1000'
+        query = self.query
         LOG.debug(query)
         while self.running:
             runs += 1
@@ -228,66 +205,69 @@ class Subscription:
     def cancel(self):
         self.running = False
 
+    def build_query(self, filters):
+        select = '''SELECT events.* FROM events 
+                    LEFT JOIN tags ON tags.id = events.id
+        '''
+        where = []
+        for filter_obj in filters:
+            subwhere = []
+            if 'ids' in filter_obj:
+                ids = set(filter_obj['ids'])
+                eq = ''
+                while ids:
+                    eid = validate_id(ids.pop())
+                    if eid:
+                        eq += "events.id like '%s%%'" % eid
+                        if ids:
+                            eq += ' OR '
+                    else:
+                        pass
+                if eq:
+                    subwhere.append(f'({eq})')
 
-    def build_query(self, ids=None, authors=None, kinds=None, etag=None, ptag=None, since=0, until=None, limit=None):
-        select = 'select events.* from events '
-        where = 'where 1 '
-        if ids:
-            ids = set(ids)
-            eq = ''
-            while ids:
-                eid = validate_id(ids.pop())
-                if eid:
-                    eq += "id like '%s%%'" % eid
-                    if ids:
-                        eq += ' OR '
-                else:
-                    pass
-            if eq:
-                where += f' AND ({eq})'
+            if 'authors' in filter_obj:
+                astr = ','.join("'%s'" % validate_id(a) for a in set(filter_obj['authors']))
+                if astr:
+                    subwhere.append('pubkey in ({})'.format(astr))
 
-        if authors:
-            astr = ','.join("'%s'" % validate_id(a) for a in set(authors))
-            if astr:
-                where += 'AND pubkey in ({})'.format(astr)
-            # while authors:
-            #     author = validate_id(authors.pop())
-            #     if author:
-            #         aq += "pubkey like '%s%%'" % author
-            #         if authors:
-            #             aq += ' OR '
+            if 'kinds' in filter_obj:
+                subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in filter_obj['kinds'])))
 
-        if ptag or etag:
-            select += ' LEFT JOIN tags on tags.id = events.id '
+            if 'since' in filter_obj:
+                subwhere.append('created_at >= %d' % int(filter_obj['since']))
 
-            pstr = ','.join("'%s'" % validate_id(a) for a in set(ptag))
-            if pstr:
-                where += f' AND (tags.name = "p" and tags.value in ({pstr})) '
-                #
-                # BEWARE SIDEEFFECTS
-                # adjust the interval to be shorter when searching for
-                # posts from contacts, because this query is used for realtime convos
-                self.interval = 5
-            estr = ','.join("'%s'" % validate_id(a) for a in set(etag))
-            if estr:
-                where += f' AND (tags.name = "e" and tags.value in ({estr})) '
+            if 'until' in filter_obj:
+                subwhere.append('created_at < %d' % int(filter_obj['until']))
 
-        if kinds:
-            where += ' AND kind in ({})'.format(','.join(str(int(k)) for k in kinds))
-
-        if since:
-            where += ' AND created_at >= %d' % int(since)
-
-        if until:
-            where += ' AND created_at < %d' % int(until)
-
-        query = select + where
-        # query += ' ORDER BY created_at'
-        # limit = int(limit or 1000)
-        # if limit > 1000:
-        #     limit = 1000
-        # query += ' LIMIT %d' % limit
-
-        return query
+            for k in filter_obj:
+                if k[0] == '#' and len(k) == 2:
+                    tagname = k[1]
+                    tagval = filter_obj[k]
+                    pstr = []
+                    for val in set(tagval):
+                        val = validate_id(val)
+                        if val:
+                            pstr.append(f"'{val}'")
+                    if pstr:
+                        pstr = ','.join(pstr)
+                        subwhere.append(f'(tags.name = "{tagname}" and tags.value in ({pstr})) ')
+                        if tagname == 'p':
+                            #
+                            # BEWARE SIDEEFFECTS
+                            # adjust the interval to be shorter when searching for
+                            # posts from contacts, because this query is used for realtime convos
+                            self.interval = 5
+            if subwhere:
+                subwhere = ' AND '.join(subwhere)
+                where.append(subwhere)
+        if where:
+            select += ' WHERE ('
+            select += ') OR ('.join(where)
+            select += ')'
+        select += '''
+            ORDER BY created_at DESC LIMIT 1000
+        '''
+        return select
 
 
