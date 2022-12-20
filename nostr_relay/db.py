@@ -45,6 +45,7 @@ class Storage:
         self.filename = filename
         self.clients = collections.defaultdict(dict)
         self.db = None
+        self.newevent_event = asyncio.Event()
 
     async def setup_db(self):
         LOG.info("Creating db tables")
@@ -69,6 +70,8 @@ class Storage:
                     await cursor.execute(self.INSERT_EVENT, event.to_tuple())
                     await self.post_process(cursor, event)
                 await self.db.commit()
+            # notify all subscriptions
+            self.newevent_event.set()
         else:
             LOG.warning('BAD EVENT {}', event)
             return False, event
@@ -80,13 +83,24 @@ class Storage:
         """
         return event.verify()
 
+    async def check_whitelist(self, cursor, event):
+        await cursor.execute('select expiration from whitelist where key = ? and type = "author"', (event.pubkey,))
+        row = await cursor.fetchone()
+        if row:
+            expiration = row[0]
+            if expiration is not None:
+                if expiration < time.time():
+                    return False
+            return True
+        return False
+
     async def pre_process(self, cursor, event):
         """
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
-        if event.is_ephemeral:
-            # don't save ephemeral events
+        if event.is_ephemeral or event.kind > 30000:
+            # don't save ephemeral or unspecified events
             return None
         elif event.is_replaceable:
             # check for older event from same pubkey
@@ -131,10 +145,11 @@ class Storage:
             yield from sub.read()
 
     def subscribe(self, client_id, sub_id, filters):
+        self.newevent_event.clear()
         LOG.debug('%s %s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             self.unsubscribe(client_id, sub_id)
-        sub = Subscription(self.db, sub_id, filters)
+        sub = Subscription(self.db, sub_id, filters, self.newevent_event)
         if sub.prepare():
             task = asyncio.create_task(sub.start())
             self.clients[client_id][sub_id] = (task, sub)
@@ -167,10 +182,11 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list):
+    def __init__(self, db, sub_id, filters:list, newevent_event):
         self.db  = db
         self.sub_id = sub_id
         self.filters = filters
+        self.newevent_event = newevent_event
         self.queue = collections.deque()
         self.running = True
         self.interval = 60
@@ -189,6 +205,7 @@ class Subscription:
         runs = 0
         query = self.query
         LOG.debug(query)
+        last_run = 0
         while self.running:
             runs += 1
             try:
@@ -206,10 +223,19 @@ class Subscription:
                 duration = int((time.time() - start) * 1000)
 
                 LOG.debug('waiting %s runs:%s queue:%s duration:%dms', self.sub_id, runs, len(self.queue), duration)
-                await asyncio.sleep(self.interval)
+
+                # every time an event is added, all subscribers are notified.
+                # this could have a performance penalty since everyone will retry their queries
+                # at the same time. but overall, this may be a worthwhile optimization to reduce
+                # idle load
+
+                await self.newevent_event.wait()
+                if (time.time() - last_run) < 1.5:
+                    await asyncio.sleep(self.interval)
             except Exception:
                 LOG.exception("subscription")
                 break
+            last_run = time.time()
         LOG.debug(f'Stopped {self.sub_id}')
 
     def read(self):
@@ -271,12 +297,6 @@ class Subscription:
                     if pstr:
                         pstr = ','.join(pstr)
                         subwhere.append(f'(tags.name = "{tagname}" and tags.value in ({pstr})) ')
-                        if tagname == 'p':
-                            #
-                            # BEWARE SIDEEFFECTS
-                            # adjust the interval to be shorter when searching for
-                            # posts from contacts, because this query is used for realtime convos
-                            self.interval = 5
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
                 where.append(subwhere)
