@@ -143,6 +143,18 @@ class Resource:
             LOG.info('Done %s', client)
 
 
+class ViewEventResource:
+    def __init__(self, storage):
+        self.storage = storage
+
+    async def on_get(self, req: falcon.Request, resp: falcon.Response, event_id: str):
+        event = await self.storage.get_event(event_id)
+        if event:
+            resp.media = event.to_json_object()
+        else:
+            raise falcon.HTTPNotFound
+
+
 class SetupMiddleware:
     def __init__(self, storage):
         self.storage = storage
@@ -178,6 +190,7 @@ def create_app():
 
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
     app.add_route('/', Resource(storage))
+    app.add_route('/event/{event_id}', ViewEventResource(storage))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
     
     return app

@@ -56,6 +56,16 @@ class Storage:
         self.db = await aiosqlite.connect(self.filename)
         await self.db.execute('pragma journal_mode=wal')
 
+    async def get_event(self, event_id):
+        """
+        Shortcut for retrieving an event by id
+        """
+        async with self.db.cursor() as cursor:
+            await cursor.execute('select * from events where id = ?', (event_id, ))
+            row = await cursor.fetchone()
+            if row:
+                return Event.from_tuple(row)
+
     async def add_event(self, event_json):
         """
         Add an event from json object
