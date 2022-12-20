@@ -1,24 +1,26 @@
 import yaml
 
-class Config:
+class ConfigClass:
     DEBUG = True
 
-    @classmethod
-    def to_string(cls):
+    def __str__(self):
         s = 'Config(\n'
-        for k, v in cls.__dict__.items():
-            if k.startswith('_') or k == 'to_string':
+        for k, v in self.__dict__.items():
+            if k.startswith('_'):
                 continue
             s += f'\t{k}={v} \n'
         s += ')'
         return s
 
+    def load(self, filename):
+        with open(filename, 'r') as fp:
+            conf = yaml.load(fp, yaml.FullLoader)
 
-def load_configuration(filename):
-    with open(filename, 'r') as fp:
-        conf = yaml.load(fp, yaml.FullLoader)
+        for k, v in conf.items():
+            setattr(self, k, v)
 
-    for k, v in conf.items():
-        setattr(Config, k, v)
+    def __getattr__(self, attrname):
+        return None
 
-    return Config
+
+Config = ConfigClass()

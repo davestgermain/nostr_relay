@@ -12,14 +12,14 @@ import falcon.asgi
 
 from .db import Storage
 from . import __version__
-from .config import Config, load_configuration
+from .config import Config
 
 
 class Client:
     def __init__(self, ws, req):
         self.ws = ws
         self.id = f'{req.remote_addr}:{secrets.token_hex(2)}'
-        LOG.info(f'Accepted {self.id}')
+        LOG.info(f'Accepted {self.id} from Origin: {req.get_header("origin")}')
         self.messages = collections.deque()
         self.listen_task = None
         self.running = True
@@ -124,6 +124,11 @@ class Resource:
         resp.append_header('Access-Control-Allow-Methods', '*')
 
     async def on_websocket(self, req: falcon.Request, ws: falcon.asgi.WebSocket):
+        if Config.origin_blacklist:
+            origin = req.get_header('origin').lower()
+            if origin in Config.origin_blacklist:
+                LOG.warning("Blocked origin %s from connecting", origin)
+                return
 
         try:
             await ws.accept()
@@ -180,9 +185,9 @@ def create_app():
 
     print(f"Loading configuration from {conf_file}")
 
-    load_configuration(conf_file)
+    Config.load(conf_file)
     if Config.DEBUG:
-        print(Config.to_string())
+        print(Config)
 
     storage = Storage(Config.db_filename)
 
