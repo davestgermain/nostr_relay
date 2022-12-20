@@ -104,17 +104,20 @@ class Resource:
         self.storage = storage
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
-        media = {
-            'name': 'python relay',
-            'description': 'relay written in python',
-            'pubkey': '',
-            'contact': '',
-            'supported_nips': [1, 2, 11, 12, 15, 20],
-            'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
-            'version': __version__,
-            # 'active_subscriptions': (await self.storage.num_subscriptions())['total']
-        }
-        resp.media = media
+        if req.accept == 'application/nostr+json':
+            media = {
+                'name': 'python relay',
+                'description': 'relay written in python',
+                'pubkey': '',
+                'contact': '',
+                'supported_nips': [1, 2, 11, 12, 15, 20],
+                'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
+                'version': __version__,
+                'active_subscriptions': (await self.storage.num_subscriptions())['total']
+            }
+            resp.media = media
+        else:
+            resp.text = 'try using a nostr client :-)'
         resp.append_header('Access-Control-Allow-Origin', '*')
         resp.append_header('Access-Control-Allow-Headers', '*')
         resp.append_header('Access-Control-Allow-Methods', '*')
