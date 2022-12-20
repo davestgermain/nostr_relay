@@ -12,6 +12,7 @@ import falcon.asgi
 
 from .db import Storage
 from . import __version__
+from .config import Config, load_configuration
 
 
 class Client:
@@ -106,10 +107,10 @@ class Resource:
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == 'application/nostr+json':
             media = {
-                'name': 'python relay',
-                'description': 'relay written in python',
-                'pubkey': '',
-                'contact': '',
+                'name': Config.relay_name,
+                'description': Config.relay_description,
+                'pubkey': Config.sysop_pubkey,
+                'contact': Config.sysop_contact,
                 'supported_nips': [1, 2, 11, 12, 15, 20],
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
                 'version': __version__,
@@ -170,14 +171,20 @@ class SetupMiddleware:
 
 def create_app():
     import os
+    import os.path
     import logging
     from functools import partial
 
 
-    db_filename = os.getenv('NOSTR_DB_FILENAME', 'nostr.sqlite3')
-    debug = os.getenv('DEBUG', '').lower() == 'true'
+    conf_file = os.getenv('NOSTR_CONFIG', os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/config.yaml')))
 
-    storage = Storage(db_filename)
+    print(f"Loading configuration from {conf_file}")
+
+    load_configuration(conf_file)
+    if Config.DEBUG:
+        print(Config.to_string())
+
+    storage = Storage(Config.db_filename)
 
     json_handler = media.JSONHandlerWS(
         dumps=partial(
@@ -186,7 +193,7 @@ def create_app():
         ),
         loads=rapidjson.loads,
     )
-    logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if debug else logging.INFO)
+    logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
 
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
     app.add_route('/', Resource(storage))

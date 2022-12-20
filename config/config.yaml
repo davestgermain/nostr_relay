@@ -1,0 +1,8 @@
+DEBUG: false
+
+db_filename: ./nostr.sqlite3
+
+relay_name: python relay
+relay_description: relay written in python
+sysop_pubkey: 
+sysop_contact: 

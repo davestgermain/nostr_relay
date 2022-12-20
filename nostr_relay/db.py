@@ -1,3 +1,4 @@
+import os.path
 import asyncio
 import sqlite3
 import time
@@ -48,6 +49,7 @@ class Storage:
         self.newevent_event = asyncio.Event()
 
     async def setup_db(self):
+        LOG.info(f"Database file {self.filename} {'exists' if os.path.exists(self.filename) else 'does not exist'}")
         LOG.info("Creating db tables")
         async with aiosqlite.connect(self.filename) as db:
             for stmt in self.CREATE_TABLE:
