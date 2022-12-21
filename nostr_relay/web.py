@@ -111,7 +111,7 @@ class Resource:
                 'description': Config.relay_description,
                 'pubkey': Config.sysop_pubkey,
                 'contact': Config.sysop_contact,
-                'supported_nips': [1, 2, 11, 12, 15, 20],
+                'supported_nips': [1, 2, 9, 11, 12, 15, 20],
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
                 'version': __version__,
                 'active_subscriptions': (await self.storage.num_subscriptions())['total']
