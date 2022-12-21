@@ -199,7 +199,10 @@ def create_app(conf_file=None):
         ),
         loads=rapidjson.loads,
     )
-    logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
+    if Config.logging:
+        logging.config.dictConfig(Config.logging)
+    else:
+        logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
 
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
     app.add_route('/', Resource(storage))

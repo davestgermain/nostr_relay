@@ -5,6 +5,33 @@ class ConfigClass:
 
     def __init__(self):
         self.uvicorn = {}
+        self.logging = {
+                'version': 1,
+                'formatters': {
+                    'simple': {
+                        'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                    }
+                },
+                'handlers': {
+                    'console': {
+                        'class': 'logging.StreamHandler', 
+                        'level': 'DEBUG', 
+                        'formatter': 'simple', 
+                        'stream': 'ext://sys.stdout'
+                    }
+                }, 
+                'loggers': {
+                    'nostr_relay': {
+                        'level': 'INFO', 
+                        'handlers': ['console'], 
+                        'propagate': False
+                    }
+                }, 
+                'root': {
+                    'level': 'INFO', 
+                    'handlers': ['console']
+                }
+        } 
 
     def __str__(self):
         s = 'Config(\n'
