@@ -19,6 +19,10 @@ def validate_id(obj_id):
         return obj_id
 
 
+class StorageException(Exception):
+    pass
+
+
 class Storage:
     CREATE_TABLE = """
         CREATE TABLE if not exists events (
@@ -75,24 +79,25 @@ class Storage:
         Add an event from json object
         Return (status, event)
         """
-        event = Event(**event_json)
+        try:
+            event = Event(**event_json)
+        except Exception as e:
+            LOG.exception("bad json")
+            raise StorageException("invalid: Bad JSON")
 
-        if self.validate_event(event):
-            changed = False
-            async with self.db.cursor() as cursor:
-                event = await self.pre_process(cursor, event)
-                if event:
-                    await cursor.execute(self.INSERT_EVENT, event.to_tuple())
-                    changed = bool(cursor.rowcount)
-                    await self.post_process(cursor, event)
-                await self.db.commit()
-            if changed:
-                # notify all subscriptions
-                self.newevent_event.set()
-        else:
-            LOG.warning('BAD EVENT id:%s pubkeyy:%s', event.id, event.pubkey)
-            return False, event
-        return True, event
+        self.validate_event(event)
+        changed = False
+        async with self.db.cursor() as cursor:
+            event = await self.pre_process(cursor, event)
+            if event:
+                await cursor.execute(self.INSERT_EVENT, event.to_tuple())
+                changed = bool(cursor.rowcount)
+                await self.post_process(cursor, event)
+            await self.db.commit()
+        if changed:
+            # notify all subscriptions
+            self.newevent_event.set()
+        return event, changed
 
     def validate_event(self, event):
         """
@@ -102,8 +107,9 @@ class Storage:
             LOG.error("Received large event %s from %s size:%d max_size:%d",
                 event.id, event.pubkey, len(event.content), Config.max_event_size
             )
-            return False
-        return event.verify()
+            raise StorageException("invalid: 280 characters should be enough for anybody")
+        if not event.verify():
+            raise StorageException("invalid: Bad signature")
 
     async def check_whitelist(self, cursor, event):
         await cursor.execute('select expiration from whitelist where key = ? and type = "author"', (event.pubkey,))

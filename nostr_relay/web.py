@@ -81,9 +81,17 @@ class Client:
                     sub_id = str(message[1])
                     storage.unsubscribe(client_id, sub_id)
                 elif message[0] == 'EVENT':
-                    result, event = await storage.add_event(message[1])
-                    LOG.info("%s added %s from %s", client_id, event.id, event.pubkey)
-                    await ws.send_media(['OK', event.id, result, ""])
+                    try:
+                        event, result = await storage.add_event(message[1])
+                    except Exception as e:
+                        result = False
+                        reason = str(e)
+                        eventid = ''
+                    else:
+                        eventid = event.id
+                        reason = '' if result else 'duplicate: exists'
+                        LOG.info("%s added %s from %s", client_id, event.id, event.pubkey)
+                    await ws.send_media(['OK', eventid, result, reason])
             except falcon.WebSocketDisconnected:
                 break
 
