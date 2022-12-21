@@ -2,7 +2,7 @@ This is a python3 implementation of a [nostr](https://github.com/nostr-protocol/
 
 To intall:
 
-`pip install https://code.pobblelabs.org/fossil/nostr_relay/zip/trunk/download.zip`
+`pip install nostr-relay`
 
 To run:
 
