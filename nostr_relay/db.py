@@ -8,6 +8,8 @@ import traceback
 import aiosqlite
 import rapidjson
 from .event import Event, EventKind
+from .config import Config
+
 
 LOG = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ class Storage:
                 # notify all subscriptions
                 self.newevent_event.set()
         else:
-            LOG.warning('BAD EVENT %s', event)
+            LOG.warning('BAD EVENT id:%s pubkeyy:%s', event.id, event.pubkey)
             return False, event
         return True, event
 
@@ -96,6 +98,11 @@ class Storage:
         """
         Validate basic format and signature
         """
+        if Config.max_event_size and len(event.content) > Config.max_event_size:
+            LOG.error("Received large event %s from %s size:%d max_size:%d",
+                event.id, event.pubkey, len(event.content), Config.max_event_size
+            )
+            return False
         return event.verify()
 
     async def check_whitelist(self, cursor, event):

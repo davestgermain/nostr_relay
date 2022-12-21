@@ -2,6 +2,7 @@ import yaml
 
 class ConfigClass:
     DEBUG = True
+    max_event_size = 4096
 
     def __init__(self):
         self.gunicorn = {}
