@@ -177,7 +177,7 @@ class SetupMiddleware:
 def create_app(conf_file=None):
     import os
     import os.path
-    import logging
+    import logging, logging.config
     from functools import partial
 
 

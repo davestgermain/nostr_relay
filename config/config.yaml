@@ -7,8 +7,8 @@ relay_description: relay written in python
 sysop_pubkey: 
 sysop_contact: 
 
-uvicorn:
-  port: 6969
+gunicorn:
+  bind: 127.0.0.1:6969
   workers: 1
-  log_level: info
+  loglevel: info
   reload: false

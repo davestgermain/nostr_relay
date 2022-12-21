@@ -4,7 +4,7 @@ class ConfigClass:
     DEBUG = True
 
     def __init__(self):
-        self.uvicorn = {}
+        self.gunicorn = {}
         self.logging = {
                 'version': 1,
                 'formatters': {

@@ -1,4 +1,3 @@
-import uvicorn
 from .web import create_app
 from .config import Config
 
@@ -10,7 +9,16 @@ def main():
     else:
         config_file = None
     app = create_app(config_file)
+    
+    from gunicorn.app.base import Application
 
-    uv_config = uvicorn.Config(app, **Config.uvicorn)
-    server = uvicorn.Server(uv_config)
-    server.run()
+    class ASGIApplication(Application):
+        def load_config(self):
+            self.cfg.set('worker_class', 'uvicorn.workers.UvicornWorker')
+            for k, v in Config.gunicorn.items():
+                self.cfg.set(k.lower(), v)
+
+        def load(self):
+            return app
+
+    ASGIApplication().run()
