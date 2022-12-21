@@ -284,6 +284,7 @@ class Subscription:
         LEFT JOIN tags ON tags.id = events.id
         '''
         where = []
+        limit = None
         for filter_obj in filters:
             subwhere = []
             if 'ids' in filter_obj:
@@ -318,6 +319,9 @@ class Subscription:
             if 'until' in filter_obj:
                 subwhere.append('created_at < %d' % int(filter_obj['until']))
 
+            if 'limit' in filter_obj:
+                limit = max(min(int(filter_obj['limit']), 1000), 0)
+
             for k in filter_obj:
                 if k[0] == '#' and len(k) == 2:
                     tagname = k[1]
@@ -337,8 +341,10 @@ class Subscription:
             select += ' WHERE ('
             select += ') OR ('.join(where)
             select += ')'
-        select += '''
-            ORDER BY created_at DESC LIMIT 1000
+        if limit is None:
+            limit = 1000
+        select += f'''
+            ORDER BY created_at DESC LIMIT {limit}
         '''
         return select
 
