@@ -76,16 +76,19 @@ class Storage:
         event = Event(**event_json)
 
         if self.validate_event(event):
+            changed = False
             async with self.db.cursor() as cursor:
                 event = await self.pre_process(cursor, event)
                 if event:
                     await cursor.execute(self.INSERT_EVENT, event.to_tuple())
+                    changed = bool(cursor.rowcount)
                     await self.post_process(cursor, event)
                 await self.db.commit()
-            # notify all subscriptions
-            self.newevent_event.set()
+            if changed:
+                # notify all subscriptions
+                self.newevent_event.set()
         else:
-            LOG.warning('BAD EVENT {}', event)
+            LOG.warning('BAD EVENT %s', event)
             return False, event
         return True, event
 
@@ -130,27 +133,31 @@ class Storage:
         Post-process event
         (clear old metadata, update tag references)
         """
-        if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
-            # older metadata events can be cleared
-            query = 'delete from events where pubkey = ? and kind = ? and created_at < ?'
-            LOG.debug("q:{} kind:{}, key:{}", query, event.kind, event.pubkey)
-            await cursor.execute(query, (event.pubkey, event.kind, event.created_at))
-        elif event.kind in (EventKind.TEXT_NOTE, EventKind.ENCRYPTED_DIRECT_MESSAGE) and event.tags:
-            # update mentions
-            for tag in event.tags:
-                name = tag[0]
-                if len(name) == 1:
-                    # single-letter tags can be searched
-                    ptag = validate_id(tag[1])
-                    if ptag:
-                        await cursor.execute('insert or ignore into tags (id, name, value) values (?, ?, ?)', (event.id, name, ptag))
-        elif event.kind == EventKind.DELETE and event.tags:
-            # delete the referenced events
-            for tag in event.tags:
-                name = tag[0]
-                if name == 'e':
-                    event_id = tag[1]
-                    await cursor.execute('delete from events where id = ? and pubkey = ?', (event_id, event.pubkey))
+
+        if cursor.rowcount:
+            if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
+                # older metadata events can be cleared
+                query = 'DELETE FROM events WHERE pubkey = ? AND kind = ? AND created_at < ?'
+                LOG.debug("q:{} kind:{}, key:{}", query, event.kind, event.pubkey)
+                await cursor.execute(query, (event.pubkey, event.kind, event.created_at))
+            elif event.kind in (EventKind.TEXT_NOTE, EventKind.ENCRYPTED_DIRECT_MESSAGE) and event.tags:
+                # update mentions
+                for tag in event.tags:
+                    name = tag[0]
+                    if len(name) == 1:
+                        # single-letter tags can be searched
+                        ptag = validate_id(tag[1])
+                        if ptag:
+                            await cursor.execute('INSERT OR IGNORE INTO tags (id, name, value) VALUES (?, ?, ?)', (event.id, name, ptag))
+            elif event.kind == EventKind.DELETE and event.tags:
+                # delete the referenced events
+                for tag in event.tags:
+                    name = tag[0]
+                    if name == 'e':
+                        event_id = tag[1]
+                        await cursor.execute('DELETE FROM events WHERE id = ? AND pubkey = ?', (event_id, event.pubkey))
+        else:
+            LOG.debug("skipped post-processing for %s", event)
 
     def read_subscriptions(self, client_id):
         for task, sub in self.clients[client_id].values():
@@ -259,8 +266,9 @@ class Subscription:
         self.running = False
 
     def build_query(self, filters):
-        select = '''SELECT events.* FROM events 
-                    LEFT JOIN tags ON tags.id = events.id
+        select = '''
+        SELECT events.* FROM events 
+        LEFT JOIN tags ON tags.id = events.id
         '''
         where = []
         for filter_obj in filters:
