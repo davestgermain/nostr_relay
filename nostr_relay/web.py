@@ -174,14 +174,15 @@ class SetupMiddleware:
         await self.storage.db.close()
 
 
-def create_app():
+def create_app(conf_file=None):
     import os
     import os.path
     import logging
     from functools import partial
 
 
-    conf_file = os.getenv('NOSTR_CONFIG', os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/config.yaml')))
+    if conf_file is None:
+        conf_file = os.getenv('NOSTR_CONFIG', os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/config.yaml')))
 
     print(f"Loading configuration from {conf_file}")
 

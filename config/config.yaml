@@ -6,3 +6,9 @@ relay_name: python relay
 relay_description: relay written in python
 sysop_pubkey: 
 sysop_contact: 
+
+uvicorn:
+  port: 6969
+  workers: 1
+  log_level: info
+  reload: false
