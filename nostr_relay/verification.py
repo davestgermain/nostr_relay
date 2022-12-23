@@ -33,7 +33,8 @@ class Verifier:
     BATCH_QUERY = f"""
         SELECT v.id, identifier, verified_at, pubkey, metadata_id FROM verification as v
         LEFT JOIN events ON v.metadata_id = events.id
-        WHERE (verified_at + {Config.verification_expiration}) < unixepoch()
+        WHERE pubkey IS NOT NULL AND
+        (? - verified_at > {Config.verification_expiration})
         ORDER BY verified_at DESC
     """
     FAILURE_QUERY = "UPDATE verification SET failed_at = unixepoch() WHERE id = ?"
@@ -146,9 +147,9 @@ class Verifier:
                 if (time.time() - last_run) > Config.verification_update_frequency:
                     async with db.cursor() as cursor:
                         try:
-                            await cursor.execute(self.BATCH_QUERY)
+                            await cursor.execute(self.BATCH_QUERY, (int(time.time()), ))
                         except Exception:
-                            log.exception('batch query %s', self.BATCH_QUERY)
+                            LOG.exception('batch query %s', self.BATCH_QUERY)
                             continue
                         async for row in cursor:
                             candidates.append(row)
