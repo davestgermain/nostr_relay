@@ -37,8 +37,8 @@ class Verifier:
         (? - verified_at > {Config.verification_expiration})
         ORDER BY verified_at DESC
     """
-    FAILURE_QUERY = "UPDATE verification SET failed_at = unixepoch() WHERE id = ?"
-    SUCCESS_QUERY = "UPDATE verification SET verified_at = unixepoch() WHERE id = ?"
+    FAILURE_QUERY = "UPDATE verification SET failed_at = strftime('%s', 'now') WHERE id = ?"
+    SUCCESS_QUERY = "UPDATE verification SET verified_at = strftime('%s', 'now') WHERE id = ?"
 
     CREATE_TABLE = """
         CREATE TABLE IF NOT EXISTS verification (
@@ -170,7 +170,7 @@ class Verifier:
                         for vid, identifier, metadata_id in success:
                             if vid is None:
                                 # first time verifying
-                                await cursor.execute("INSERT INTO verification (identifier, metadata_id, verified_at) VALUES (?, ?, unixepoch())", (identifier, metadata_id))
+                                await cursor.execute("INSERT INTO verification (identifier, metadata_id, verified_at) VALUES (?, ?, strftime('%s', 'now'))", (identifier, metadata_id, ))
                             else:
                                 await cursor.execute(self.SUCCESS_QUERY, (vid, ))
                         for vid, identifier, metadata_id in failure:
