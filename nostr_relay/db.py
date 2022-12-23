@@ -9,6 +9,7 @@ import aiosqlite
 import rapidjson
 from .event import Event, EventKind
 from .config import Config
+from .verification import Verifier
 
 
 LOG = logging.getLogger(__name__)
@@ -52,7 +53,12 @@ class Storage:
         self.filename = filename
         self.clients = collections.defaultdict(dict)
         self.db = None
+        self.verifier = Verifier()
         self.newevent_event = asyncio.Event()
+
+    async def close(self):
+        await self.verifier.stop()
+        await self.db.close()
 
     async def setup_db(self):
         LOG.info(f"Database file {self.filename} {'exists' if os.path.exists(self.filename) else 'does not exist'}")
@@ -60,9 +66,12 @@ class Storage:
         async with aiosqlite.connect(self.filename) as db:
             for stmt in self.CREATE_TABLE:
                 await db.execute(stmt)
+            for stmt in self.verifier.CREATE_TABLE:
+                await db.execute(stmt)
             await db.commit()
         self.db = await aiosqlite.connect(self.filename)
         await self.db.execute('pragma journal_mode=wal')
+        await self.verifier.start(self.db)
 
     async def get_event(self, event_id):
         """
@@ -88,11 +97,11 @@ class Storage:
         self.validate_event(event)
         changed = False
         async with self.db.cursor() as cursor:
-            event = await self.pre_process(cursor, event)
+            event = await self.pre_save(cursor, event)
             if event:
                 await cursor.execute(self.INSERT_EVENT, event.to_tuple())
                 changed = bool(cursor.rowcount)
-                await self.post_process(cursor, event)
+                await self.post_save(cursor, event)
             await self.db.commit()
         if changed:
             # notify all subscriptions
@@ -111,22 +120,13 @@ class Storage:
         if not event.verify():
             raise StorageException("invalid: Bad signature")
 
-    async def check_whitelist(self, cursor, event):
-        await cursor.execute('select expiration from whitelist where key = ? and type = "author"', (event.pubkey,))
-        row = await cursor.fetchone()
-        if row:
-            expiration = row[0]
-            if expiration is not None:
-                if expiration < time.time():
-                    return False
-            return True
-        return False
-
-    async def pre_process(self, cursor, event):
+    async def pre_save(self, cursor, event):
         """
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
+        # check NIP05 verification, if enabled
+        await self.verifier.verify(cursor, event)
         if event.is_ephemeral or event.kind > 30000:
             # don't save ephemeral or unspecified events
             return None
@@ -141,7 +141,7 @@ class Storage:
                 await cursor.execute('delete from events where id = ?', (old_id, ))
         return event
 
-    async def post_process(self, cursor, event):
+    async def post_save(self, cursor, event):
         """
         Post-process event
         (clear old metadata, update tag references)
@@ -151,7 +151,7 @@ class Storage:
             if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
                 # older metadata events can be cleared
                 query = 'DELETE FROM events WHERE pubkey = ? AND kind = ? AND created_at < ?'
-                LOG.debug("q:{} kind:{}, key:{}", query, event.kind, event.pubkey)
+                LOG.debug("q:%s kind:%s, key:%s", query, event.kind, event.pubkey)
                 await cursor.execute(query, (event.pubkey, event.kind, event.created_at))
             elif event.kind in (EventKind.TEXT_NOTE, EventKind.ENCRYPTED_DIRECT_MESSAGE) and event.tags:
                 # update mentions

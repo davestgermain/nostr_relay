@@ -84,6 +84,7 @@ class Client:
                     try:
                         event, result = await storage.add_event(message[1])
                     except Exception as e:
+                        LOG.error(str(e))
                         result = False
                         reason = str(e)
                         eventid = ''
@@ -119,7 +120,7 @@ class Resource:
                 'description': Config.relay_description,
                 'pubkey': Config.sysop_pubkey,
                 'contact': Config.sysop_contact,
-                'supported_nips': [1, 2, 9, 11, 12, 15, 20],
+                'supported_nips': [1, 2, 5, 9, 11, 12, 15, 20],
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
                 'version': __version__,
                 'active_subscriptions': (await self.storage.num_subscriptions())['total']
@@ -179,7 +180,7 @@ class SetupMiddleware:
         await self.storage.setup_db()
 
     async def process_shutdown(self, scope, event):
-        await self.storage.db.close()
+        await self.storage.close()
 
 
 def create_app(conf_file=None):

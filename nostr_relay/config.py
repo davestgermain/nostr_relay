@@ -3,6 +3,11 @@ import yaml
 class ConfigClass:
     DEBUG = True
     max_event_size = 4096
+    nip05_verification = 'disabled'
+    verification_blacklist = None
+    verification_whitelist = None
+    verification_expiration = 86400 * 30
+    verification_update_frequency = 3600
 
     def __init__(self):
         self.gunicorn = {}
