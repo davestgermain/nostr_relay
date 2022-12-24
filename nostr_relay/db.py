@@ -23,6 +23,14 @@ def validate_id(obj_id):
 class StorageException(Exception):
     pass
 
+STORAGE = None
+
+def get_storage():
+    global STORAGE
+    if STORAGE is None:
+        STORAGE = Storage(Config.db_filename)
+    return STORAGE
+
 
 class Storage:
     CREATE_TABLE = """
@@ -72,6 +80,7 @@ class Storage:
         self.db = await aiosqlite.connect(self.filename)
         await self.db.execute('pragma journal_mode=wal')
         await self.verifier.start(self.db)
+        self.newevent_event = asyncio.Event()
 
     async def get_event(self, event_id):
         """

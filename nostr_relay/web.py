@@ -10,7 +10,7 @@ LOG = logging.getLogger('nostr_relay.web')
 
 import falcon.asgi
 
-from .db import Storage
+from .db import get_storage
 from . import __version__
 from .config import Config
 
@@ -60,11 +60,11 @@ class Client:
                 for sub_id, event in storage.read_subscriptions(client_id):
                     if event is not None:
                         message = ["EVENT", sub_id, event.to_json_object()]
+                        sent += 1
                     else:
                         # done with stored events
                         message = ["EOSE", sub_id]
                     await ws.send_media(message)
-                    sent += 1
                 if sent:
                     LOG.debug(f'Sent {sent} events to {client_id}')
                 await asyncio.sleep(1.0)
@@ -183,6 +183,7 @@ class SetupMiddleware:
         await self.storage.close()
 
 
+
 def create_app(conf_file=None):
     import os
     import os.path
@@ -199,7 +200,7 @@ def create_app(conf_file=None):
     if Config.DEBUG:
         print(Config)
 
-    storage = Storage(Config.db_filename)
+    storage = get_storage()
 
     json_handler = media.JSONHandlerWS(
         dumps=partial(
