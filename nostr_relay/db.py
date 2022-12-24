@@ -56,6 +56,7 @@ class Storage:
         """.split(';')
 
     INSERT_EVENT = 'insert or ignore into events (id, pubkey, created_at, kind, tags, content, sig) values (?, ?, ?, ?, ?, ?, ?)'
+    CHECK_QUERY = 'SELECT 1 from events where id = ?'
 
     def __init__(self, filename='nostr.sqlite3'):
         self.filename = filename
@@ -106,10 +107,10 @@ class Storage:
         self.validate_event(event)
         changed = False
         async with self.db.cursor() as cursor:
-            event = await self.pre_save(cursor, event)
-            if event:
+            do_save = await self.pre_save(cursor, event)
+            if do_save:
                 await cursor.execute(self.INSERT_EVENT, event.to_tuple())
-                changed = bool(cursor.rowcount)
+                changed = cursor.rowcount == 1
                 await self.post_save(cursor, event)
             await self.db.commit()
         if changed:
@@ -134,11 +135,15 @@ class Storage:
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
+        await cursor.execute(self.CHECK_QUERY, (event.id, ))
+        if cursor.rowcount == 1:
+            # duplicate
+            return False
         # check NIP05 verification, if enabled
         await self.verifier.verify(cursor, event)
         if event.is_ephemeral or event.kind > 30000:
             # don't save ephemeral or unspecified events
-            return None
+            return False
         elif event.is_replaceable:
             # check for older event from same pubkey
             await cursor.execute('select * from events where pubkey = ? and kind = ? and created_at < ?', (event.pubkey, event.kind, event.created_at))
@@ -148,7 +153,7 @@ class Storage:
                 old_ts = row[2]
                 LOG.info("Replacing event %s from %s@%s with %s", old_id, event.pubkey, old_ts, event.id)
                 await cursor.execute('delete from events where id = ?', (old_id, ))
-        return event
+        return True
 
     async def post_save(self, cursor, event):
         """
