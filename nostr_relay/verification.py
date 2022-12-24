@@ -179,7 +179,7 @@ class Verifier:
                                 continue
                             else:
                                 await cursor.execute(self.FAILURE_QUERY, (vid, ))
-                    await db.commit()
+                        await db.commit()
                     LOG.info("Saved success:%d failure:%d", len(success), len(failure))
             last_run = time.time()
 
