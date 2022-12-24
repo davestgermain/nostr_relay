@@ -80,7 +80,24 @@ class Event:
     def verify(self) -> bool:
         pub_key = PublicKey(bytes.fromhex("02" + self.pubkey), True) # add 02 for schnorr (bip340)
         event_id = Event.compute_id(self.pubkey, self.created_at, self.kind, self.tags, self.content)
-        return pub_key.schnorr_verify(bytes.fromhex(event_id), bytes.fromhex(self.sig), None, raw=True)
+        verified = pub_key.schnorr_verify(bytes.fromhex(event_id), bytes.fromhex(self.sig), None, raw=True)
+        for tag in self.tags:
+            if tag[0] == 'delegation':
+                # verify delegation signature
+                _, delegator, conditions, sig = tag
+                to_sign = (':'.join(['nostr', 'delegation', self.pubkey, conditions])).encode('utf8')
+                delegation_verified = PublicKey(
+                    bytes.fromhex("02" + delegator),
+                    True
+                ).schnorr_verify(
+                    sha256(to_sign).digest(),
+                    bytes.fromhex(sig),
+                    None,
+                    raw=True
+                )
+                if not delegation_verified:
+                    return False
+        return verified
 
     def to_tuple(self):
         return (

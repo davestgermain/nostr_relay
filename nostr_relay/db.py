@@ -166,8 +166,9 @@ class Storage:
                 # update mentions
                 for tag in event.tags:
                     name = tag[0]
-                    if len(name) == 1:
+                    if len(name) == 1 or name == 'delegation':
                         # single-letter tags can be searched
+                        # delegation tags are also searched
                         ptag = validate_id(tag[1])
                         if ptag:
                             await cursor.execute('INSERT OR IGNORE INTO tags (id, name, value) VALUES (?, ?, ?)', (event.id, name, ptag))
@@ -317,7 +318,7 @@ class Subscription:
             if 'authors' in filter_obj:
                 astr = ','.join("'%s'" % validate_id(a) for a in set(filter_obj['authors']))
                 if astr:
-                    subwhere.append('pubkey in ({})'.format(astr))
+                    subwhere.append(f'pubkey in ({astr}) OR (tags.name = "delegation" and tags.value in ({astr}))')
 
             if 'kinds' in filter_obj:
                 subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in filter_obj['kinds'])))
