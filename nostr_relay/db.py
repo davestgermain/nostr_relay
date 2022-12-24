@@ -255,9 +255,10 @@ class Subscription:
                 async with self.db.execute(query) as cursor:
                     async for row in cursor:
                         event = Event.from_tuple(row)
-                        if event.id in seen_ids:
+                        eid = bytes.fromhex(event.id)
+                        if eid in seen_ids:
                             continue
-                        seen_ids.add(event.id)
+                        seen_ids.add(eid)
                         self.queue.append(event)
                 if runs == 1 and len(seen_ids) < 1000:
                     # send a sentinel to indicate we have no more events
