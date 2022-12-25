@@ -188,7 +188,7 @@ class Verifier:
     async def process_verifications(self, candidates):
         success = []
         failure = []
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(total=10, json_serialize=rapidjson.dumps) as session:
 
             for vid, identifier, verified_at, pubkey, metadata_id in candidates:
                 LOG.info("Checking verification for %s. Last verified %d", identifier, verified_at)
@@ -204,7 +204,7 @@ class Verifier:
 
                 try:
                     async with session.get(url) as response:
-                        data = await response.json()
+                        data = await response.json(loads=rapidjson.loads)
                     names = data['names']
                 except Exception:
                     LOG.exception("Failure verifying %s from %s", identifier, url)
