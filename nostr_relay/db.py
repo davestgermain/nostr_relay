@@ -128,7 +128,7 @@ class Storage:
         if not event.verify():
             raise StorageException("invalid: Bad signature")
         if (time.time() - event.created_at) > Config.oldest_event:
-            raise StorageException("invalid: too old")
+            raise StorageException(f"invalid: {event.created_at} is too old")
 
     async def pre_save(self, cursor, event):
         """

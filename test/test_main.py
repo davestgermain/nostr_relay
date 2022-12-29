@@ -88,7 +88,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 20,
                 26,
             ],
-            'version': '1.0',
+            'version': '1.0.1',
         }
         result = await self.conductor.simulate_get('/')
         assert result.text == 'try using a nostr client :-)'

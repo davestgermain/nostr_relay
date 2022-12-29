@@ -52,6 +52,8 @@ class Client:
                 LOG.debug("SENT: %s", message)
             except falcon.WebSocketDisconnected:
                 break
+            except asyncio.CancelledError:
+                break
             except Exception:
                 LOG.exception("subs")
 
