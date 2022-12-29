@@ -27,12 +27,12 @@ class VerificationError(Exception):
 class Verifier:
     VERIFICATION_QUERY = """
         SELECT verification.id, identifier, verified_at, failed_at, created_at FROM verification
-        LEFT JOIN events ON verification.metadata_id = events.id 
-        WHERE events.pubkey = ? ORDER BY events.created_at DESC
+        LEFT JOIN event ON verification.metadata_id = event.id 
+        WHERE event.pubkey = ? ORDER BY event.created_at DESC
     """
     BATCH_QUERY = f"""
         SELECT v.id, identifier, verified_at, pubkey, metadata_id FROM verification as v
-        LEFT JOIN events ON v.metadata_id = events.id
+        LEFT JOIN event ON v.metadata_id = event.id
         WHERE pubkey IS NOT NULL AND
         (? - verified_at > {Config.verification_expiration})
         ORDER BY verified_at DESC
@@ -40,18 +40,6 @@ class Verifier:
     FAILURE_QUERY = "UPDATE verification SET failed_at = strftime('%s', 'now') WHERE id = ?"
     SUCCESS_QUERY = "UPDATE verification SET verified_at = strftime('%s', 'now') WHERE id = ?"
 
-    CREATE_TABLE = """
-        CREATE TABLE IF NOT EXISTS verification (
-            id INTEGER PRIMARY KEY,
-            identifier TEXT,
-            metadata_id TEXT,
-            verified_at TIMESTAMP DEFAULT 0,
-            failed_at TIMESTAMP DEFAULT 0
-        );
-        CREATE INDEX if not exists identifieridx on verification (identifier);
-        CREATE INDEX if not exists verifiedidx on verification (verified_at);
-        CREATE INDEX if not exists metadataidx on verification (metadata_id);
-    """.split(';')
 
     def __init__(self):
         self.running = True
@@ -72,7 +60,7 @@ class Verifier:
                 # queue this identifier as a candidate
                 domain = identifier.split('@', 1)[1].lower()
                 if self.check_allowed_domains(domain):
-                    await self.queue.put([None, identifier, 0, event.pubkey, event.id])
+                    await self.queue.put([None, identifier, 0, event.pubkey, event.id_bytes])
                     return True
                 else:
                     LOG.error("Illegal domain in identifier %s", identifier)
@@ -188,7 +176,7 @@ class Verifier:
     async def process_verifications(self, candidates):
         success = []
         failure = []
-        async with aiohttp.ClientSession(total=10, json_serialize=rapidjson.dumps) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10.0), json_serialize=rapidjson.dumps) as session:
 
             for vid, identifier, verified_at, pubkey, metadata_id in candidates:
                 LOG.info("Checking verification for %s. Last verified %d", identifier, verified_at)

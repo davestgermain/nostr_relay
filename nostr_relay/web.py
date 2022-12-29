@@ -59,12 +59,12 @@ class Client:
                 sent = 0
                 for sub_id, event in storage.read_subscriptions(client_id):
                     if event is not None:
-                        message = ["EVENT", sub_id, event.to_json_object()]
+                        message = f'["EVENT", "{sub_id}", {event}]'
                         sent += 1
                     else:
                         # done with stored events
-                        message = ["EOSE", sub_id]
-                    await ws.send_media(message)
+                        message = f'["EOSE", "{sub_id}"]'
+                    await ws.send_text(message)
                 if sent:
                     LOG.debug(f'Sent {sent} events to {client_id}')
                 await asyncio.sleep(1.0)
@@ -108,7 +108,10 @@ class Client:
         return self.id
 
 
-class Resource:
+class NostrAPI:
+    """
+    Handles nostr websocket interface
+    """
     def __init__(self, storage):
         self.connections = 0
         self.storage = storage
@@ -165,7 +168,8 @@ class ViewEventResource:
     async def on_get(self, req: falcon.Request, resp: falcon.Response, event_id: str):
         event = await self.storage.get_event(event_id)
         if event:
-            resp.media = event.to_json_object()
+            resp.text = event
+            resp.content_type = 'application/json'
         else:
             raise falcon.HTTPNotFound
 
@@ -176,6 +180,8 @@ class SetupMiddleware:
 
     async def process_startup(self, scope, event):
         import random
+        if Config.DEBUG:
+            asyncio.get_running_loop().set_debug(True)
         await asyncio.sleep(random.random() * 2)
         await self.storage.setup_db()
 
@@ -214,8 +220,9 @@ def create_app(conf_file=None):
     else:
         logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
 
+    LOG.info("Starting version %s", __version__)
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
-    app.add_route('/', Resource(storage))
+    app.add_route('/', NostrAPI(storage))
     app.add_route('/event/{event_id}', ViewEventResource(storage))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
     

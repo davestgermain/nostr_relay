@@ -44,6 +44,10 @@ class Event:
         self.sig = sig
 
     @property
+    def id_bytes(self):
+        return bytes.fromhex(self.id)
+
+    @property
     def is_ephemeral(self):
         return self.kind >= 20000 and self.kind < 30000
 

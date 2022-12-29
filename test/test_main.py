@@ -3,6 +3,8 @@ import os.path
 import os
 import unittest
 import logging
+import time
+import threading
 
 from falcon import testing
 
@@ -27,24 +29,37 @@ DELEGATION_EVENT = { "id": "a080fd288b60ac2225ff2e2d815291bd730911e583e177302cc9
 
 
 class TestEvents(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = create_app(os.path.join(os.path.dirname(__file__), './test_config.yaml'))
+        cls.storage = get_storage()
+
     def setUp(self):
-        self.app = create_app(os.path.join(os.path.dirname(__file__), './test_config.yaml'))
+
         logging.disable(logging.CRITICAL)
+
 
     async def asyncSetUp(self):
         self.conductor = testing.ASGIConductor(self.app)
-        self.storage = get_storage()
         await self.storage.setup_db()
 
     async def asyncTearDown(self):
+        await self.storage.db.execute("DELETE from event")
+        await self.storage.db.commit()
         await self.storage.close()
 
-    def tearDown(self):
-        filename = self.storage.filename
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.delete_db_files()
+        logging.disable(logging.NOTSET)
+
+    @classmethod
+    def delete_db_files(cls):
+        filename = cls.storage.filename
         for fname in [filename, filename + '-shm', filename + '-wal']:
             if os.path.exists(fname):
                 os.unlink(fname)
-        logging.disable(logging.NOTSET)
 
 
     async def test_get_event(self):

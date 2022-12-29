@@ -1,4 +1,4 @@
-DEBUG: true
+DEBUG: false
 
 db_filename: ./TEST-nostr.sqlite3
 
