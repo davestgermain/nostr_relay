@@ -183,17 +183,13 @@ class Storage:
         else:
             LOG.debug("skipped post-processing for %s", event)
 
-    def read_subscriptions(self, client_id):
-        for sub in self.clients[client_id].values():
-            yield from sub.read()
-
-    async def subscribe(self, client_id, sub_id, filters):
+    async def subscribe(self, client_id, sub_id, filters, queue):
         LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             await self.unsubscribe(client_id, sub_id)
             # rate limit on resubscribing
             await asyncio.sleep(0.75)
-        sub = Subscription(self.db, sub_id, filters, client_id=client_id)
+        sub = Subscription(self.db, sub_id, filters, queue=queue, client_id=client_id)
         if sub.prepare():
             asyncio.create_task(sub.run_query())
             self.clients[client_id][sub_id] = sub
@@ -221,12 +217,12 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, client_id=None):
+    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None):
         self.db  = db
         self.sub_id = sub_id
         self.client_id = client_id
         self.filters = filters
-        self.queue = collections.deque()
+        self.queue = queue
         self.query_task = None
 
     def prepare(self):
@@ -259,11 +255,9 @@ class Subscription:
                 async with self.db.execute(query) as cursor:
                     async for row in cursor:
                         eid, event = row
-                        self.queue.append(event)
+                        await self.queue.put((self.sub_id, event))
                         count += 1
-                if count < 5000:
-                    # send a sentinel to indicate we have no more events
-                    self.queue.append(None)
+                await self.queue.put((self.sub_id, None))
 
             LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, t())
 
@@ -280,12 +274,7 @@ class Subscription:
             matched = self.check_event(event, self.filters)
         LOG.info('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, t())
         if matched:
-            self.queue.append(event)
-
-    def read(self):
-        while self.queue:
-            event = self.queue.popleft()
-            yield self.sub_id, event
+            await self.queue.put((self.sub_id, event))
 
     def check_event(self, event, filters):
         for filter_obj in filters:

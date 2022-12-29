@@ -20,14 +20,10 @@ class Client:
         self.ws = ws
         self.id = f'{req.remote_addr}-{secrets.token_hex(2)}'
         LOG.info(f'Accepted {self.id} from Origin: {req.get_header("origin")}')
-        self.messages = collections.deque()
-        self.listen_task = None
         self.running = True
+        self.subscription_queue = asyncio.Queue()
+        self.send_task = None
 
-    @property
-    def is_alive(self):
-        return not self.listen_task.done()
-    
     def validate_message(self, message):
         if not isinstance(message, list):
             return False
@@ -37,46 +33,45 @@ class Client:
             return False
         return True
 
-    async def receive_messages(self):
-        while self.running:
+    async def send_subscriptions(self):
+        subscription_queue = self.subscription_queue
+        ws = self.ws
+
+        sent = 0
+        LOG.debug("%s waiting for subs", self.id)
+        while self.running and ws.ready:
             try:
-                message = await self.ws.receive_media()
+                sub_id, event = await subscription_queue.get()
+                if event is not None:
+                    message = f'["EVENT", "{sub_id}", {event}]'
+                    # sent += 1
+                else:
+                    # done with stored events
+                    message = f'["EOSE", "{sub_id}"]'
+                await ws.send_text(message)
+                LOG.debug("SENT: %s", message)
             except falcon.WebSocketDisconnected:
                 break
-            except rapidjson.JSONDecodeError:
-                LOG.debug("json decoding")
-                continue
-            if self.validate_message(message):
-                self.messages.append(message)
+            except Exception:
+                LOG.exception("subs")
 
     async def start(self, storage):
-        self.listen_task = asyncio.create_task(self.receive_messages())
         ws = self.ws
         client_id = self.id
 
-        while self.is_alive:
-            while ws.ready and not self.messages:
-                sent = 0
-                for sub_id, event in storage.read_subscriptions(client_id):
-                    if event is not None:
-                        message = f'["EVENT", "{sub_id}", {event}]'
-                        sent += 1
-                    else:
-                        # done with stored events
-                        message = f'["EOSE", "{sub_id}"]'
-                    await ws.send_text(message)
-                if sent:
-                    LOG.debug(f'Sent {sent} events to {client_id}')
-                await asyncio.sleep(1.0)
-
-            if not self.messages:
-                continue
+        while ws.ready:
             try:
-                message = self.messages.popleft()
+                message = await self.ws.receive_media()
+                if not self.validate_message(message):
+                    continue
+
                 LOG.debug("RECEIVED: %s", message)
                 if message[0] == 'REQ':
                     sub_id = str(message[1])
-                    await storage.subscribe(client_id, sub_id, message[2:])
+                    if self.send_task is None:
+                        self.send_task = asyncio.create_task(self.send_subscriptions())
+                        await asyncio.sleep(0)
+                    await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue)
                 elif message[0] == 'CLOSE':
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
@@ -95,14 +90,18 @@ class Client:
                     await ws.send_media(['OK', eventid, result, reason])
             except falcon.WebSocketDisconnected:
                 break
+            except rapidjson.JSONDecodeError:
+                LOG.debug("json decoding")
+                continue
 
     async def stop(self):
         self.running = False
-        self.listen_task.cancel()
-        try:
-            await self.listen_task
-        except asyncio.CancelledError:
-            pass
+        if self.send_task:
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except asyncio.CancelledError:
+                pass
 
     def __str__(self):
         return self.id
@@ -140,6 +139,7 @@ class NostrAPI:
             origin = req.get_header('origin').lower()
             if origin in Config.origin_blacklist:
                 LOG.warning("Blocked origin %s from connecting", origin)
+                await ws.close(code=1000)
                 return
 
         try:
