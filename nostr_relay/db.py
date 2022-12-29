@@ -5,6 +5,10 @@ import time
 import collections
 import logging
 import traceback
+import threading
+from time import perf_counter
+from contextlib import contextmanager
+
 import aiosqlite
 import rapidjson
 from .event import Event, EventKind
@@ -21,6 +25,12 @@ def validate_id(obj_id):
     if obj_id.isalnum():
         obj_id = obj_id.translate(force_hex_translation)
         return obj_id
+
+
+@contextmanager
+def catchtime() -> float:
+    start = perf_counter()
+    yield lambda: (perf_counter() - start) * 1000
 
 
 class StorageException(Exception):
@@ -44,7 +54,7 @@ class Storage:
         self.clients = collections.defaultdict(dict)
         self.db = None
         self.verifier = Verifier()
-        self.newevent_event = asyncio.Event()
+        self.garbage_collector = None
 
     async def close(self):
         await self.verifier.stop()
@@ -55,12 +65,14 @@ class Storage:
         async with aiosqlite.connect(self.filename) as db:
             await migrate(db)
         self.db = await aiosqlite.connect(self.filename)
-        await self.db.execute('pragma journal_mode=wal')
-        await self.db.execute('pragma synchronous = normal')
-        await self.db.execute('pragma temp_store = memory')
-        await self.db.execute('pragma mmap_size = 30000000000')
+        await self.db.executescript('''
+            pragma journal_mode=wal;
+            pragma synchronous = normal;
+            pragma temp_store = memory;
+            pragma mmap_size = 30000000000;
+        ''')
         await self.verifier.start(self.db)
-        self.newevent_event = asyncio.Event()
+        self.garbage_collector = start_garbage_collector()
 
     async def get_event(self, event_id):
         """
@@ -94,7 +106,14 @@ class Storage:
             await self.db.commit()
         if changed:
             # notify all subscriptions
-            self.newevent_event.set()
+            count = 0
+            with catchtime() as t:
+                for client in self.clients.values():
+                    for sub in client.values():
+                        asyncio.create_task(sub.notify(event))
+                        count += 1
+            if count:
+                LOG.info("notify-all took %.2fms for %d subscriptions", t(), count)
         return event, changed
 
     def validate_event(self, event):
@@ -108,6 +127,8 @@ class Storage:
             raise StorageException("invalid: 280 characters should be enough for anybody")
         if not event.verify():
             raise StorageException("invalid: Bad signature")
+        if (time.time() - event.created_at) > Config.oldest_event:
+            raise StorageException("invalid: too old")
 
     async def pre_save(self, cursor, event):
         """
@@ -115,15 +136,14 @@ class Storage:
         Return None to skip adding the event.
         """
         await cursor.execute(self.CHECK_QUERY, (event.id_bytes, ))
-        if cursor.rowcount == 1:
+        row = await cursor.fetchone()
+        if row:
             # duplicate
             return False
         # check NIP05 verification, if enabled
         await self.verifier.verify(cursor, event)
-        if event.is_ephemeral or event.kind > 30000:
-            # don't save ephemeral or unspecified events
-            return False
-        elif event.is_replaceable:
+
+        if event.is_replaceable:
             # check for older event from same pubkey
             await cursor.execute('select id, created_at from event where pubkey = ? and kind = ? and created_at < ?', (event.pubkey, event.kind, event.created_at))
             row = await cursor.fetchone()
@@ -140,7 +160,7 @@ class Storage:
         (clear old metadata, update tag references)
         """
 
-        if cursor.rowcount:
+        if cursor.rowcount != -1:
             if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
                 # older metadata events can be cleared
                 query = 'DELETE FROM event WHERE pubkey = ? AND kind = ? AND created_at < ?'
@@ -148,14 +168,11 @@ class Storage:
                 await cursor.execute(query, (event.pubkey, event.kind, event.created_at))
             elif event.kind in (EventKind.TEXT_NOTE, EventKind.ENCRYPTED_DIRECT_MESSAGE) and event.tags:
                 # update mentions
-                for tag in event.tags:
-                    name = tag[0]
-                    if len(name) == 1 or name == 'delegation':
-                        # single-letter tags can be searched
-                        # delegation tags are also searched
-                        ptag = validate_id(tag[1])
-                        if ptag:
-                            await cursor.execute('INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)', (event.id_bytes, name, ptag))
+                # single-letter tags can be searched
+                # delegation tags are also searched
+                tags = set((event.id_bytes, tag[0], tag[1]) for tag in event.tags if tag[0] == 'delegation' or len(tag[0]) == 1)
+                if tags:
+                    await cursor.executemany('INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)', tags)
             elif event.kind == EventKind.DELETE and event.tags:
                 # delete the referenced events
                 for tag in event.tags:
@@ -167,34 +184,30 @@ class Storage:
             LOG.debug("skipped post-processing for %s", event)
 
     def read_subscriptions(self, client_id):
-        for task, sub in self.clients[client_id].values():
+        for sub in self.clients[client_id].values():
             yield from sub.read()
 
-    def subscribe(self, client_id, sub_id, filters):
-        self.newevent_event.clear()
-        LOG.debug('%s %s filters: %s', client_id, sub_id, filters)
+    async def subscribe(self, client_id, sub_id, filters):
+        LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
-            self.unsubscribe(client_id, sub_id)
-        sub = Subscription(self.db, sub_id, filters, self.newevent_event)
+            await self.unsubscribe(client_id, sub_id)
+            # rate limit on resubscribing
+            await asyncio.sleep(0.75)
+        sub = Subscription(self.db, sub_id, filters, client_id=client_id)
         if sub.prepare():
-            task = asyncio.create_task(sub.start())
-            self.clients[client_id][sub_id] = (task, sub)
-            LOG.info("%s +sub %s", client_id, sub_id)
+            asyncio.create_task(sub.run_query())
+            self.clients[client_id][sub_id] = sub
+            LOG.info("%s/%s +", client_id, sub_id)
 
-    def unsubscribe(self, client_id, sub_id=None):
+    async def unsubscribe(self, client_id, sub_id=None):
         if sub_id:
             try:
-                task, sub = self.clients[client_id][sub_id]
-                sub.cancel()
-                task.cancel()
+                self.clients[client_id][sub_id].cancel()
                 del self.clients[client_id][sub_id]
-                LOG.info("%s -sub %s", client_id, sub_id)
+                LOG.info("%s/%s -", client_id, sub_id)
             except KeyError:
                 pass
         else:
-            for task, sub in self.clients[client_id].values():
-                sub.cancel()
-                task.cancel()
             del self.clients[client_id]
 
     async def num_subscriptions(self, byclient=False):
@@ -208,14 +221,13 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, newevent_event):
+    def __init__(self, db, sub_id, filters:list, client_id=None):
         self.db  = db
         self.sub_id = sub_id
+        self.client_id = client_id
         self.filters = filters
-        self.newevent_event = newevent_event
         self.queue = collections.deque()
-        self.running = True
-        self.interval = 60
+        self.query_task = None
 
     def prepare(self):
         try:
@@ -225,52 +237,80 @@ class Subscription:
             return False
         return True
 
-    async def start(self):
-        LOG.debug(f'Starting {self.sub_id}')
-        seen_ids = set()
-        runs = 0
+    def cancel(self):
+        if self.query_task:
+            self.query_task.cancel()
+
+    async def run_query(self):
+        self.query_task = asyncio.current_task()
+
+        # try:
+        #     await asyncio.sleep(0.25)
+        # except asyncio.CancelledError:
+        #     LOG.debug("%s/%s cancelled", self.client_id, self.sub_id)
+        #     return
+
         query = self.query
         LOG.debug(query)
-        last_run = 0
-        while self.running:
-            runs += 1
-            try:
-                start = time.time()
+
+        try:
+            count = 0
+            with catchtime() as t:
                 async with self.db.execute(query) as cursor:
                     async for row in cursor:
                         eid, event = row
-                        if eid in seen_ids:
-                            continue
-                        seen_ids.add(eid)
                         self.queue.append(event)
-                if runs == 1 and len(seen_ids) < 5000:
+                        count += 1
+                if count < 5000:
                     # send a sentinel to indicate we have no more events
                     self.queue.append(None)
-                duration = int((time.time() - start) * 1000)
 
-                LOG.info('queried %s runs:%s queue:%s duration:%dms', self.sub_id, runs, len(self.queue), duration)
+            LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, t())
 
-                # every time an event is added, all subscribers are notified.
-                # this could have a performance penalty since everyone will retry their queries
-                # at the same time. but overall, this may be a worthwhile optimization to reduce
-                # idle load
+        except Exception:
+            LOG.exception("subscription")
 
-                await self.newevent_event.wait()
-                if (time.time() - last_run) < 1.5:
-                    await asyncio.sleep(self.interval)
-            except Exception:
-                LOG.exception("subscription")
-                break
-            last_run = time.time()
-        LOG.debug(f'Stopped {self.sub_id}')
+    async def notify(self, event):
+        # every time an event is added, all subscribers are notified.
+        # this could have a performance penalty since everyone will retry their queries
+        # at the same time. but overall, this may be a worthwhile optimization to reduce
+        # idle load
+
+        with catchtime() as t:
+            matched = self.check_event(event, self.filters)
+        LOG.info('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, t())
+        if matched:
+            self.queue.append(event)
 
     def read(self):
         while self.queue:
             event = self.queue.popleft()
             yield self.sub_id, event
 
-    def cancel(self):
-        self.running = False
+    def check_event(self, event, filters):
+        for filter_obj in filters:
+            matched = []
+            for key, value in filter_obj.items():
+                if key == 'ids':
+                    matched.append(bool(event.id in value))
+                elif key == 'authors':
+                    matched.append(bool(event.pubkey in value))
+                    for tag in event.tags:
+                        if tag[0] == 'delegation' and tag[1] in value:
+                            matched.append(True)
+                elif key == 'kinds':
+                    matched.append(bool(event.kind in value))
+                elif key == 'since':
+                    matched.append(bool(event.created_at >= value))
+                elif key == 'until':
+                    matched.append(bool(event.created_at < value))
+                elif key[0] == '#' and len(key) == 2:
+                    for tag in event.tags:
+                        if tag[0] == key[1]:
+                            matched.append(bool(tag[1] in value))
+            if all(matched):
+                return True
+        return False
 
     def build_query(self, filters):
         select = '''
@@ -281,16 +321,16 @@ class Subscription:
         limit = None
         for filter_obj in filters:
             subwhere = []
-            if 'ids' in filter_obj:
 
-                ids = filter_obj['ids']
-                if not isinstance(ids, list):
-                    ids = [ids]
-                ids = set(ids)
-                if ids:
-                    idstr = ','.join("x'%s'" % validate_id(eid) for eid in ids)
-                    subwhere.append(f'event.id in ({idstr})')
-                # else:
+            for key, value in filter_obj.items():
+                if key == 'ids':
+                    if not isinstance(value, list):
+                        value = [value]
+                    ids = set(value)
+                    if ids:
+                        idstr = ','.join("x'%s'" % validate_id(eid) for eid in ids)
+                        subwhere.append(f'event.id in ({idstr})')
+                                    # else:
                 #     raise NotImplementedError()
                 #     eq = ''
                 #     while ids:
@@ -304,36 +344,28 @@ class Subscription:
                 #     if eq:
                 #         subwhere.append(f'({eq})')
 
-            if 'authors' in filter_obj:
-                astr = ','.join("'%s'" % validate_id(a) for a in set(filter_obj['authors']))
-                if astr:
-                    subwhere.append(f'pubkey in ({astr}) OR (tag.name = "delegation" and tag.value in ({astr}))')
-                    include_tags = True
-
-            if 'kinds' in filter_obj:
-                subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in filter_obj['kinds'])))
-
-            if 'since' in filter_obj:
-                subwhere.append('created_at >= %d' % int(filter_obj['since']))
-
-            if 'until' in filter_obj:
-                subwhere.append('created_at < %d' % int(filter_obj['until']))
-
-            if 'limit' in filter_obj:
-                limit = max(min(int(filter_obj['limit']), 5000), 0)
-
-            for k in filter_obj:
-                if k[0] == '#' and len(k) == 2:
-                    tagname = k[1]
-                    tagval = filter_obj[k]
+                elif key == 'authors' and isinstance(value, list):
+                    astr = ','.join("'%s'" % validate_id(a) for a in set(value))
+                    if astr:
+                        subwhere.append(f'pubkey in ({astr}) OR (tag.name = "delegation" and tag.value in ({astr}))')
+                        include_tags = True
+                elif key == 'kinds':
+                    subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
+                elif key == 'since':
+                    subwhere.append('created_at >= %d' % int(value))
+                elif key == 'until':
+                    subwhere.append('created_at < %d' % int(value))
+                elif key == 'limit':
+                    limit = max(min(int(value), 5000), 0)
+                elif key[0] == '#' and len(key) == 2:
                     pstr = []
-                    for val in set(tagval):
+                    for val in set(value):
                         val = validate_id(val)
                         if val:
                             pstr.append(f"'{val}'")
                     if pstr:
                         pstr = ','.join(pstr)
-                        subwhere.append(f'(tag.name = "{tagname}" and tag.value in ({pstr})) ')
+                        subwhere.append(f'(tag.name = "{key}" and tag.value in ({pstr})) ')
                         include_tags = True
 
             if subwhere:
@@ -353,7 +385,67 @@ class Subscription:
         return select
 
 
+class BaseGarbageCollector(threading.Thread):
+    def __init__(self, db_filename, **kwargs):
+        super().__init__()
+        self.log = logging.getLogger("nostr_relay.db:gc")
+        self.db_filename = db_filename
+        self.daemon = True
+        self.running = True
+        self.collect_interval = kwargs.get('collect_interval', 300)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def collect(self, db):
+        pass
+
+    def run(self):
+        import sqlite3
+        self.log.info("Starting garbage collector %s. Interval %s", self.__class__.__name__, self.collect_interval)
+        while self.running:
+            db = sqlite3.connect(self.db_filename)
+            try:
+                collected = self.collect(db)
+            except sqlite3.OperationalError as e:
+                break
+            if collected:
+                self.log.info("Collected garbage (%d events)", collected)
+                db.commit()
+            db.close()
+            time.sleep(self.collect_interval)
+
+    def stop(self):
+        self.running = False
+
+
+class QueryGarbageCollector(BaseGarbageCollector):
+    query = '''
+        DELETE FROM event WHERE kind >= 20000 and kind < 30000;
+    '''
+
+    def collect(self, db):
+        cursor = db.cursor()
+        cursor.executescript(self.query)
+        cursor.close()
+        return max(0, cursor.rowcount)
+
+
+def start_garbage_collector(options=None):
+    options = options or Config.garbage_collector
+    if options:
+        gc_path = options.pop("class", "nostr_relay.db.QueryGarbageCollector")
+        module_name, gc_class = gc_path.rsplit('.', 1)
+        import importlib
+        module = importlib.import_module(module_name)
+        gc_obj = getattr(module, gc_class)(Config.db_filename, **options)
+        gc_obj.start()
+        return gc_obj
+
+
 async def migrate(db):
+    """
+    Migrate the database
+    """
     import sqlite3
 
     async def migrate_to_1(db):
@@ -407,16 +499,14 @@ async def migrate(db):
                 async for row in cursor:
                     e = Event.from_tuple(row)
                     await db.execute("insert into event (id, event) VALUES (?, ?)", (e.id_bytes, str(e)))
-                    for tag in e.tags:
-                        name = tag[0]
-                        value = tag[1]
-                        if len(name) == 1 or name == 'delegation':
-                            await db.execute("INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)", (e.id_bytes, name, value))
+                    tags = set((e.id_bytes, tag[0], tag[1]) for tag in e.tags if tag[0] == 'delegation' or len(tag[0]) == 1)
+                    if tags:
+                        await db.executemany("INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)", tags)
                     count += 1
             LOG.info("migration: migrated %d events", count)
         except sqlite3.OperationalError:
             # events table doesn't exist
-            LOG.info("migration: events table does not exist")
+            LOG.debug("migration: events table does not exist")
 
     async def migrate_to_4(db):
         """

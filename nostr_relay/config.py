@@ -8,9 +8,14 @@ class ConfigClass:
     verification_whitelist = None
     verification_expiration = 86400 * 30
     verification_update_frequency = 3600
+    oldest_event = 31536000
 
     def __init__(self):
         self.gunicorn = {}
+        self.garbage_collector = {
+            'class': 'nostr_relay.db.QueryGarbageCollector',
+            'collect_interval': 300,
+        }
         self.logging = {
                 'version': 1,
                 'formatters': {

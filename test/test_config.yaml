@@ -15,7 +15,8 @@ verification_update_frequency: 3600
 # - badhost.biz
 #verification_whitelist:
 # - goodhost.com
-
+garbage_collector:
+  collect_interval: 300
 
 gunicorn:
   bind: 127.0.0.1:6969

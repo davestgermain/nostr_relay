@@ -30,13 +30,6 @@ class Verifier:
         LEFT JOIN event ON verification.metadata_id = event.id 
         WHERE event.pubkey = ? ORDER BY event.created_at DESC
     """
-    BATCH_QUERY = f"""
-        SELECT v.id, identifier, verified_at, pubkey, metadata_id FROM verification as v
-        LEFT JOIN event ON v.metadata_id = event.id
-        WHERE pubkey IS NOT NULL AND
-        (? - verified_at > {Config.verification_expiration})
-        ORDER BY verified_at DESC
-    """
     FAILURE_QUERY = "UPDATE verification SET failed_at = strftime('%s', 'now') WHERE id = ?"
     SUCCESS_QUERY = "UPDATE verification SET verified_at = strftime('%s', 'now') WHERE id = ?"
 
@@ -123,7 +116,7 @@ class Verifier:
         return True
 
     async def verification_task(self, db):
-        LOG.info("Starting verification task")
+        LOG.info("Starting verification task. Interval %s", Config.verification_update_frequency)
         last_run = 0
         while self.running:
             candidate = await self.queue.get()
@@ -133,16 +126,22 @@ class Verifier:
             candidates = []
             try:
                 if (time.time() - last_run) > Config.verification_update_frequency:
+                    LOG.debug("running batch query")
                     async with db.cursor() as cursor:
                         try:
-                            await cursor.execute(self.BATCH_QUERY, (int(time.time()), ))
+                            await cursor.execute(f"""
+                                SELECT v.id, identifier, verified_at, pubkey, metadata_id FROM verification as v
+                                LEFT JOIN event ON v.metadata_id = event.id
+                                WHERE pubkey IS NOT NULL AND
+                                (? - verified_at > {Config.verification_expiration})
+                                ORDER BY verified_at DESC
+                            """, (int(time.time()), ))
                         except Exception:
-                            LOG.exception('batch query %s', self.BATCH_QUERY)
+                            LOG.exception('batch query')
                             continue
                         async for row in cursor:
                             candidates.append(row)
                             # vid, identifier, verified_at, pubkey = row
-
             except Exception:
                 LOG.exception("batch_query")
                 continue

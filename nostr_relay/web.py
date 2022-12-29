@@ -18,7 +18,7 @@ from .config import Config
 class Client:
     def __init__(self, ws, req):
         self.ws = ws
-        self.id = f'{req.remote_addr}:{secrets.token_hex(2)}'
+        self.id = f'{req.remote_addr}-{secrets.token_hex(2)}'
         LOG.info(f'Accepted {self.id} from Origin: {req.get_header("origin")}')
         self.messages = collections.deque()
         self.listen_task = None
@@ -33,7 +33,7 @@ class Client:
             return False
         if len(message) < 2:
             return False
-        if message[0] not in ['EVENT', 'REQ', 'CLOSE']:
+        if message[0] not in ('EVENT', 'REQ', 'CLOSE'):
             return False
         return True
 
@@ -76,10 +76,10 @@ class Client:
                 LOG.debug("RECEIVED: %s", message)
                 if message[0] == 'REQ':
                     sub_id = str(message[1])
-                    storage.subscribe(client_id, sub_id, message[2:])
+                    await storage.subscribe(client_id, sub_id, message[2:])
                 elif message[0] == 'CLOSE':
                     sub_id = str(message[1])
-                    storage.unsubscribe(client_id, sub_id)
+                    await storage.unsubscribe(client_id, sub_id)
                 elif message[0] == 'EVENT':
                     try:
                         event, result = await storage.add_event(message[1])
@@ -156,7 +156,7 @@ class NostrAPI:
             LOG.exception("client loop")
         finally:
             await client.stop()
-            self.storage.unsubscribe(client.id)
+            await self.storage.unsubscribe(client.id)
             self.connections -= 1
             LOG.info('Done %s', client)
 

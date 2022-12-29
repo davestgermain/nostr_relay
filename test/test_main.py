@@ -15,14 +15,14 @@ PK1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
 PK2 = '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d'
 
 EVENTS = [
-    {"id": "5e7eea1d97adfe7d902b17311544525540c7a1dafa5f813557b4e3f596126331", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1671826886.1679559, "kind": 0, "tags": [], "content": "{\"name\": \"test1\", \"nip05\": \"test@st.germa.in\", \"description\": \"test account\"}", "sig": "1b6cc3a7ac0578af9935b4fb539c97cfd4f382c7764a73cf7a61acc6431c682db067172144ac85746f4117ec0caccfeae83d97290cf10e7525c34065b7d35a07"},
-    {"id": "5bf7318709526f5a92b1fb44ec77e7d9a17584d7056bd786721b134bbe6f3219", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1671913286.168229, "kind": 1, "tags": [], "content": "hello world", "sig": "d0094842dd1acbe1f62813451cbf74dfb88f38750ff30a412f20ce9b5cfedfb722f4fcf6c111d6d112a331246faf6e29677cd30b8d9a7362b927bd7066005766"},
-    {"id": "ab045ac2385c4c7b96cfd1ca0afc2da8c757f44a9464aff2eb16409bb50cfe2d", "pubkey": "44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d", "created_at": 1671826886.168395, "kind": 1, "tags": [["p", "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"], ["e", "5bf7318709526f5a92b1fb44ec77e7d9a17584d7056bd786721b134bbe6f3219"]], "content": "hello pk1", "sig": "88cbc8dd942f4f682284ae31b2aa0055e9d97939bd983b843b12c50edcf12a23693cc01345b6c1182337f679cf7d0088412fe69e66bfec0a2fca3092f01ec9b1"},
+    {"id": "0d7721e1ee4a343f623cfb86374cc2d4688784bd264b5bc26079843169f28d88", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 0, "tags": [], "content": "{\"name\": \"test1\", \"nip05\": \"test@st.germa.in\", \"description\": \"test account\"}", "sig": "bb748c84613eb9073d4dc99fc6df0c96aa43fd380c2c058a71f67a8f0fe012e5c40d74aa81c4c233a092eb307c7b5b8a4499e3403e0a54469ad1db1575916cf5"},
+    {"id": "46981a47c7e28f720a2609a5872c62b6e8b9ae612db3f8320b68be446ad77e11", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672412227, "kind": 1, "tags": [], "content": "hello world", "sig": "d81c89008bcb9e27a0fc3454fef6b481034cfeaaf0c48e65299fa9af85e35e2c27e36a2478ba8a402a14ed3c332e4b7a43d7682e9d5baea0a7a9083fc26dba00"},
+    {"id": "ea54cf0e912b3fc482ee842195c8db670df6d958b2ae86e039b7c56690d81ef9", "pubkey": "44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d", "created_at": 1672325827, "kind": 1, "tags": [["p", "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"], ["e", "46981a47c7e28f720a2609a5872c62b6e8b9ae612db3f8320b68be446ad77e11"]], "content": "hello pk1", "sig": "73106b28855337fd2546a04d02cec76c1673428811acc42bc2b69cedc03554024b8ca8bb841b9991b728db3be89760486be147b2fb03e3f4e16ca83a356d56ef"},
 ]
 
 REPLACE_EVENTS = [
-    {"id": "b822691d42a216c5f0bb09514189d4972b9e6f68b2e01b015b55820586a2510d", "pubkey": "44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d", "created_at": 1671838428.322944, "kind": 11111, "tags": [], "content": "replace me", "sig": "9643d71ab3cc47809e27d88ec811655b29f4e3beeb8961e5733db40d93c5ab5551c09ba2a3cac1586c7f8c8a71a82adaefafa5579a20f4a073db22d2281a2805"},
-    {"id": "e639f400569367766f370a5224477d039ce51284d99f97f232cce1c810653873", "pubkey": "44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d", "created_at": 1671840428.323037, "kind": 11111, "tags": [], "content": "replaced", "sig": "fe02574d39ffa6c8e74b271256e019bf100992b0f75a219605a85ca5485959f22c2d864ead5ebec8040e147beef0000baea5cab93429e4263405c56526796b6e"}
+    {"id": "ae0816fff8d0363a189f22cf8ade674c386963cab39d68b28b19a7b5eae90cbd", "pubkey": "44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d", "created_at": 1672324827, "kind": 11111, "tags": [], "content": "replace me", "sig": "0f9bfe1047dfc37a020c8b0196703ec553b22cf9b6258c3e7b4e8a67991fd788813018e90558f18d3337e48152e2e0fa50a8b925e35ad91a8db603c517092f28"},
+    {"id": "2270926268812f4886d4499bc9a29a84223e5554985496843278e1472fab3837", "pubkey": "44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d", "created_at": 1672326827, "kind": 11111, "tags": [], "content": "replaced", "sig": "d48846d5a7d344d60ba66c97ebe923d5f61b2e3970fd92682795ba5ff91137f288fd234ce5cafdaddc9b0f6408085c46c7255994eb3850e99ebbc05e3108f2c6"}
 ]
 
 DELEGATION_EVENT = { "id": "a080fd288b60ac2225ff2e2d815291bd730911e583e177302cc949a15dc2b2dc",  "pubkey": "62903b1ff41559daf9ee98ef1ae67cc52f301bb5ce26d14baba3052f649c3f49",  "created_at": 1660896109,  "kind": 1, "tags":[["delegation","86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e","kind=1&created_at>1640995200","c33c88ba78ec3c760e49db591ac5f7b129e3887c8af7729795e85a0588007e5ac89b46549232d8f918eefd73e726cb450135314bfda419c030d0b6affe401ec1"]],  "content": "Hello world",  "sig": "cd4a3cd20dc61dcbc98324de561a07fd23b3d9702115920c0814b5fb822cc5b7c5bcdaf3fa326d24ed50c5b9c8214d66c75bae34e3a84c25e4d122afccb66eb6"}
@@ -35,7 +35,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
         cls.storage = get_storage()
 
     def setUp(self):
-
+        pass
         logging.disable(logging.CRITICAL)
 
 
@@ -88,7 +88,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 20,
                 26,
             ],
-            'version': '0.9.5',
+            'version': '1.0',
         }
         result = await self.conductor.simulate_get('/')
         assert result.text == 'try using a nostr client :-)'
@@ -99,7 +99,22 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
     async def send_event(self, ws, event, get_response=False):
         await ws.send_json(["EVENT", event])
         if get_response:
-            await ws.receive_json()
+            return await ws.receive_json()
+
+    async def get_event(self, ws, event_id, check=True, exists=True, req_name="checkid"):
+        await ws.send_json(["REQ", req_name, {"ids": [event_id]}])
+        data = await ws.receive_json()
+        if check:
+            if exists:
+                assert data[0] == 'EVENT'
+                assert data[1] == req_name
+                assert data[2]["id"] == event_id
+            else:
+                assert data == ["EOSE", req_name]
+        if exists:
+            end = await ws.receive_json()
+            assert end == ["EOSE", req_name]
+        return data
 
     async def test_bad_protocol(self):
         async with self.conductor.simulate_ws('/') as ws:
@@ -131,15 +146,17 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_event(self):
         async with self.conductor.simulate_ws('/') as ws:
-            await self.send_event(ws, EVENTS[0])
-            data = await ws.receive_json()
-            assert data == ['OK', '5e7eea1d97adfe7d902b17311544525540c7a1dafa5f813557b4e3f596126331', True, '']
-            await self.send_event(ws, EVENTS[0])
-            data = await ws.receive_json()
-            assert data == ['OK', '5e7eea1d97adfe7d902b17311544525540c7a1dafa5f813557b4e3f596126331', False, 'duplicate: exists']
+            data = await self.send_event(ws, EVENTS[0], True)
+            assert data == ['OK', '0d7721e1ee4a343f623cfb86374cc2d4688784bd264b5bc26079843169f28d88', True, '']
+            data = await self.send_event(ws, EVENTS[0], True)
+            assert data == ['OK', '0d7721e1ee4a343f623cfb86374cc2d4688784bd264b5bc26079843169f28d88', False, 'duplicate: exists']
+
+            # check for existence
+            data = await self.get_event(ws, EVENTS[0]["id"])
 
             for event in EVENTS:
-                await self.send_event(ws, event)
+                await self.send_event(ws, event, True)
+
 
     async def test_req(self):
         async with self.conductor.simulate_ws('/') as ws:
@@ -154,7 +171,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
             await ws.send_json(["REQ", "test2", {"kinds": [0]}])
             data = await ws.receive_json()
-            assert data[2]['id'] == '5e7eea1d97adfe7d902b17311544525540c7a1dafa5f813557b4e3f596126331'
+            assert data[2]['id'] == '0d7721e1ee4a343f623cfb86374cc2d4688784bd264b5bc26079843169f28d88'
             data = await ws.receive_json()
             assert data == ['EOSE', 'test2']
 
@@ -169,7 +186,20 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
         """
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, EVENTS[1], True)
-            await ws.send_json(["REQ", "test", {"kinds": [1]}])
+            await ws.send_json(["REQ", "test", {
+                    "kinds": [1], 
+                    "authors": ["5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"],
+                    "since": 1671325827,
+                    "until": 1672328000
+                },
+                {
+                    "#e": [EVENTS[1]["id"]],
+                    "authors": [EVENTS[2]['pubkey']], 
+                    "ids": [EVENTS[2]["id"]],
+                    "limit": "10"
+                },
+            ])
+
             data = await ws.receive_json()
             assert data == ['EVENT', 'test', EVENTS[1]]
             
@@ -177,10 +207,9 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             assert data == ['EOSE', 'test']
 
             # now add a new event
-            await self.send_event(ws, EVENTS[2])
-            data = await ws.receive_json()
+            data = await self.send_event(ws, EVENTS[2], True)
             if data[0] == 'OK':
-                await asyncio.sleep(1.6)
+                await asyncio.sleep(1)
                 data = await ws.receive_json()
             assert data == ['EVENT', 'test', EVENTS[2]]
             
@@ -208,6 +237,42 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             data = await ws.receive_json()
             assert data == ["EVENT", "delegation", DELEGATION_EVENT]
 
+    async def test_delete_event(self):
+        async with self.conductor.simulate_ws('/') as ws:
+            await self.send_event(ws, EVENTS[1], True)
+            await self.send_event(ws, EVENTS[2], True)
+
+            # send valid delete event
+            response = await self.send_event(ws, {"id": "6b91c6821f4b480c493b4a07e736675ed078fdcdf71a3918fe59e3d1ef2da907", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 5, "tags": [["e", "46981a47c7e28f720a2609a5872c62b6e8b9ae612db3f8320b68be446ad77e11"]], "content": "delete mistake", "sig": "f6a41a55c4b1bf964db2d67a14b1680c6ba39f7216fc45b195d760eb6b9308c73694dd7cc61283562409328daedea3a733e8e692ded46bb3e61e2195ab0ce655"}, True)
+            assert response == ["OK", "6b91c6821f4b480c493b4a07e736675ed078fdcdf71a3918fe59e3d1ef2da907", True, '']
+
+            # event should be deleted
+            await ws.send_json(["REQ", "deleted", {"ids": ["46981a47c7e28f720a2609a5872c62b6e8b9ae612db3f8320b68be446ad77e11"]}])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 'deleted']
+
+            # send invalid delete event
+            response = await self.send_event(ws, {"id": "61b5e7adaefaefc600ae838806667d87ca9aef19993707190f0fffa2dbee71b0", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 5, "tags": [["e", "ea54cf0e912b3fc482ee842195c8db670df6d958b2ae86e039b7c56690d81ef9"]], "content": "bad deletion", "sig": "6a274fa7c18fe34fcc29aa4690286941c288ef57d1ff083645f96549276ea7c4655ddc03a05fcc7167483247f4aadde71d89794421f24da7f7958e065e44744c"}, True)
+            assert response == ["OK", "61b5e7adaefaefc600ae838806667d87ca9aef19993707190f0fffa2dbee71b0", True, '']
+
+            # event will not be deleted
+            await ws.send_json(["REQ", "deleted", {"ids": ["ea54cf0e912b3fc482ee842195c8db670df6d958b2ae86e039b7c56690d81ef9"]}])
+            data = await ws.receive_json()
+            assert data == ['EVENT', 'deleted', EVENTS[2]]
+
+    async def test_ephemeral_event(self):
+        from nostr_relay.db import start_garbage_collector
+        self.storage.garbage_collector.stop()
+        self.storage.garbage_collector = start_garbage_collector({'collect_interval': 3})
+        ephemeral_event = {"id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 22222, "tags": [], "content": "ephemeral", "sig": "66f8a055bb3c3fc3fe0ca0ead4d5558d69627dc4f40c7320228d9e4c266509f6ac8a2ff085abbd1a9d3b0c733529bf3fcd87d43f731990467181ed1995aad5bc"}
+
+        async with self.conductor.simulate_ws("/") as ws:
+            data = await self.send_event(ws, ephemeral_event, True)
+            assert data[2] == True
+            data = await self.get_event(ws, ephemeral_event["id"], exists=True)
+            await asyncio.sleep(3.5)
+            data = await self.get_event(ws, ephemeral_event["id"], exists=False)
+        self.storage.garbage_collector.stop()
 
 
 if __name__ == "__main__":
