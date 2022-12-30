@@ -9,6 +9,7 @@ class ConfigClass:
     verification_expiration = 86400 * 30
     verification_update_frequency = 3600
     oldest_event = 31536000
+    redirect_homepage = ''
 
     def __init__(self):
         self.gunicorn = {}

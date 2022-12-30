@@ -130,6 +130,8 @@ class NostrAPI:
                 'active_subscriptions': (await self.storage.num_subscriptions())['total']
             }
             resp.media = media
+        elif Config.redirect_homepage:
+            raise falcon.HTTPFound(Config.redirect_homepage)
         else:
             resp.text = 'try using a nostr client :-)'
         resp.append_header('Access-Control-Allow-Origin', '*')

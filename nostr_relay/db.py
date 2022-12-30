@@ -272,7 +272,7 @@ class Subscription:
 
         with catchtime() as t:
             matched = self.check_event(event, self.filters)
-        LOG.info('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, t())
+        LOG.debug('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, t())
         if matched:
             await self.queue.put((self.sub_id, event))
 

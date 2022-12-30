@@ -1,13 +1,11 @@
+import click
 from .web import create_app
 from .config import Config
 
 
-def main():
-    import sys
-    if len(sys.argv) > 1:
-        config_file = sys.argv[1]
-    else:
-        config_file = None
+@click.command()
+@click.argument('config_file', required=False)
+def main(config_file):
     app = create_app(config_file)
     
     from gunicorn.app.base import Application
@@ -22,3 +20,4 @@ def main():
             return app
 
     ASGIApplication().run()
+

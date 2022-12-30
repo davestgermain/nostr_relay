@@ -88,13 +88,18 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 20,
                 26,
             ],
-            'version': '1.0.1',
+            'version': '1.0.2',
         }
-        result = await self.conductor.simulate_get('/')
-        assert result.text == 'try using a nostr client :-)'
         result = await self.conductor.simulate_get('/', headers={'Accept': 'application/nostr+json'})
 
         assert result.json == doc
+
+    async def test_get_index(self):
+        result = await self.conductor.simulate_get('/')
+        assert result.text == 'try using a nostr client :-)'
+        Config.redirect_homepage = 'https://nostr.net/'
+        result = await self.conductor.simulate_get('/')
+        assert result.headers['location'] == 'https://nostr.net/'
 
     async def send_event(self, ws, event, get_response=False):
         await ws.send_json(["EVENT", event])
