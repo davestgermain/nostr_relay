@@ -237,6 +237,10 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             data = await ws.receive_json()
             assert data == ['EOSE', 'toobroad']
 
+            await ws.send_json(["REQ", "junk", {"ids": [None]}, {"authors": [None, 1], "kinds": [None]}, {"kinds": ['a']}, {'since': None}])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 'junk']
+
     async def test_replace_events(self):
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, REPLACE_EVENTS[0], True)

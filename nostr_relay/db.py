@@ -21,7 +21,7 @@ LOG = logging.getLogger(__name__)
 force_hex_translation = str.maketrans('abcdef0213456789','abcdef0213456789', 'ghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
 def validate_id(obj_id):
-    obj_id = (obj_id or '').lower().strip()
+    obj_id = str(obj_id or '').lower().strip()
     if obj_id.isalnum():
         obj_id = obj_id.translate(force_hex_translation)
         return obj_id
@@ -392,7 +392,7 @@ class Subscription:
                     # query with empty list should be invalid
                     raise ValueError("authors")
             elif key == 'kinds':
-                if value:
+                if isinstance(value, list) and all(isinstance(k, int) for k in value):
                     subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
                 else:
                     raise ValueError("kinds")
@@ -425,7 +425,7 @@ class Subscription:
         SELECT event.id, event.event FROM event
         '''
         include_tags = False
-        where = []
+        where = set()
         limit = None
         new_filters = []
         for filter_obj in filters:
@@ -435,14 +435,15 @@ class Subscription:
             except ValueError:
                 LOG.debug("bad query %s", filter_obj)
                 filter_obj = {}
+                subwhere = []
                 tags_in_filter = False
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
-                where.append(subwhere)
+                where.add(subwhere)
                 if tags_in_filter:
                     include_tags = True
             else:
-                where.append('0')
+                where.add('0')
             if 'limit' in filter_obj:
                 limit = filter_obj['limit']
             new_filters.append(filter_obj)
