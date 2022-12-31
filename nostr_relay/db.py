@@ -358,8 +358,7 @@ class Subscription:
                 return True
         return False
 
-    def evaluate_filter(self, filter_obj):
-        subwhere = []
+    def evaluate_filter(self, filter_obj, subwhere):
         include_tags = False
         for key, value in filter_obj.items():
             if key == 'ids':
@@ -380,7 +379,7 @@ class Subscription:
                         subwhere.append(f'event.id in ({idstr})')
                 else:
                     # invalid query
-                    return [], {}, False
+                    raise ValueError("ids")
             elif key == 'authors' and isinstance(value, list):
                 if value:
                     astr = ','.join("'%s'" % validate_id(a) for a in set(value))
@@ -388,27 +387,27 @@ class Subscription:
                         subwhere.append(f'(pubkey in ({astr}) OR tag.name = "delegation" and tag.value in ({astr}))')
                         include_tags = True
                     else:
-                        return [], {}, False
+                        raise ValueError("authors")
                 else:
                     # query with empty list should be invalid
-                    return [], {}, False
+                    raise ValueError("authors")
             elif key == 'kinds':
                 if value:
                     subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
                 else:
-                    return [], {}, False
+                    raise ValueError("kinds")
             elif key == 'since':
                 if value:
                     subwhere.append('created_at >= %d' % int(value))
                 else:
-                    return [], {}, False
+                    raise ValueError("since")
             elif key == 'until':
                 if value:
                     subwhere.append('created_at < %d' % int(value))
                 else:
-                    return [], {}, False
+                    raise ValueError("until")
             elif key == 'limit' and value:
-                limit = max(min(int(value or 0), 5000), 0)
+                filter_obj['limit'] = max(min(int(value or 0), 5000), 0)
             elif key[0] == '#' and len(key) == 2 and value:
                 pstr = []
                 for val in set(value):
@@ -419,7 +418,7 @@ class Subscription:
                     pstr = ','.join(pstr)
                     subwhere.append(f'(tag.name = "{key}" and tag.value in ({pstr})) ')
                     include_tags = True
-        return subwhere, filter_obj, include_tags, limit
+        return filter_obj, include_tags
 
     def build_query(self, filters):
         select = '''
@@ -430,15 +429,23 @@ class Subscription:
         limit = None
         new_filters = []
         for filter_obj in filters:
-            subwhere, filter_obj, tags_in_filter, limit = self.evaluate_filter(filter_obj)
+            subwhere = []
+            try:
+                filter_obj, tags_in_filter = self.evaluate_filter(filter_obj, subwhere)
+            except ValueError:
+                LOG.debug("bad query %s", filter_obj)
+                filter_obj = {}
+                tags_in_filter = False
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
                 where.append(subwhere)
                 if tags_in_filter:
                     include_tags = True
-                new_filters.append(filter_obj)
             else:
                 where.append('0')
+            if 'limit' in filter_obj:
+                limit = filter_obj['limit']
+            new_filters.append(filter_obj)
         if where:
             if include_tags:
                 select += 'LEFT JOIN tag ON tag.id = event.id\n'
