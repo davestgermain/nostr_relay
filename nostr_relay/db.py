@@ -313,8 +313,10 @@ class Subscription:
                         count += 1
                 await self.queue.put((self.sub_id, None))
 
-            LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, t())
-
+            duration = t()
+            LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
+            if count > 2000:
+                LOG.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, self.filters, duration)
         except Exception:
             LOG.exception("subscription")
 
