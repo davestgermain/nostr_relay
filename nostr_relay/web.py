@@ -185,6 +185,23 @@ class ViewEventResource(BaseResource):
             raise falcon.HTTPNotFound
 
 
+class NostrIDP(BaseResource):
+    """
+    Serve /.well-known/nostr.json
+    """
+    async def on_get(self, req: falcon.Request, resp: falcon.Response):
+        name = req.params.get('name', '')
+        domain = req.host
+        if name:
+            identifier = f'{name}@{domain}'
+        else:
+            identifier = ''
+        try:
+            resp.media = await self.storage.get_identified_pubkey(identifier, domain=domain)
+        except Exception:
+            LOG.exception('idp')
+
+
 class SetupMiddleware:
     def __init__(self, storage):
         self.storage = storage
@@ -206,10 +223,6 @@ def create_app(conf_file=None):
     import os.path
     import logging, logging.config
     from functools import partial
-
-
-    if conf_file is None:
-        conf_file = os.getenv('NOSTR_CONFIG', os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/config.yaml')))
 
     print(f"Loading configuration from {conf_file}")
 
@@ -236,6 +249,7 @@ def create_app(conf_file=None):
     app.add_route('/', NostrAPI(storage))
     app.add_route('/stats/', NostrStats(storage))
     app.add_route('/event/{event_id}', ViewEventResource(storage))
+    app.add_route('/.well-known/nostr.json', NostrIDP(storage))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
     
     return app

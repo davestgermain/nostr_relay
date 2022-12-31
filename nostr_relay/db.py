@@ -235,6 +235,40 @@ class Storage:
         stats['active_subscriptions'] = (await self.num_subscriptions())['total']
         return stats
 
+    async def get_identified_pubkey(self, identifier, domain=''):
+        query = 'SELECT pubkey, identifier, relays FROM identity WHERE 1 '
+        pars = []
+        if domain:
+            query += ' AND identifier LIKE ? '
+            pars.append(f'%@{domain}')
+        if identifier:
+            query += ' AND identifier = ?'
+            pars.append(identifier)
+        data = {
+            'names': {},
+            'relays': {}
+        }
+        LOG.debug("Getting identity for ? ?", identifier, domain)
+        async with self.db.execute(query, pars) as cursor:
+            async for pubkey, identifier, relays in cursor:
+                data['names'][identifier.split('@')[0]] = pubkey
+                if relays:
+                    data['relays'][pubkey] = rapidjson.loads(relays)
+
+        return data
+
+    async def set_identified_pubkey(self, identifier, pubkey, relays=None):
+        async with self.db.cursor() as cursor:
+            if not pubkey:
+                pars = [identifier,]
+                await cursor.execute("DELETE FROM identity WHERE identifier = ?", pars)
+            elif not validate_id(pubkey):
+                raise StorageException("invalid public key")
+            else:
+                pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
+                await cursor.execute("INSERT OR REPLACE INTO identity (identifier, pubkey, relays) VALUES (?, ?, ?)", pars)
+            await self.db.commit()
+
 
 class Subscription:
     def __init__(self, db, sub_id, filters:list, queue=None, client_id=None):
@@ -549,6 +583,18 @@ async def migrate(db):
             await db.executemany("insert into verification (id, identifier, metadata_id, verified_at, failed_at) values (?, ?, ?, ?, ?)", data)
             LOG.info("migration: transferred %d verification records", len(data))
 
+    async def migrate_to_5(db):
+        """
+        Create the identity table
+        """
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS identity (
+                identifier TEXT PRIMARY KEY,
+                pubkey TEXT,
+                relays JSON
+            );
+        """)
+        LOG.info("migration: created identity table")
 
 
     version, lasttime = 0, None

@@ -1,3 +1,4 @@
+import os.path
 import yaml
 
 class ConfigClass:
@@ -54,7 +55,8 @@ class ConfigClass:
         s += ')'
         return s
 
-    def load(self, filename):
+    def load(self, filename=None):
+        filename = filename or os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/config.yaml'))
         with open(filename, 'r') as fp:
             conf = yaml.load(fp, yaml.FullLoader)
 
