@@ -419,7 +419,7 @@ class Subscription:
                     pstr = ','.join(pstr)
                     subwhere.append(f'(tag.name = "{key}" and tag.value in ({pstr})) ')
                     include_tags = True
-        return subwhere, filter_obj, include_tags
+        return subwhere, filter_obj, include_tags, limit
 
     def build_query(self, filters):
         select = '''
@@ -430,7 +430,7 @@ class Subscription:
         limit = None
         new_filters = []
         for filter_obj in filters:
-            subwhere, filter_obj, tags_in_filter = self.evaluate_filter(filter_obj)
+            subwhere, filter_obj, tags_in_filter, limit = self.evaluate_filter(filter_obj)
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
                 where.append(subwhere)
