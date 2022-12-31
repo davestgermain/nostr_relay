@@ -282,7 +282,7 @@ class Subscription:
 
     def prepare(self):
         try:
-            self.query = self.build_query(self.filters)
+            self.query, self.filters = self.build_query(self.filters)
         except Exception:
             LOG.exception("build_query")
             return False
@@ -358,6 +358,69 @@ class Subscription:
                 return True
         return False
 
+    def evaluate_filter(self, filter_obj):
+        subwhere = []
+        include_tags = False
+        for key, value in filter_obj.items():
+            if key == 'ids':
+                if not isinstance(value, list):
+                    value = [value]
+                ids = set(value)
+                if ids:
+                    exact = []
+                    for eid in ids:
+                        eid = validate_id(eid)
+                        if eid:
+                            if len(eid) == 64:
+                                exact.append(f"x'{eid}'")
+                            elif len(eid) > 2:
+                                subwhere.append(f"event.hexid like '{eid}%'")
+                    if exact:
+                        idstr = ','.join(exact)
+                        subwhere.append(f'event.id in ({idstr})')
+                else:
+                    # invalid query
+                    return [], {}, False
+            elif key == 'authors' and isinstance(value, list):
+                if value:
+                    astr = ','.join("'%s'" % validate_id(a) for a in set(value))
+                    if astr:
+                        subwhere.append(f'(pubkey in ({astr}) OR tag.name = "delegation" and tag.value in ({astr}))')
+                        include_tags = True
+                    else:
+                        return [], {}, False
+                else:
+                    # query with empty list should be invalid
+                    return [], {}, False
+            elif key == 'kinds':
+                if value:
+                    subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
+                else:
+                    return [], {}, False
+            elif key == 'since':
+                if value:
+                    subwhere.append('created_at >= %d' % int(value))
+                else:
+                    return [], {}, False
+            elif key == 'until':
+                if value:
+                    subwhere.append('created_at < %d' % int(value))
+                else:
+                    return [], {}, False
+            elif key == 'limit' and value:
+                limit = max(min(int(value or 0), 5000), 0)
+            elif key[0] == '#' and len(key) == 2 and value:
+                pstr = []
+                for val in set(value):
+                    val = validate_id(val)
+                    if val:
+                        pstr.append(f"'{val}'")
+                if pstr:
+                    pstr = ','.join(pstr)
+                    subwhere.append(f'(tag.name = "{key}" and tag.value in ({pstr})) ')
+                    include_tags = True
+        return subwhere, filter_obj, include_tags
+
     def build_query(self, filters):
         select = '''
         SELECT event.id, event.event FROM event
@@ -365,76 +428,29 @@ class Subscription:
         include_tags = False
         where = []
         limit = None
+        new_filters = []
         for filter_obj in filters:
-            subwhere = []
-
-            for key, value in filter_obj.items():
-                if key == 'ids':
-                    if not isinstance(value, list):
-                        value = [value]
-                    ids = set(value)
-                    if ids:
-                        exact = []
-                        for eid in ids:
-                            eid = validate_id(eid)
-                            if eid:
-                                if len(eid) == 64:
-                                    exact.append(f"x'{eid}'")
-                                elif len(eid) > 2:
-                                    subwhere.append(f"event.hexid like '{eid}%'")
-                        if exact:
-                            idstr = ','.join(exact)
-                            subwhere.append(f'event.id in ({idstr})')
-                    else:
-                        subwhere.append('0')
-                elif key == 'authors' and isinstance(value, list):
-                    if value:
-                        astr = ','.join("'%s'" % validate_id(a) for a in set(value))
-                        if astr:
-                            subwhere.append(f'pubkey in ({astr}) OR (tag.name = "delegation" and tag.value in ({astr}))')
-                            include_tags = True
-                    else:
-                        # query with empty list should be invalid
-                        subwhere.append('0')
-                elif key == 'kinds':
-                    if value:
-                        subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
-                    else:
-                        subwhere.append('0')
-                elif key == 'since':
-                    subwhere.append('created_at >= %d' % int(value))
-                elif key == 'until':
-                    subwhere.append('created_at < %d' % int(value))
-                elif key == 'limit':
-                    limit = max(min(int(value), 5000), 0)
-                elif key[0] == '#' and len(key) == 2:
-                    pstr = []
-                    for val in set(value):
-                        val = validate_id(val)
-                        if val:
-                            pstr.append(f"'{val}'")
-                    if pstr:
-                        pstr = ','.join(pstr)
-                        subwhere.append(f'(tag.name = "{key}" and tag.value in ({pstr})) ')
-                        include_tags = True
-
+            subwhere, filter_obj, tags_in_filter = self.evaluate_filter(filter_obj)
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
                 where.append(subwhere)
+                if tags_in_filter:
+                    include_tags = True
+                new_filters.append(filter_obj)
             else:
                 where.append('0')
         if where:
             if include_tags:
                 select += 'LEFT JOIN tag ON tag.id = event.id\n'
-            select += ' WHERE ('
-            select += ') OR ('.join(where)
+            select += ' WHERE (\n\t'
+            select += '\n) OR (\n'.join(where)
             select += ')'
         if limit is None:
             limit = 5000
         select += f'''
             ORDER BY created_at DESC LIMIT {limit}
         '''
-        return select
+        return select, new_filters
 
 
 class BaseGarbageCollector(threading.Thread):

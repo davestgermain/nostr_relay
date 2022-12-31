@@ -196,7 +196,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                     "kinds": [1], 
                     "authors": ["5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"],
                     "since": 1671325827,
-                    "until": 1672328000
+                    "until": 1672528000
                 },
                 {
                     "#e": [EVENTS[1]["id"]],
