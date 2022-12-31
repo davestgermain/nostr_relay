@@ -270,6 +270,14 @@ class Storage:
                 await cursor.execute("INSERT OR REPLACE INTO identity (identifier, pubkey, relays) VALUES (?, ?, ?)", pars)
             await self.db.commit()
 
+    async def __aenter__(self):
+        await self.setup_db()
+        return self
+
+    async def __aexit__(self, ex_type, ex, tb):
+        await self.close()
+
+
 
 class Subscription:
     def __init__(self, db, sub_id, filters:list, queue=None, client_id=None):
@@ -295,12 +303,6 @@ class Subscription:
     async def run_query(self):
         self.query_task = asyncio.current_task()
 
-        # try:
-        #     await asyncio.sleep(0.25)
-        # except asyncio.CancelledError:
-        #     LOG.debug("%s/%s cancelled", self.client_id, self.sub_id)
-        #     return
-
         query = self.query
         LOG.debug(query)
 
@@ -317,7 +319,7 @@ class Subscription:
             duration = t()
             LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
             if count > 2000:
-                LOG.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, self.filters, duration)
+                LOG.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
         except Exception:
             LOG.exception("subscription")
 
@@ -384,7 +386,7 @@ class Subscription:
                 if value:
                     astr = ','.join("'%s'" % validate_id(a) for a in set(value))
                     if astr:
-                        subwhere.append(f'(pubkey in ({astr}) OR tag.name = "delegation" and tag.value in ({astr}))')
+                        subwhere.append(f"(pubkey in ({astr}) OR (tag.name = 'delegation' AND tag.value in ({astr})))")
                         include_tags = True
                     else:
                         raise ValueError("authors")
@@ -411,18 +413,18 @@ class Subscription:
             elif key[0] == '#' and len(key) == 2 and value:
                 pstr = []
                 for val in set(value):
-                    val = validate_id(val)
                     if val:
+                        val = val.replace("'", "''")
                         pstr.append(f"'{val}'")
                 if pstr:
                     pstr = ','.join(pstr)
-                    subwhere.append(f'(tag.name = "{key}" and tag.value in ({pstr})) ')
+                    subwhere.append(f"(tag.name = '{key[1]}' and tag.value in ({pstr})) ")
                     include_tags = True
         return filter_obj, include_tags
 
     def build_query(self, filters):
         select = '''
-        SELECT event.id, event.event FROM event
+        SELECT distinct event.id, event.event FROM event
         '''
         include_tags = False
         where = set()

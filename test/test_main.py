@@ -303,6 +303,21 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             data = await self.get_event(ws, ephemeral_event["id"], exists=False)
         self.storage.garbage_collector.stop()
 
+    async def test_tag_search(self):
+        async with self.conductor.simulate_ws("/") as ws:
+            tag_event = {"id": "0b5d4c896b9f8b74feb0a63f8c50536b094ae948049d4c3ab967afc98250cee3", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["t", "test"], ["t", "foo"], ["h", "home"]], "content": "got tags", "sig": "fbbd5fcf0e385d39d6120735f49c52ccc9f278670d7ce0c4ff774ff454fd810c4d18c005db681bbb5754d19351b922570f18d3fa8fae697c0480ebfccbed06e7"}
+            await self.send_event(ws, tag_event, True)
+            await ws.send_json(["REQ", "tag", {"#t": ["test", "foo", "baz"]}])
+            data = await ws.receive_json()
+            assert data == ["EVENT", "tag", tag_event]
+            data = await ws.receive_json()
+            assert data == ["EOSE", "tag"]
+
+            await ws.send_json(["REQ", "tag", {"#h": [";'); drop table event"]}, {"#t": ["'''''hello"]}])
+            data = await ws.receive_json()
+            assert data == ["EOSE", "tag"]
+
+
     async def test_origin_blacklist(self):
         with self.assertRaises(errors.WebSocketDisconnected):
             async with self.conductor.simulate_ws('/', headers={'origin': 'http://bad.actor'}):
