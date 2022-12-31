@@ -10,6 +10,8 @@ from falcon import testing
 
 from nostr_relay.config import Config
 from nostr_relay.web import create_app, get_storage
+from nostr_relay import __version__
+
 
 PK1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
 PK2 = '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d'
@@ -87,7 +89,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 20,
                 26,
             ],
-            'version': '1.1.1',
+            'version': __version__,
         }
         result = await self.conductor.simulate_get('/', headers={'Accept': 'application/nostr+json'})
 
@@ -231,6 +233,9 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             await ws.send_json(["REQ", "unknown", {}])
             data = await ws.receive_json()
             assert data == ['EOSE', 'unknown']
+            await ws.send_json(["REQ", "toobroad", {"ids": []}, {"authors": [], "kinds": []}])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 'toobroad']
 
     async def test_replace_events(self):
         async with self.conductor.simulate_ws('/') as ws:

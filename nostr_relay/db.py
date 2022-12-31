@@ -385,14 +385,22 @@ class Subscription:
                         if exact:
                             idstr = ','.join(exact)
                             subwhere.append(f'event.id in ({idstr})')
-
+                    else:
+                        subwhere.append('0')
                 elif key == 'authors' and isinstance(value, list):
-                    astr = ','.join("'%s'" % validate_id(a) for a in set(value))
-                    if astr:
-                        subwhere.append(f'pubkey in ({astr}) OR (tag.name = "delegation" and tag.value in ({astr}))')
-                        include_tags = True
+                    if value:
+                        astr = ','.join("'%s'" % validate_id(a) for a in set(value))
+                        if astr:
+                            subwhere.append(f'pubkey in ({astr}) OR (tag.name = "delegation" and tag.value in ({astr}))')
+                            include_tags = True
+                    else:
+                        # query with empty list should be invalid
+                        subwhere.append('0')
                 elif key == 'kinds':
-                    subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
+                    if value:
+                        subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
+                    else:
+                        subwhere.append('0')
                 elif key == 'since':
                     subwhere.append('created_at >= %d' % int(value))
                 elif key == 'until':
@@ -413,6 +421,8 @@ class Subscription:
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
                 where.append(subwhere)
+            else:
+                where.append('0')
         if where:
             if include_tags:
                 select += 'LEFT JOIN tag ON tag.id = event.id\n'
