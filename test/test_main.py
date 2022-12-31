@@ -216,7 +216,15 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(1)
                 data = await ws.receive_json()
             assert data == ['EVENT', 'test', EVENTS[2]]
-            
+    
+    async def test_prefix_search(self):
+        async with self.conductor.simulate_ws('/') as ws:
+            await self.send_event(ws, EVENTS[1], True)
+            eid = EVENTS[1]['id']
+            await ws.send_json(["REQ", "prefix", {"ids": [eid[:4]]}])
+            data = await ws.receive_json()
+            assert data == ['EVENT', 'prefix', EVENTS[1]]
+
     async def test_bad_req(self):
         async with self.conductor.simulate_ws('/') as ws:
             # unsubscribe from nonexistent req

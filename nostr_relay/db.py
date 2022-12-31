@@ -21,10 +21,11 @@ LOG = logging.getLogger(__name__)
 force_hex_translation = str.maketrans('abcdef0213456789','abcdef0213456789', 'ghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
 def validate_id(obj_id):
-    obj_id = obj_id.lower().strip()
+    obj_id = (obj_id or '').lower().strip()
     if obj_id.isalnum():
         obj_id = obj_id.translate(force_hex_translation)
         return obj_id
+    return ''
 
 
 @contextmanager
@@ -373,21 +374,17 @@ class Subscription:
                         value = [value]
                     ids = set(value)
                     if ids:
-                        idstr = ','.join("x'%s'" % validate_id(eid) for eid in ids)
-                        subwhere.append(f'event.id in ({idstr})')
-                                    # else:
-                #     raise NotImplementedError()
-                #     eq = ''
-                #     while ids:
-                #         eid = validate_id(ids.pop())
-                #         if eid:
-                #             eq += "event.hexid like '%s%%'" % eid
-                #             if ids:
-                #                 eq += ' OR '
-                #         else:
-                #             pass
-                #     if eq:
-                #         subwhere.append(f'({eq})')
+                        exact = []
+                        for eid in ids:
+                            eid = validate_id(eid)
+                            if eid:
+                                if len(eid) == 64:
+                                    exact.append(f"x'{eid}'")
+                                elif len(eid) > 2:
+                                    subwhere.append(f"event.hexid like '{eid}%'")
+                        if exact:
+                            idstr = ','.join(exact)
+                            subwhere.append(f'event.id in ({idstr})')
 
                 elif key == 'authors' and isinstance(value, list):
                     astr = ','.join("'%s'" % validate_id(a) for a in set(value))
