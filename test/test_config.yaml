@@ -18,11 +18,15 @@ verification_update_frequency: 3600
 garbage_collector:
   collect_interval: 300
 
+origin_blacklist:
+  - http://bad.actor
+
 gunicorn:
   bind: 127.0.0.1:6969
   workers: 1
   loglevel: info
   reload: false
+  proc_name: test
 
 logging:
   version: 1

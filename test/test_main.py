@@ -6,7 +6,7 @@ import logging
 import time
 import threading
 
-from falcon import testing
+from falcon import testing, errors
 
 from nostr_relay.config import Config
 from nostr_relay.web import create_app, get_storage
@@ -237,7 +237,15 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             data = await ws.receive_json()
             assert data == ['EOSE', 'toobroad']
 
-            await ws.send_json(["REQ", "junk", {"ids": [None]}, {"authors": [None, 1], "kinds": [None]}, {"kinds": ['a']}, {'since': None}])
+            await ws.send_json(["REQ", "junk", 
+                {"ids": [None]}, 
+                {"authors": [None, 1], "kinds": [None]}, 
+                {"kinds": ['a']}, 
+                {'since': None, "authors": ["x"]},
+                {'until': 'a'},
+                {'until': None},
+                {'authors': []},
+            ])
             data = await ws.receive_json()
             assert data == ['EOSE', 'junk']
 
@@ -294,6 +302,11 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(3.5)
             data = await self.get_event(ws, ephemeral_event["id"], exists=False)
         self.storage.garbage_collector.stop()
+
+    async def test_origin_blacklist(self):
+        with self.assertRaises(errors.WebSocketDisconnected):
+            async with self.conductor.simulate_ws('/', headers={'origin': 'http://bad.actor'}):
+                pass
 
 
 if __name__ == "__main__":

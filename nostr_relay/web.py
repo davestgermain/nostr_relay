@@ -24,6 +24,7 @@ class Client:
         self.running = True
         self.subscription_queue = asyncio.Queue()
         self.send_task = None
+        self.sent = 0
 
     def validate_message(self, message):
         if not isinstance(message, list):
@@ -51,6 +52,7 @@ class Client:
                     message = f'["EOSE", "{sub_id}"]'
                 await ws.send_text(message)
                 LOG.debug("SENT: %s", message)
+                self.sent += len(message)
             except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
             except asyncio.CancelledError:
@@ -145,10 +147,10 @@ class NostrAPI(BaseResource):
 
     async def on_websocket(self, req: falcon.Request, ws: falcon.asgi.WebSocket):
         if Config.origin_blacklist:
-            origin = req.get_header('origin').lower()
+            origin = str(req.get_header('origin')).lower()
             if origin in Config.origin_blacklist:
                 LOG.warning("Blocked origin %s from connecting", origin)
-                await ws.close(code=1000)
+                await ws.close(code=1008)
                 return
 
         try:
@@ -167,7 +169,7 @@ class NostrAPI(BaseResource):
             await client.stop()
             await self.storage.unsubscribe(client.id)
             self.connections -= 1
-            LOG.info('Done %s', client)
+            LOG.info('Done {}. Sent {:,} bytes'.format(client, client.sent))
 
 
 class NostrStats(BaseResource):
