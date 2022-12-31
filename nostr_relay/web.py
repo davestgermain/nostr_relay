@@ -200,6 +200,10 @@ class NostrIDP(BaseResource):
             resp.media = await self.storage.get_identified_pubkey(identifier, domain=domain)
         except Exception:
             LOG.exception('idp')
+        # needed for web clients
+        resp.append_header('Access-Control-Allow-Origin', '*')
+        resp.append_header('Access-Control-Allow-Headers', '*')
+        resp.append_header('Access-Control-Allow-Methods', '*')
 
 
 class SetupMiddleware:
