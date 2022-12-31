@@ -87,7 +87,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 20,
                 26,
             ],
-            'version': '1.0.2',
+            'version': '1.1',
         }
         result = await self.conductor.simulate_get('/', headers={'Accept': 'application/nostr+json'})
 
