@@ -36,7 +36,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         pass
-        logging.disable(logging.CRITICAL)
+        # logging.disable(logging.CRITICAL)
 
 
     async def asyncSetUp(self):
@@ -71,7 +71,6 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_meta(self):
         doc = {
-            'active_subscriptions': 0,
             'contact': 5678,
             'description': 'test relay description',
             'name': 'test relay',
@@ -170,9 +169,9 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             await ws.send_json(["REQ", "test", {"ids": [EVENTS[1]["id"]]}, {"#p": EVENTS[1]['pubkey']}])
             data = await ws.receive_json()
             assert data == ['EVENT', 'test', EVENTS[1]]
-            await ws.send_json(["CLOSE", "test"])
             data = await ws.receive_json()
             assert data == ['EOSE', 'test']
+            await ws.send_json(["CLOSE", "test"])
 
             await ws.send_json(["REQ", "test2", {"kinds": [0]}])
             data = await ws.receive_json()

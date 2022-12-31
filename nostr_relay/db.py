@@ -215,6 +215,26 @@ class Storage:
         else:
             return {'total': sum(subs.values())}
 
+    async def get_stats(self):
+        stats = {'total': 0}
+        async with self.db.execute('SELECT kind, COUNT(*) FROM event GROUP BY kind order by 2 DESC') as cursor:
+            kinds = {}
+            async for kind, count in cursor:
+                kinds[kind] = count
+                stats['total'] += count
+            stats['kinds'] = kinds
+        async with self.db.execute('SELECT COUNT(*) FROM verification') as cursor:
+            row = await cursor.fetchone()
+            stats['num_verified'] = row[0]
+        try:
+            async with self.db.execute('SELECT SUM("pgsize") FROM "dbstat" WHERE name="event"') as cursor:
+                row = await cursor.fetchone()
+                stats['db_size'] = row[0]
+        except sqlite3.OperationalError:
+            pass
+        stats['active_subscriptions'] = (await self.num_subscriptions())['total']
+        return stats
+
 
 class Subscription:
     def __init__(self, db, sub_id, filters:list, queue=None, client_id=None):

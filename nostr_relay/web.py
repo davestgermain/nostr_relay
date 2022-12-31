@@ -5,6 +5,7 @@ import secrets
 import falcon
 import rapidjson
 from falcon import media
+from websockets.exceptions import ConnectionClosedError
 
 LOG = logging.getLogger('nostr_relay.web')
 
@@ -50,7 +51,7 @@ class Client:
                     message = f'["EOSE", "{sub_id}"]'
                 await ws.send_text(message)
                 LOG.debug("SENT: %s", message)
-            except falcon.WebSocketDisconnected:
+            except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
             except asyncio.CancelledError:
                 break
@@ -109,13 +110,18 @@ class Client:
         return self.id
 
 
-class NostrAPI:
+class BaseResource:
+    def __init__(self, storage):
+        self.storage = storage
+
+
+class NostrAPI(BaseResource):
     """
     Handles nostr websocket interface
     """
     def __init__(self, storage):
+        super().__init__(storage)
         self.connections = 0
-        self.storage = storage
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == 'application/nostr+json':
@@ -127,7 +133,6 @@ class NostrAPI:
                 'supported_nips': [1, 2, 5, 9, 11, 12, 15, 20, 26],
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
                 'version': __version__,
-                'active_subscriptions': (await self.storage.num_subscriptions())['total']
             }
             resp.media = media
         elif Config.redirect_homepage:
@@ -165,10 +170,12 @@ class NostrAPI:
             LOG.info('Done %s', client)
 
 
-class ViewEventResource:
-    def __init__(self, storage):
-        self.storage = storage
+class NostrStats(BaseResource):
+    async def on_get(self, req: falcon.Request, resp: falcon.Response):
+        resp.media = await self.storage.get_stats()
 
+
+class ViewEventResource(BaseResource):
     async def on_get(self, req: falcon.Request, resp: falcon.Response, event_id: str):
         event = await self.storage.get_event(event_id)
         if event:
@@ -227,6 +234,7 @@ def create_app(conf_file=None):
     LOG.info("Starting version %s", __version__)
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
     app.add_route('/', NostrAPI(storage))
+    app.add_route('/stats/', NostrStats(storage))
     app.add_route('/event/{event_id}', ViewEventResource(storage))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
     
