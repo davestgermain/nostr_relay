@@ -60,7 +60,39 @@ async def adduser(ctx, identifier='', pubkey='', relay=None):
 
         from .db import get_storage
         Config.load(ctx.obj['config'])
-        storage = get_storage()
-        await storage.setup_db()
-        await storage.set_identified_pubkey(identifier, pubkey, relays=relay)
-        await storage.close()
+        async with get_storage() as storage:
+            await storage.set_identified_pubkey(identifier, pubkey, relays=relay)
+
+
+@main.command()
+@click.option("--query", '-q', help="Query", prompt="Enter REQ filters")
+@click.option('--results/--no-results', default=True)
+@click.pass_context
+@async_cmd
+async def query(ctx, query, results):
+    import rapidjson
+    import asyncio
+    from .db import get_storage, Subscription
+    Config.load(ctx.obj['config'])
+    if not query:
+        click.echo("query is required")
+        return -1
+    query = rapidjson.loads(query)
+    queue = asyncio.Queue()
+    async with get_storage() as storage:
+        sub = Subscription(storage.db, 'cli', query, queue=queue)
+        sub.prepare()
+        click.echo(click.style('Query:', bold=True))
+        click.echo(click.style(sub.query, fg="green"))
+        await sub.run_query()
+
+    if results:
+        click.echo(click.style('Results:', fg='black', bold=True))
+
+        while not queue.empty():
+            sub, event = await queue.get()
+            if event:
+                click.echo(click.style(rapidjson.dumps(rapidjson.loads(event), indent=4), fg="red"))
+                click.echo('')
+
+
