@@ -61,6 +61,11 @@ class ConfigClass:
         for k, v in conf.items():
             setattr(self, k, v)
 
+        proc_name = self.gunicorn.get('proc_name', '')
+        if proc_name:
+            import multiprocessing
+            multiprocessing.current_process().name = proc_name
+
     def __getattr__(self, attrname):
         return None
 
