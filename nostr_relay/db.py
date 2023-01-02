@@ -114,7 +114,7 @@ class Storage:
                         asyncio.create_task(sub.notify(event))
                         count += 1
             if count:
-                LOG.info("notify-all took %.2fms for %d subscriptions", t(), count)
+                LOG.debug("notify-all took %.2fms for %d subscriptions", t(), count)
         return event, changed
 
     def validate_event(self, event):
@@ -337,25 +337,25 @@ class Subscription:
 
     def check_event(self, event, filters):
         for filter_obj in filters:
-            matched = []
+            matched = set()
             for key, value in filter_obj.items():
                 if key == 'ids':
-                    matched.append(bool(event.id in value))
+                    matched.add(event.id in value)
                 elif key == 'authors':
-                    matched.append(bool(event.pubkey in value))
+                    matched.add(event.pubkey in value)
                     for tag in event.tags:
                         if tag[0] == 'delegation' and tag[1] in value:
-                            matched.append(True)
+                            matched.add(True)
                 elif key == 'kinds':
-                    matched.append(bool(event.kind in value))
+                    matched.add(event.kind in value)
                 elif key == 'since':
-                    matched.append(bool(event.created_at >= value))
+                    matched.add(event.created_at >= value)
                 elif key == 'until':
-                    matched.append(bool(event.created_at < value))
+                    matched.add(event.created_at < value)
                 elif key[0] == '#' and len(key) == 2:
                     for tag in event.tags:
                         if tag[0] == key[1]:
-                            matched.append(bool(tag[1] in value))
+                            matched.add(tag[1] in value)
             if all(matched):
                 return True
         return False
