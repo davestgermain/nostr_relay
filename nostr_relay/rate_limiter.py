@@ -50,36 +50,36 @@ class RateLimiter(BaseRateLimiter):
             if not rule:
                 continue
             try:
-                freq, resolution = rule.split('/')
+                freq, interval = rule.split('/')
             except ValueError:
                 continue
-            resolution = resolution.lower()
-            if resolution in ('s', 'second', 'sec'):
-                resolution = 1.0
-            elif resolution in ('m', 'minute', 'min'):
-                resolution = 60.0
-            elif resolution in ('h', 'hour', 'hr'):
-                resolution = 3600
+            interval = interval.lower()
+            if interval in ('s', 'second', 'sec'):
+                interval = 1
+            elif interval in ('m', 'minute', 'min'):
+                interval = 60
+            elif interval in ('h', 'hour', 'hr'):
+                interval = 3600
             else:
-                raise ValueError(resolution)
-            rules.append((resolution, float(freq)))
+                raise ValueError(interval)
+            rules.append((interval, int(freq)))
         rules.sort(reverse=True)
         return rules
 
     def evaluate_rules(self, rules, timestamps):
         now = time.time()
         if timestamps:
-            last_time = timestamps[-1]
-            for resolution, freq in rules:
-                count = 0
-                for ts in reversed(timestamps):
-                    if (now - ts) < resolution:
-                        count += 1
-                    if count == freq:
-                        self.log.debug("%d/%d", freq, resolution)
-                        return True
-            if (now - timestamps[-1]) > max(rules)[0]:
+            if (now - timestamps[0]) > max(rules)[0]:
                 timestamps.clear()
+            else:
+                for interval, freq in rules:
+                    count = 0
+                    for ts in timestamps:
+                        if (now - ts) < interval:
+                            count += 1
+                        if count == freq:
+                            self.log.debug("%d/%d", freq, interval)
+                            return True
         return False
 
     def is_limited(self, ip_address, message):
@@ -89,21 +89,21 @@ class RateLimiter(BaseRateLimiter):
             if self.evaluate_rules(self.global_limits[command], self.recent_commands['global'][command]):
                 self.log.warning("Rate limiting globally for %s", command)
                 return True
-            self.recent_commands['global'][command].append(time.time())
+            self.recent_commands['global'][command].insert(0, time.time())
         if command in self.ip_limits:
             if self.evaluate_rules(self.ip_limits[command], self.recent_commands[ip_address][command]):
                 self.log.warning("Rate limiting %s for %s", ip_address, command)
                 return True
-            self.recent_commands[ip_address][command].append(time.time())
+            self.recent_commands[ip_address][command].insert(0, time.time())
         return False
 
     def cleanup(self):
-        max_resolution = 0
+        max_interval = 0
         if not self.ip_limits:
             return
         for rules in self.ip_limits.values():
             rule_res = max(rules)[0]
-            max_resolution = max(rule_res, max_resolution)
+            max_interval = max(rule_res, max_interval)
 
         now = time.time()
         to_del = []
@@ -113,7 +113,7 @@ class RateLimiter(BaseRateLimiter):
 
             cleared = []
             for cmd, ts in commands.items():
-                if (not ts) or (now - ts[-1]) > max_resolution:
+                if (not ts) or (now - ts[0]) > max_interval:
                     ts.clear()
                     cleared.append(cmd)
             if len(cleared) == len(commands):
