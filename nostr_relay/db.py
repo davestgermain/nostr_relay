@@ -171,7 +171,8 @@ class Storage:
                 # update mentions
                 # single-letter tags can be searched
                 # delegation tags are also searched
-                tags = set((event.id_bytes, tag[0], tag[1]) for tag in event.tags if tag[0] == 'delegation' or len(tag[0]) == 1)
+                # expiration tags are also added for the garbage collector
+                tags = set((event.id_bytes, tag[0], tag[1]) for tag in event.tags if tag[0] in ('delegation', 'expiration') or len(tag[0]) == 1)
                 if tags:
                     await cursor.executemany('INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)', tags)
             elif event.kind == EventKind.DELETE and event.tags:
@@ -498,12 +499,20 @@ class BaseGarbageCollector(threading.Thread):
 
 class QueryGarbageCollector(BaseGarbageCollector):
     query = '''
-        DELETE FROM event WHERE kind >= 20000 and kind < 30000;
+        DELETE FROM event WHERE event.id IN
+        (
+            SELECT event.id FROM event
+            LEFT JOIN tag on tag.id = event.id
+            WHERE 
+                (kind >= 20000 and kind < 30000)
+            OR
+                (tag.name = 'expiration' AND tag.value < strftime('%s'))
+    )
     '''
 
     def collect(self, db):
         cursor = db.cursor()
-        cursor.executescript(self.query)
+        cursor.execute(self.query)
         cursor.close()
         return max(0, cursor.rowcount)
 

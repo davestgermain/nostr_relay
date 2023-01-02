@@ -6,11 +6,11 @@ To intall:
 
 To run:
 
-`nostr-relay`
+`nostr-relay serve`
 
 to change the location of the sqlite database and other settings, create a yaml config file that looks [like this](../nostr_relay/file?name=config/config.yaml):
 
-and run with `nostr-relay /path/to/config.yaml`
+and run with `nostr-relay -c /path/to/config.yaml serve`
 
 
 Then add `ws://127.0.0.1:6969` to your relay list.

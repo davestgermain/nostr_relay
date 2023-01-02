@@ -88,6 +88,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 15,
                 20,
                 26,
+                40,
             ],
             'version': __version__,
         }
@@ -302,6 +303,27 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(3.5)
             data = await self.get_event(ws, ephemeral_event["id"], exists=False)
         self.storage.garbage_collector.stop()
+
+    async def test_expiration_tag(self):
+
+        async with self.conductor.simulate_ws("/") as ws:
+            expiring_event = {"id": "075040fbf395db975fccf36948908474994f70c871be0d1755459851438577d1", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1672329427]], "content": "this will expire", "sig": "77509c595b5e4e86a74dc1fa0b4a484a8bca6acc89e2e32b9794c9e0c59a0313521295e8c4b6b844be5ce83bab2cb7230bc0d9761fbf3845a2cd04dab2d70cda"}
+            distant_future_event = {"id": "eb41e9b29e08aa73bb73ebe6daa73ce59b484cfe62b95449d0bcd551186ee61c", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1987990393]], "content": "this will expire in a long time", "sig": "046d4ad7eb8b7b64528cfcde2f4171d8ad375467447a134dbd14b764973a237f977c3f8a5d3ba6cfcc5ed07d0fa68b222a18c81c2c9c115bdd55734c7006877b"}
+
+            data = await self.send_event(ws, expiring_event, True)
+            data = await self.send_event(ws, distant_future_event, True)
+            data = await self.get_event(ws, expiring_event["id"], exists=True)
+            data = await self.get_event(ws, distant_future_event["id"], exists=True)
+
+            # stop and restart garbage collector to have it run immediately
+            from nostr_relay.db import start_garbage_collector
+            self.storage.garbage_collector.stop()
+            self.storage.garbage_collector = start_garbage_collector({'collect_interval': 3})
+
+            await asyncio.sleep(3.5)
+            data = await self.get_event(ws, expiring_event["id"], exists=False)
+            self.storage.garbage_collector.stop()
+            data = await self.get_event(ws, distant_future_event["id"], exists=True)
 
     async def test_tag_search(self):
         async with self.conductor.simulate_ws("/") as ws:
