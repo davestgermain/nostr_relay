@@ -71,5 +71,11 @@ class ConfigClass:
     def __getattr__(self, attrname):
         return None
 
+    def __contains__(self, key):
+        return key in self.__dict__
+
+    def get(self, key, default=None):
+        return self.__dict__.get(key, default)
+
 
 Config = ConfigClass()

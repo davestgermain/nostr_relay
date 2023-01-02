@@ -189,8 +189,6 @@ class Storage:
         LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             await self.unsubscribe(client_id, sub_id)
-            # rate limit on resubscribing
-            await asyncio.sleep(0.75)
         sub = Subscription(self.db, sub_id, filters, queue=queue, client_id=client_id)
         if sub.prepare():
             asyncio.create_task(sub.run_query())
@@ -205,8 +203,9 @@ class Storage:
                 LOG.info("%s/%s -", client_id, sub_id)
             except KeyError:
                 pass
-        else:
+        elif client_id in self.clients:
             del self.clients[client_id]
+
 
     async def num_subscriptions(self, byclient=False):
         subs = {}

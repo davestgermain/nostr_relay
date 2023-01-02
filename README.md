@@ -8,7 +8,7 @@ To run:
 
 `nostr-relay serve`
 
-to change the location of the sqlite database and other settings, create a yaml config file that looks [like this](../nostr_relay/file?name=config/config.yaml):
+to change the location of the sqlite database and other settings, create a yaml config file that looks [like this](https://code.pobblelabs.org/fossil/nostr_relay/file?name=config/config.yaml):
 
 and run with `nostr-relay -c /path/to/config.yaml serve`
 

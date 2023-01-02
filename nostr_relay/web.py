@@ -4,6 +4,7 @@ import logging
 import secrets
 import falcon
 import rapidjson
+import time
 from falcon import media
 from websockets.exceptions import ConnectionClosedError
 
@@ -12,19 +13,22 @@ LOG = logging.getLogger('nostr_relay.web')
 import falcon.asgi
 
 from .db import get_storage
+from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
 
 
 class Client:
-    def __init__(self, ws, req):
+    def __init__(self, ws, req, rate_limiter=None):
         self.ws = ws
+        self.remote_addr = req.remote_addr
         self.id = f'{req.remote_addr}-{secrets.token_hex(2)}'
         LOG.info(f'Accepted {self.id} from Origin: {req.get_header("origin")}')
         self.running = True
         self.subscription_queue = asyncio.Queue()
         self.send_task = None
         self.sent = 0
+        self.rate_limiter = rate_limiter
 
     def validate_message(self, message):
         if not isinstance(message, list):
@@ -63,24 +67,34 @@ class Client:
     async def start(self, storage):
         ws = self.ws
         client_id = self.id
+        remote_addr = self.remote_addr
 
         while ws.ready:
             try:
-                message = await self.ws.receive_media()
+                message = await ws.receive_media()
                 if not self.validate_message(message):
                     continue
 
                 LOG.debug("RECEIVED: %s", message)
-                if message[0] == 'REQ':
+                command = message[0]
+
+                if self.rate_limiter and self.rate_limiter.is_limited(remote_addr, message):
+                    if command == 'EVENT':
+                        response = ["OK", message[1]["id"], False, 'rate-limited: slow down']
+                    else:
+                        response = ["NOTICE", "rate-limited"]
+                    await ws.send_media(response)
+                    continue
+                if command == 'REQ':
                     sub_id = str(message[1])
                     if self.send_task is None:
                         self.send_task = asyncio.create_task(self.send_subscriptions())
                         await asyncio.sleep(0)
                     await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue)
-                elif message[0] == 'CLOSE':
+                elif command == 'CLOSE':
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
-                elif message[0] == 'EVENT':
+                elif command == 'EVENT':
                     try:
                         event, result = await storage.add_event(message[1])
                     except Exception as e:
@@ -121,9 +135,10 @@ class NostrAPI(BaseResource):
     """
     Handles nostr websocket interface
     """
-    def __init__(self, storage):
+    def __init__(self, storage, rate_limiter=None):
         super().__init__(storage)
         self.connections = 0
+        self.rate_limiter = rate_limiter
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == 'application/nostr+json':
@@ -159,7 +174,7 @@ class NostrAPI(BaseResource):
         except falcon.WebSocketDisconnected:
             return
 
-        client = Client(ws, req)
+        client = Client(ws, req, rate_limiter=self.rate_limiter)
 
         try:
             await client.start(self.storage)
@@ -169,6 +184,7 @@ class NostrAPI(BaseResource):
             await client.stop()
             await self.storage.unsubscribe(client.id)
             self.connections -= 1
+            self.rate_limiter.cleanup()
             LOG.info('Done {}. Sent {:,} bytes'.format(client, client.sent))
 
 
@@ -237,6 +253,12 @@ def create_app(conf_file=None):
         print(Config)
 
     storage = get_storage()
+    if Config.logging:
+        logging.config.dictConfig(Config.logging)
+    else:
+        logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
+
+    rate_limiter = get_rate_limiter(Config)
 
     json_handler = media.JSONHandlerWS(
         dumps=partial(
@@ -245,14 +267,10 @@ def create_app(conf_file=None):
         ),
         loads=rapidjson.loads,
     )
-    if Config.logging:
-        logging.config.dictConfig(Config.logging)
-    else:
-        logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
 
     LOG.info("Starting version %s", __version__)
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
-    app.add_route('/', NostrAPI(storage))
+    app.add_route('/', NostrAPI(storage, rate_limiter=rate_limiter))
     app.add_route('/stats/', NostrStats(storage))
     app.add_route('/event/{event_id}', ViewEventResource(storage))
     app.add_route('/.well-known/nostr.json', NostrIDP(storage))

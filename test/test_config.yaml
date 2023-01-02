@@ -18,6 +18,11 @@ verification_update_frequency: 3600
 garbage_collector:
   collect_interval: 300
 
+rate_limits:
+  ip:
+    EVENT: 10/s
+    CLOSE: 10/s
+
 origin_blacklist:
   - http://bad.actor
 
