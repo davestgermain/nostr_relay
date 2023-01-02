@@ -1,2 +1,3 @@
 include config/*
 include docs/*
+include nostr_relay/config.yaml
