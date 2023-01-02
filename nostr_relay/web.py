@@ -93,7 +93,7 @@ class Client:
                         reason = '' if result else 'duplicate: exists'
                         LOG.info("%s added %s from %s", client_id, event.id, event.pubkey)
                     await ws.send_media(['OK', eventid, result, reason])
-            except falcon.WebSocketDisconnected:
+            except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
             except rapidjson.JSONDecodeError:
                 LOG.debug("json decoding")
@@ -133,7 +133,7 @@ class NostrAPI(BaseResource):
                 'pubkey': Config.sysop_pubkey,
                 'contact': Config.sysop_contact,
                 'supported_nips': [1, 2, 5, 9, 11, 12, 15, 20, 26],
-                'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
+                'software': 'https://code.pobblelabs.org/fossil/nostr_relay',
                 'version': __version__,
             }
             resp.media = media

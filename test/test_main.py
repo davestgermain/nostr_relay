@@ -77,7 +77,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             'description': 'test relay description',
             'name': 'test relay',
             'pubkey': 1234,
-            'software': 'https://code.pobblelabs.org/fossil/nostr_relay.fossil',
+            'software': 'https://code.pobblelabs.org/fossil/nostr_relay',
             'supported_nips': [
                 1,
                 2,
