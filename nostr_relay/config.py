@@ -44,7 +44,8 @@ class ConfigClass:
                     'level': 'INFO', 
                     'handlers': ['console']
                 }
-        } 
+        }
+        self._is_loaded = False
 
     def __str__(self):
         s = 'Config(\n'
@@ -56,6 +57,9 @@ class ConfigClass:
         return s
 
     def load(self, filename=None):
+        if self._is_loaded:
+            return
+
         filename = filename or os.path.abspath(os.path.join(os.path.dirname(__file__), 'config.yaml'))
         with open(filename, 'r') as fp:
             conf = yaml.load(fp, yaml.FullLoader)
@@ -67,6 +71,7 @@ class ConfigClass:
         if proc_name:
             import multiprocessing
             multiprocessing.current_process().name = proc_name
+        self._is_loaded = True
 
     def __getattr__(self, attrname):
         return None

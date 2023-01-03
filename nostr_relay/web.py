@@ -278,3 +278,23 @@ def create_app(conf_file=None):
     
     return app
 
+
+def run_with_gunicorn(conf_file=None):
+    """
+    Run the app using gunicorn's ASGIApplication
+    """
+    app = create_app(conf_file)
+    
+    from gunicorn.app.base import Application
+
+    class ASGIApplication(Application):
+        def load_config(self):
+            self.cfg.set('worker_class', 'uvicorn.workers.UvicornWorker')
+            for k, v in Config.gunicorn.items():
+                self.cfg.set(k.lower(), v)
+
+        def load(self):
+            return app
+
+    ASGIApplication().run()
+

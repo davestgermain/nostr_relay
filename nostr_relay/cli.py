@@ -1,7 +1,7 @@
 import asyncio
 import click
 from functools import wraps
-from .web import create_app
+from .web import run_with_gunicorn
 from .config import Config
 
 
@@ -18,7 +18,7 @@ def async_cmd(func):
 def main(ctx, config):
     ctx.ensure_object(dict)
 
-    ctx.obj['config'] = config
+    Config.load(config)
 
 
 @main.command()
@@ -27,20 +27,7 @@ def serve(ctx):
     """
     Start the http relay server 
     """
-    app = create_app(ctx.obj['config'])
-    
-    from gunicorn.app.base import Application
-
-    class ASGIApplication(Application):
-        def load_config(self):
-            self.cfg.set('worker_class', 'uvicorn.workers.UvicornWorker')
-            for k, v in Config.gunicorn.items():
-                self.cfg.set(k.lower(), v)
-
-        def load(self):
-            return app
-
-    ASGIApplication().run()
+    run_with_gunicorn()
 
 
 @main.command()
@@ -59,7 +46,6 @@ async def adduser(ctx, identifier='', pubkey='', relay=None):
         click.echo(f'Adding {identifier} = {pubkey} with relays: {relay}')
 
         from .db import get_storage
-        Config.load(ctx.obj['config'])
         async with get_storage() as storage:
             await storage.set_identified_pubkey(identifier, pubkey, relays=relay)
 
@@ -73,7 +59,6 @@ async def query(ctx, query, results):
     import rapidjson
     import asyncio
     from .db import get_storage, Subscription
-    Config.load(ctx.obj['config'])
     if not query:
         click.echo("query is required")
         return -1
