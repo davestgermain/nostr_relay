@@ -298,3 +298,33 @@ def run_with_gunicorn(conf_file=None):
 
     ASGIApplication().run()
 
+
+def run_with_uvicorn(conf_file=None, in_thread=False):
+    """
+    Run the app using uvicorn.
+    Optionally, start the server in a daemon thread
+    """
+    import uvicorn
+
+    app = create_app(conf_file)
+
+    options = dict(Config.gunicorn)
+    if 'bind' in options:
+        bind = options.pop('bind')
+        options['port'] = int(bind.split(':')[1])
+    if 'loglevel' in options:
+        options['log_level'] = options.pop('loglevel')
+
+    uv_config = uvicorn.Config(app, **options)
+    server = uvicorn.Server(uv_config)
+
+    if in_thread:
+        import threading
+
+        thr = threading.Thread(target=server.run, daemon=True)
+        thr.start()
+    else:
+        server.run()
+
+
+
