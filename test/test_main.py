@@ -38,7 +38,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         pass
-        # logging.disable(logging.CRITICAL)
+        logging.disable(logging.CRITICAL)
 
 
     async def asyncSetUp(self):

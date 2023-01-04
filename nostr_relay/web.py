@@ -50,7 +50,6 @@ class Client:
                 sub_id, event = await subscription_queue.get()
                 if event is not None:
                     message = f'["EVENT", "{sub_id}", {event}]'
-                    # sent += 1
                 else:
                     # done with stored events
                     message = f'["EOSE", "{sub_id}"]'

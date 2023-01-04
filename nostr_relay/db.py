@@ -130,6 +130,8 @@ class Storage:
             raise StorageException("invalid: Bad signature")
         if (time.time() - event.created_at) > Config.oldest_event:
             raise StorageException(f"invalid: {event.created_at} is too old")
+        elif (time.time() - event.created_at) < -3600:
+            raise StorageException(f"invalid: {event.created_at} is in the future")
 
     async def pre_save(self, cursor, event):
         """
@@ -155,6 +157,24 @@ class Storage:
                 await cursor.execute('delete from event where id = ?', (old_id, ))
         return True
 
+    async def process_tags(self, cursor, event):
+        if event.tags:
+            # update mentions
+            # single-letter tags can be searched
+            # delegation tags are also searched
+            # expiration tags are also added for the garbage collector
+            tags = set((event.id_bytes, tag[0], tag[1]) for tag in event.tags if tag[0] in ('delegation', 'expiration') or len(tag[0]) == 1)
+            if tags:
+                await cursor.executemany('INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)', tags)
+
+            if event.kind == EventKind.DELETE:
+                # delete the referenced events
+                for tag in event.tags:
+                    name = tag[0]
+                    if name == 'e':
+                        event_id = tag[1]
+                        await cursor.execute('DELETE FROM event WHERE id = ? AND pubkey = ?', (bytes.fromhex(event_id), event.pubkey))
+
     async def post_save(self, cursor, event):
         """
         Post-process event
@@ -167,21 +187,7 @@ class Storage:
                 query = 'DELETE FROM event WHERE pubkey = ? AND kind = ? AND created_at < ?'
                 LOG.debug("q:%s kind:%s, key:%s", query, event.kind, event.pubkey)
                 await cursor.execute(query, (event.pubkey, event.kind, event.created_at))
-            elif event.kind in (EventKind.TEXT_NOTE, EventKind.ENCRYPTED_DIRECT_MESSAGE) and event.tags:
-                # update mentions
-                # single-letter tags can be searched
-                # delegation tags are also searched
-                # expiration tags are also added for the garbage collector
-                tags = set((event.id_bytes, tag[0], tag[1]) for tag in event.tags if tag[0] in ('delegation', 'expiration') or len(tag[0]) == 1)
-                if tags:
-                    await cursor.executemany('INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)', tags)
-            elif event.kind == EventKind.DELETE and event.tags:
-                # delete the referenced events
-                for tag in event.tags:
-                    name = tag[0]
-                    if name == 'e':
-                        event_id = tag[1]
-                        await cursor.execute('DELETE FROM event WHERE id = ? AND pubkey = ?', (bytes.fromhex(event_id), event.pubkey))
+            await self.process_tags(cursor, event)
         else:
             LOG.debug("skipped post-processing for %s", event)
 

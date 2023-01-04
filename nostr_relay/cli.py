@@ -56,6 +56,9 @@ async def adduser(ctx, identifier='', pubkey='', relay=None):
 @click.pass_context
 @async_cmd
 async def query(ctx, query, results):
+    """
+    Run a REQ query and display results
+    """
     import rapidjson
     import asyncio
     from .db import get_storage, Subscription
@@ -74,10 +77,52 @@ async def query(ctx, query, results):
     if results:
         click.echo(click.style('Results:', fg='black', bold=True))
 
-        while not queue.empty():
+        while True:
             sub, event = await queue.get()
             if event:
                 click.echo(click.style(rapidjson.dumps(rapidjson.loads(event), indent=4), fg="red"))
                 click.echo('')
+            else:
+                break
 
 
+@main.command()
+@click.option("--query", '-q', help="Query", prompt="Enter REQ filters", default='[{"kinds":[0,1,2,3,4,5,5,6,7,8,9]}]')
+@click.pass_context
+@async_cmd
+async def update_tags(ctx, query):
+    """
+    Update the tags in the tag table, from a REQ query
+    """
+    import rapidjson
+    import asyncio
+    from .event import Event
+    from .db import get_storage, Subscription
+
+    if not query:
+        query = '[{}]'
+
+    query = rapidjson.loads(query)
+    queue = asyncio.Queue()
+
+    async with get_storage() as storage:
+        sub = Subscription(storage.db, 'cli', query, queue=queue)
+        sub.prepare()
+        click.echo(click.style('Query:', bold=True))
+        click.echo(click.style(sub.query, fg="green"))
+        await sub.run_query()
+
+        count = 0
+        async with storage.db.cursor() as cursor:
+
+            while True:
+                sub, event_json = await queue.get()
+                if event_json:
+                    event = Event(**rapidjson.loads(event_json))
+                    await storage.process_tags(cursor, event)
+                    count += 1
+                else:
+                    break
+
+        await storage.db.commit()
+        click.echo("Processed %d events" % count)
