@@ -65,6 +65,12 @@ class Storage:
         """)
         await self.db.close()
         
+    async def optimize(self):
+         await self.db.executescript("""
+             PRAGMA analysis_limit=400;
+             PRAGMA optimize;
+         """)
+
     async def setup_db(self):
         LOG.info(f"Database file {self.filename} {'exists' if os.path.exists(self.filename) else 'does not exist'}")
         async with aiosqlite.connect(self.filename) as db:
@@ -373,7 +379,6 @@ class Subscription:
         return False
 
     def evaluate_filter(self, filter_obj, subwhere):
-        include_tags = False
         for key, value in filter_obj.items():
             if key == 'ids':
                 if not isinstance(value, list):
@@ -387,10 +392,10 @@ class Subscription:
                             if len(eid) == 64:
                                 exact.append(f"x'{eid}'")
                             elif len(eid) > 2:
-                                subwhere.append(f"event.hexid like '{eid}%'")
+                                subwhere.append(f"event.hexid LIKE '{eid}%'")
                     if exact:
                         idstr = ','.join(exact)
-                        subwhere.append(f'event.id in ({idstr})')
+                        subwhere.append(f'event.id IN ({idstr})')
                 else:
                     # invalid query
                     raise ValueError("ids")
@@ -398,8 +403,7 @@ class Subscription:
                 if value:
                     astr = ','.join("'%s'" % validate_id(a) for a in set(value))
                     if astr:
-                        subwhere.append(f"(pubkey in ({astr}) OR (tag.name = 'delegation' AND tag.value in ({astr})))")
-                        include_tags = True
+                        subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tag WHERE name = 'delegation' AND value IN ({astr})))")
                     else:
                         raise ValueError("authors")
                 else:
@@ -407,7 +411,7 @@ class Subscription:
                     raise ValueError("authors")
             elif key == 'kinds':
                 if isinstance(value, list) and all(isinstance(k, int) for k in value):
-                    subwhere.append('kind in ({})'.format(','.join(str(int(k)) for k in value)))
+                    subwhere.append('kind IN ({})'.format(','.join(str(int(k)) for k in value)))
                 else:
                     raise ValueError("kinds")
             elif key == 'since':
@@ -430,47 +434,40 @@ class Subscription:
                         pstr.append(f"'{val}'")
                 if pstr:
                     pstr = ','.join(pstr)
-                    subwhere.append(f"(tag.name = '{key[1]}' and tag.value in ({pstr})) ")
-                    include_tags = True
-        return filter_obj, include_tags
+                    subwhere.append(f"id IN (SELECT id FROM tag WHERE name = '{key[1]}' AND value IN ({pstr})) ")
+        return filter_obj
 
     def build_query(self, filters):
         select = '''
-        SELECT distinct event.id, event.event FROM event
+        SELECT event.id, event.event FROM event
         '''
-        include_tags = False
         where = set()
         limit = None
         new_filters = []
         for filter_obj in filters:
             subwhere = []
             try:
-                filter_obj, tags_in_filter = self.evaluate_filter(filter_obj, subwhere)
+                filter_obj = self.evaluate_filter(filter_obj, subwhere)
             except ValueError:
                 LOG.debug("bad query %s", filter_obj)
                 filter_obj = {}
                 subwhere = []
-                tags_in_filter = False
             if subwhere:
                 subwhere = ' AND '.join(subwhere)
                 where.add(subwhere)
-                if tags_in_filter:
-                    include_tags = True
             else:
                 where.add('0')
             if 'limit' in filter_obj:
                 limit = filter_obj['limit']
             new_filters.append(filter_obj)
         if where:
-            if include_tags:
-                select += 'LEFT JOIN tag ON tag.id = event.id\n'
             select += ' WHERE (\n\t'
             select += '\n) OR (\n'.join(where)
             select += ')'
         if limit is None:
             limit = self.default_limit
         select += f'''
-            ORDER BY created_at DESC LIMIT {limit}
+            LIMIT {limit}
         '''
         return select, new_filters
 

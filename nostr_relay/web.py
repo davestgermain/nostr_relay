@@ -235,6 +235,7 @@ class SetupMiddleware:
         await self.storage.setup_db()
 
     async def process_shutdown(self, scope, event):
+        await self.storage.optimize()
         await self.storage.close()
 
 

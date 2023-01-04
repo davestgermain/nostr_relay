@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.2.5
+
+* Using subselects for tag queries greatly increases performance
+
 ## 1.2.4
 
 * bugfix: foreign keys were not enabled on the sqlite connection
