@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.2.4
+
+* bugfix: foreign keys were not enabled on the sqlite connection
+* optimize db upon close
+
 ## 1.2.3
 
 * Replace replaceable events if the created time is the same as the replaced event

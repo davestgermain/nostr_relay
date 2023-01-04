@@ -59,18 +59,23 @@ class Storage:
 
     async def close(self):
         await self.verifier.stop()
+        await self.db.executescript("""
+            PRAGMA analysis_limit=400;
+            PRAGMA optimize;
+        """)
         await self.db.close()
-
+        
     async def setup_db(self):
         LOG.info(f"Database file {self.filename} {'exists' if os.path.exists(self.filename) else 'does not exist'}")
         async with aiosqlite.connect(self.filename) as db:
             await migrate(db)
         self.db = await aiosqlite.connect(self.filename)
         await self.db.executescript('''
-            pragma journal_mode=wal;
-            pragma synchronous = normal;
-            pragma temp_store = memory;
-            pragma mmap_size = 30000000000;
+            PRAGMA journal_mode=wal;
+            PRAGMA synchronous = normal;
+            PRAGMA temp_store = memory;
+            PRAGMA mmap_size = 30000000000;
+            PRAGMA foreign_keys = ON;
         ''')
         await self.verifier.start(self.db)
         self.garbage_collector = start_garbage_collector()
@@ -463,7 +468,7 @@ class Subscription:
             select += '\n) OR (\n'.join(where)
             select += ')'
         if limit is None:
-            limit = 5000
+            limit = self.default_limit
         select += f'''
             ORDER BY created_at DESC LIMIT {limit}
         '''
