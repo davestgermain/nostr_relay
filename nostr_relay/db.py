@@ -148,7 +148,7 @@ class Storage:
 
         if event.is_replaceable:
             # check for older event from same pubkey
-            await cursor.execute('select id, created_at from event where pubkey = ? and kind = ? and created_at < ?', (event.pubkey, event.kind, event.created_at))
+            await cursor.execute('select id, created_at from event where pubkey = ? and kind = ? and created_at <= ?', (event.pubkey, event.kind, event.created_at))
             row = await cursor.fetchone()
             if row:
                 old_id = row[0]
@@ -286,13 +286,14 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None):
+    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=5000):
         self.db  = db
         self.sub_id = sub_id
         self.client_id = client_id
         self.filters = filters
         self.queue = queue
         self.query_task = None
+        self.default_limit = default_limit
 
     def prepare(self):
         try:
@@ -415,7 +416,7 @@ class Subscription:
                 else:
                     raise ValueError("until")
             elif key == 'limit' and value:
-                filter_obj['limit'] = max(min(int(value or 0), 5000), 0)
+                filter_obj['limit'] = max(min(int(value or 0), self.default_limit), 0)
             elif key[0] == '#' and len(key) == 2 and value:
                 pstr = []
                 for val in set(value):

@@ -65,10 +65,13 @@ async def query(ctx, query, results):
     if not query:
         click.echo("query is required")
         return -1
+    query = query.strip()
+    if not query.startswith('['):
+        query = f'[{query}]'
     query = rapidjson.loads(query)
     queue = asyncio.Queue()
     async with get_storage() as storage:
-        sub = Subscription(storage.db, 'cli', query, queue=queue)
+        sub = Subscription(storage.db, 'cli', query, queue=queue, default_limit=60000)
         sub.prepare()
         click.echo(click.style('Query:', bold=True))
         click.echo(click.style(sub.query, fg="green"))
@@ -106,7 +109,7 @@ async def update_tags(ctx, query):
     queue = asyncio.Queue()
 
     async with get_storage() as storage:
-        sub = Subscription(storage.db, 'cli', query, queue=queue)
+        sub = Subscription(storage.db, 'cli', query, queue=queue, default_limit=600000)
         sub.prepare()
         click.echo(click.style('Query:', bold=True))
         click.echo(click.style(sub.query, fg="green"))
