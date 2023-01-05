@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.2.6
+
+* bugfix: enable foreign keys on the garbage collector
+
 ## 1.2.5
 
 * Using subselects for tag queries greatly increases performance
