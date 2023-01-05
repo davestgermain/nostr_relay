@@ -59,10 +59,7 @@ class Storage:
 
     async def close(self):
         await self.verifier.stop()
-        await self.db.executescript("""
-            PRAGMA analysis_limit=400;
-            PRAGMA optimize;
-        """)
+        await self.optimize()
         await self.db.close()
         
     async def optimize(self):
@@ -491,6 +488,7 @@ class BaseGarbageCollector(threading.Thread):
         self.log.info("Starting garbage collector %s. Interval %s", self.__class__.__name__, self.collect_interval)
         while self.running:
             db = sqlite3.connect(self.db_filename)
+            db.execute("PRAGMA foreign_keys = ON;")
             try:
                 collected = self.collect(db)
             except sqlite3.OperationalError as e:
@@ -514,8 +512,8 @@ class QueryGarbageCollector(BaseGarbageCollector):
             WHERE 
                 (kind >= 20000 and kind < 30000)
             OR
-                (tag.name = 'expiration' AND tag.value < strftime('%s'))
-    )
+                (tag.name = "expiration" AND tag.value < strftime("%s"))
+        )
     '''
 
     def collect(self, db):
