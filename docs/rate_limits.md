@@ -34,6 +34,24 @@ rate_limits:
         EVENT: 100/s
 ```
 
+== Per/IP Exemptions ==
+
+To exempt or restrict certain addresses from rate limits:
+
+```
+rate_limits:
+    ip:
+        EVENT: 100/hour,10/sec
+    127.0.0.1:
+        EVENT: 100/sec
+    8.8.8.8:
+        EVENT: -1/sec
+```
+
+In this case, 8.8.8.8 would never be limited.
+
+
+== Custom Rate Limiter Class ==
 
 You can also customize rate limiting with your own class:
 ```

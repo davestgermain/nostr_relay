@@ -1,8 +1,8 @@
-import time
 import operator
 import logging
 import collections
 import importlib
+from time import time
 
 
 class BaseRateLimiter:
@@ -30,19 +30,19 @@ class RateLimiter(BaseRateLimiter):
     def __init__(self, options=None):
         super().__init__(options)
         self.log = logging.getLogger('nostr_relay.limiter')
-        self.global_limits, self.ip_limits = self.parse_options(options or {})
+        self.rules = self.parse_options(options or {})
         self.recent_commands = collections.defaultdict(lambda: collections.defaultdict(collections.deque))
 
     def parse_options(self, options):
-        global_limits = {}
-        ip_limits = {}
-        for key, value in options.get('global', {}).items():
-            global_limits[key] = self.parse_option(value)
-        for key, value in options.get('ip', {}).items():
-            ip_limits[key] = self.parse_option(value)
-        self.log.debug("Parsed rate limits: global:%s ip:%s", global_limits, ip_limits)
+        rules = {}
+        for category, value in options.items():
+            category_rules = {}
+            for event, rule in value.items():
+                category_rules[event] = self.parse_option(rule)
+            rules[category] = category_rules
+        self.log.debug("Parsed rate limits: rules:%s", rules)
         self.log.info("Rate limiter enabled")
-        return global_limits, ip_limits
+        return rules
 
     def parse_option(self, option):
         rules = []
@@ -67,7 +67,7 @@ class RateLimiter(BaseRateLimiter):
         return rules
 
     def evaluate_rules(self, rules, timestamps):
-        now = time.time()
+        now = time()
         if timestamps:
             if (now - timestamps[0]) > max(rules)[0]:
                 timestamps.clear()
@@ -85,27 +85,33 @@ class RateLimiter(BaseRateLimiter):
     def is_limited(self, ip_address, message):
         command = message[0]
         self.log.debug("Checking limits for %s %s", command, ip_address)
-        if command in self.global_limits:
-            if self.evaluate_rules(self.global_limits[command], self.recent_commands['global'][command]):
-                self.log.warning("Rate limiting globally for %s", command)
-                return True
-            self.recent_commands['global'][command].insert(0, time.time())
-        if command in self.ip_limits:
-            if self.evaluate_rules(self.ip_limits[command], self.recent_commands[ip_address][command]):
-                self.log.warning("Rate limiting %s for %s", ip_address, command)
-                return True
-            self.recent_commands[ip_address][command].insert(0, time.time())
+        if not self.rules:
+            return False
+        matches = []
+        for key in (ip_address, 'global', 'ip'):
+            rules = self.rules.get(key, {})
+            if rules:
+                if command in rules:
+                    recent_timestamps = self.recent_commands[key if key == 'global' else ip_address][command]
+                    if self.evaluate_rules(rules[command], recent_timestamps):
+                        self.log.warning("Rate limiting for %s %s", command, rules[command])
+                        return True
+                    recent_timestamps.insert(0, time())
+                    if '.' in key:
+                        # specific ip address rules take precedence
+                        # stop evaluating global and ip rules
+                        return False
         return False
 
     def cleanup(self):
         max_interval = 0
-        if not self.ip_limits:
+        if not self.rules.get('ip'):
             return
-        for rules in self.ip_limits.values():
+        for rules in self.rules['ip'].values():
             rule_res = max(rules)[0]
             max_interval = max(rule_res, max_interval)
 
-        now = time.time()
+        now = time()
         to_del = []
         for ip, commands in self.recent_commands.items():
             if ip == 'global':

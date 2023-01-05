@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.2.7
+
+* Allow per-ip rate limit rules
+
 ## 1.2.6
 
 * bugfix: enable foreign keys on the garbage collector
