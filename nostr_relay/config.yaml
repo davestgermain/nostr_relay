@@ -21,3 +21,14 @@ gunicorn:
   workers: 1
   loglevel: info
   reload: false
+
+
+# see docs/authentication.md
+authentication:
+  enabled: false
+  valid_urls: 
+    - ws://localhost:6969
+    - ws://127.0.0.1:6969
+  actions:
+    save: a
+    query: a

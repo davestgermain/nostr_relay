@@ -1,8 +1,10 @@
 # CHANGES
 
-## 1.2.7
+## 1.3
 
+* Added authentication according to NIP-42
 * Allow per-ip rate limit rules
+* Refactored to allow for :memory: sqlite databases (for testing or performance)
 
 ## 1.2.6
 

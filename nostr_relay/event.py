@@ -79,7 +79,7 @@ class Event:
     def sign(self, private_key_hex: str) -> None:
         sk = PrivateKey(bytes.fromhex(private_key_hex))
         sig = sk.schnorr_sign(bytes.fromhex(self.id), None, raw=True)
-        self.signature = sig.hex()
+        self.sig = sig.hex()
 
     def verify(self) -> bool:
         pub_key = PublicKey(bytes.fromhex("02" + self.pubkey), True) # add 02 for schnorr (bip340)

@@ -12,6 +12,8 @@ import rapidjson
 from .event import Event, EventKind
 from .config import Config
 from .verification import Verifier
+from .auth import get_authenticator, Action
+from .errors import StorageError, AuthenticationError
 
 
 LOG = logging.getLogger(__name__)
@@ -32,14 +34,12 @@ def catchtime() -> float:
     yield lambda: (perf_counter() - start) * 1000
 
 
-class StorageException(Exception):
-    pass
 
 STORAGE = None
 
-def get_storage():
+def get_storage(reload=False):
     global STORAGE
-    if STORAGE is None:
+    if STORAGE is None or reload:
         STORAGE = Storage(Config.db_filename)
     return STORAGE
 
@@ -53,13 +53,14 @@ class Storage:
         self.clients = collections.defaultdict(dict)
         self.db = None
         self.verifier = Verifier()
-        self.garbage_collector = None
+        self.garbage_collector_task = None
 
     async def close(self):
+        if self.garbage_collector_task:
+            self.garbage_collector_task.cancel()
         await self.verifier.stop()
-        await self.optimize()
         await self.db.close()
-        
+
     async def optimize(self):
          await self.db.executescript("""
              PRAGMA analysis_limit=400;
@@ -67,10 +68,8 @@ class Storage:
          """)
 
     async def setup_db(self):
-        LOG.info(f"Database file {self.filename} {'exists' if os.path.exists(self.filename) else 'does not exist'}")
-        async with aiosqlite.connect(self.filename) as db:
-            await migrate(db)
-        self.db = await aiosqlite.connect(self.filename)
+        LOG.info("Database filename: '%s'", self.filename)
+        self.db = await aiosqlite.connect(self.filename, iter_chunk_size=200)
         await self.db.executescript('''
             PRAGMA journal_mode=wal;
             PRAGMA synchronous = normal;
@@ -78,8 +77,11 @@ class Storage:
             PRAGMA mmap_size = 30000000000;
             PRAGMA foreign_keys = ON;
         ''')
+        await migrate(self.db)
         await self.verifier.start(self.db)
-        self.garbage_collector = start_garbage_collector()
+        self.garbage_collector_task = start_garbage_collector(self.db)
+        self.authenticator = get_authenticator(self, Config.get('authentication', {}))
+        LOG.debug("done setting up")
 
     async def get_event(self, event_id):
         """
@@ -91,7 +93,7 @@ class Storage:
             if row:
                 return row[0]
 
-    async def add_event(self, event_json):
+    async def add_event(self, event_json, auth_token=None):
         """
         Add an event from json object
         Return (status, event)
@@ -100,9 +102,13 @@ class Storage:
             event = Event(**event_json)
         except Exception as e:
             LOG.error("bad json")
-            raise StorageException("invalid: Bad JSON")
+            raise StorageError("invalid: Bad JSON")
 
         await asyncio.get_running_loop().run_in_executor(None, self.validate_event, event)
+        # check authentication
+        if not await self.authenticator.can_do(auth_token, Action.save.value, event):
+            raise AuthenticationError("rejected: permission denied")
+
         changed = False
         async with self.db.cursor() as cursor:
             do_save = await self.pre_save(cursor, event)
@@ -131,13 +137,13 @@ class Storage:
             LOG.error("Received large event %s from %s size:%d max_size:%d",
                 event.id, event.pubkey, len(event.content), Config.max_event_size
             )
-            raise StorageException("invalid: 280 characters should be enough for anybody")
+            raise StorageError("invalid: 280 characters should be enough for anybody")
         if not event.verify():
-            raise StorageException("invalid: Bad signature")
+            raise StorageError("invalid: Bad signature")
         if (time() - event.created_at) > Config.oldest_event:
-            raise StorageException(f"invalid: {event.created_at} is too old")
+            raise StorageError(f"invalid: {event.created_at} is too old")
         elif (time() - event.created_at) < -3600:
-            raise StorageException(f"invalid: {event.created_at} is in the future")
+            raise StorageError(f"invalid: {event.created_at} is in the future")
 
     async def pre_save(self, cursor, event):
         """
@@ -197,12 +203,15 @@ class Storage:
         else:
             LOG.debug("skipped post-processing for %s", event)
 
-    async def subscribe(self, client_id, sub_id, filters, queue):
+    async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None):
         LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             await self.unsubscribe(client_id, sub_id)
         sub = Subscription(self.db, sub_id, filters, queue=queue, client_id=client_id)
         if sub.prepare():
+            if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
+                raise AuthenticationError("rejected: permission denied")
+
             asyncio.create_task(sub.run_query())
             self.clients[client_id][sub_id] = sub
             LOG.info("%s/%s +", client_id, sub_id)
@@ -283,7 +292,7 @@ class Storage:
                 pars = [identifier,]
                 await cursor.execute("DELETE FROM identity WHERE identifier = ?", pars)
             elif not validate_id(pubkey):
-                raise StorageException("invalid public key")
+                raise StorageError("invalid public key")
             else:
                 pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
                 await cursor.execute("INSERT OR REPLACE INTO identity (identifier, pubkey, relays) VALUES (?, ?, ?)", pars)
@@ -474,12 +483,10 @@ class Subscription:
         return select, new_filters
 
 
-class BaseGarbageCollector(threading.Thread):
-    def __init__(self, db_filename, **kwargs):
-        super().__init__()
+class BaseGarbageCollector:
+    def __init__(self, db, **kwargs):
         self.log = logging.getLogger("nostr_relay.db:gc")
-        self.db_filename = db_filename
-        self.daemon = True
+        self.db = db
         self.running = True
         self.collect_interval = kwargs.get('collect_interval', 300)
         for k, v in kwargs.items():
@@ -488,20 +495,22 @@ class BaseGarbageCollector(threading.Thread):
     def collect(self, db):
         pass
 
-    def run(self):
+    async def start(self):
         self.log.info("Starting garbage collector %s. Interval %s", self.__class__.__name__, self.collect_interval)
         while self.running:
-            db = sqlite3.connect(self.db_filename)
-            db.execute("PRAGMA foreign_keys = ON;")
             try:
-                collected = self.collect(db)
+                collected = await self.collect(self.db)
             except sqlite3.OperationalError as e:
+                self.log.exception("collect")
                 break
-            if collected:
-                self.log.info("Collected garbage (%d events)", collected)
-                db.commit()
-            db.close()
-            sleep(self.collect_interval)
+            except Exception:
+                self.log.exception("collect")
+            else:
+                if collected:
+                    self.log.info("Collected garbage (%d events)", collected)
+                    await db.commit()
+            await asyncio.sleep(self.collect_interval)
+        self.log.info("Stopped")
 
     def stop(self):
         self.running = False
@@ -520,27 +529,25 @@ class QueryGarbageCollector(BaseGarbageCollector):
         )
     '''
 
-    def collect(self, db):
-        cursor = db.cursor()
-        cursor.execute(self.query)
-        cursor.close()
-        return max(0, cursor.rowcount)
+    async def collect(self, db):
+        async with self.db.cursor() as cursor:
+            await cursor.execute(self.query)
+            return max(0, cursor.rowcount)
 
 
-def start_garbage_collector(options=None):
+def start_garbage_collector(db, options=None):
     options = options or Config.garbage_collector
     if options:
         gc_path = options.pop("class", "nostr_relay.db:QueryGarbageCollector")
-        module_name, gc_classname = gc_path.rsplit(':', 1)
+        module_name, gc_classname = gc_path.split(':', 1)
         if module_name != 'nostr_relay.db':
             import importlib
             module = importlib.import_module(module_name)
             gc_class = getattr(module, gc_classname)
         else:
             gc_class = globals()[gc_classname]
-        gc_obj = gc_class(Config.db_filename, **options)
-        gc_obj.start()
-        return gc_obj
+        gc_obj = gc_class(db, **options)
+        return asyncio.create_task(gc_obj.start())
 
 
 async def migrate(db):
@@ -653,6 +660,19 @@ async def migrate(db):
         """)
         LOG.info("migration: created identity table")
 
+
+    async def migrate_to_6(db):
+        """
+        Create the authentication table
+        """
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS auth (
+                pubkey TEXT PRIMARY KEY,
+                roles TEXT,
+                created DATETIME
+            );
+        """)
+        LOG.info("migration: created authentication table")
 
     version, lasttime = 0, None
     try:

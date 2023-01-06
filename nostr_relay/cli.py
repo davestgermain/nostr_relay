@@ -129,3 +129,50 @@ async def update_tags(ctx, query):
 
         await storage.db.commit()
         click.echo("Processed %d events" % count)
+
+
+@click.group()
+@click.pass_context
+def role(ctx):
+    """
+    View/Set authentication roles
+    """
+    pass
+
+
+@role.command()
+@click.option('--pubkey', '-p', help='Public Key', default='')
+@click.option('--roles', '-r', help='Roles', default='')
+@async_cmd
+async def set(pubkey, roles):
+    """
+    Set roles in the authentication table
+    """
+    from .db import get_storage
+
+    if not pubkey:
+        click.echo('public key is required')
+        return -1
+
+    async with get_storage() as storage:
+        await storage.authenticator.set_roles(pubkey, roles)
+        click.echo(f"Set roles for pubkey: {pubkey} to {roles}")
+
+
+@role.command()
+@click.option('--pubkey', '-p', help='Public Key', default='')
+@async_cmd
+async def get(pubkey):
+    """
+    Get roles from the authentication table
+    """
+    from .db import get_storage
+    async with get_storage() as storage:
+        if not pubkey:
+            async for pubkey, role in storage.authenticator.get_all_roles():
+                click.echo(f'{pubkey}: {role}')
+        else:
+            roles = await storage.authenticator.get_roles(pubkey)
+            click.echo(roles)
+
+main.add_command(role)

@@ -15,7 +15,7 @@ class ConfigClass:
     def __init__(self):
         self.gunicorn = {}
         self.garbage_collector = {
-            'class': 'nostr_relay.db.QueryGarbageCollector',
+            'class': 'nostr_relay.db:QueryGarbageCollector',
             'collect_interval': 300,
         }
         self.logging = {

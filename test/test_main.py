@@ -10,6 +10,9 @@ from falcon import testing, errors
 
 from nostr_relay.config import Config
 from nostr_relay.web import create_app, get_storage
+from nostr_relay.event import Event, PrivateKey
+from nostr_relay.auth import Authenticator
+
 from nostr_relay import __version__
 
 
@@ -30,11 +33,10 @@ REPLACE_EVENTS = [
 DELEGATION_EVENT = { "id": "a080fd288b60ac2225ff2e2d815291bd730911e583e177302cc949a15dc2b2dc",  "pubkey": "62903b1ff41559daf9ee98ef1ae67cc52f301bb5ce26d14baba3052f649c3f49",  "created_at": 1660896109,  "kind": 1, "tags":[["delegation","86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e","kind=1&created_at>1640995200","c33c88ba78ec3c760e49db591ac5f7b129e3887c8af7729795e85a0588007e5ac89b46549232d8f918eefd73e726cb450135314bfda419c030d0b6affe401ec1"]],  "content": "Hello world",  "sig": "cd4a3cd20dc61dcbc98324de561a07fd23b3d9702115920c0814b5fb822cc5b7c5bcdaf3fa326d24ed50c5b9c8214d66c75bae34e3a84c25e4d122afccb66eb6"}
 
 
-class TestEvents(unittest.IsolatedAsyncioTestCase):
+class BaseTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = create_app(os.path.join(os.path.dirname(__file__), './test_config.yaml'))
-        cls.storage = get_storage()
+        Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'))
 
     def setUp(self):
         pass
@@ -42,7 +44,10 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
 
     async def asyncSetUp(self):
-        self.conductor = testing.ASGIConductor(self.app)
+        self.storage = get_storage(reload=True)
+
+        self.conductor = testing.ASGIConductor(create_app(storage=self.storage))
+
         await self.storage.setup_db()
 
     async def asyncTearDown(self):
@@ -50,20 +55,28 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
         await self.storage.db.commit()
         await self.storage.close()
 
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.delete_db_files()
-        logging.disable(logging.NOTSET)
+    async def send_event(self, ws, event, get_response=False):
+        await ws.send_json(["EVENT", event])
+        if get_response:
+            return await ws.receive_json()
 
-    @classmethod
-    def delete_db_files(cls):
-        filename = cls.storage.filename
-        for fname in [filename, filename + '-shm', filename + '-wal']:
-            if os.path.exists(fname):
-                os.unlink(fname)
+    async def get_event(self, ws, event_id, check=True, exists=True, req_name="checkid"):
+        await ws.send_json(["REQ", req_name, {"ids": [event_id]}])
+        data = await ws.receive_json()
+        if check:
+            if exists:
+                assert data[0] == 'EVENT'
+                assert data[1] == req_name
+                assert data[2]["id"] == event_id
+            else:
+                assert data == ["EOSE", req_name]
+        if exists:
+            end = await ws.receive_json()
+            assert end == ["EOSE", req_name]
+        return data
 
 
+class MainTests(BaseTests):
     async def test_get_event(self):
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, EVENTS[0], True)
@@ -102,26 +115,6 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
         Config.redirect_homepage = 'https://nostr.net/'
         result = await self.conductor.simulate_get('/')
         assert result.headers['location'] == 'https://nostr.net/'
-
-    async def send_event(self, ws, event, get_response=False):
-        await ws.send_json(["EVENT", event])
-        if get_response:
-            return await ws.receive_json()
-
-    async def get_event(self, ws, event_id, check=True, exists=True, req_name="checkid"):
-        await ws.send_json(["REQ", req_name, {"ids": [event_id]}])
-        data = await ws.receive_json()
-        if check:
-            if exists:
-                assert data[0] == 'EVENT'
-                assert data[1] == req_name
-                assert data[2]["id"] == event_id
-            else:
-                assert data == ["EOSE", req_name]
-        if exists:
-            end = await ws.receive_json()
-            assert end == ["EOSE", req_name]
-        return data
 
     async def test_bad_protocol(self):
         async with self.conductor.simulate_ws('/') as ws:
@@ -292,8 +285,8 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
     async def test_ephemeral_event(self):
         from nostr_relay.db import start_garbage_collector
-        self.storage.garbage_collector.stop()
-        self.storage.garbage_collector = start_garbage_collector({'collect_interval': 3})
+        # self.storage.garbage_collector.stop()
+        self.storage.garbage_collector_task = start_garbage_collector(self.storage.db, {'collect_interval': 3})
         ephemeral_event = {"id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 22222, "tags": [], "content": "ephemeral", "sig": "66f8a055bb3c3fc3fe0ca0ead4d5558d69627dc4f40c7320228d9e4c266509f6ac8a2ff085abbd1a9d3b0c733529bf3fcd87d43f731990467181ed1995aad5bc"}
 
         async with self.conductor.simulate_ws("/") as ws:
@@ -302,7 +295,7 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
             data = await self.get_event(ws, ephemeral_event["id"], exists=True)
             await asyncio.sleep(3.5)
             data = await self.get_event(ws, ephemeral_event["id"], exists=False)
-        self.storage.garbage_collector.stop()
+        # self.storage.garbage_collector.stop()
 
     async def test_expiration_tag(self):
 
@@ -317,12 +310,12 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
 
             # stop and restart garbage collector to have it run immediately
             from nostr_relay.db import start_garbage_collector
-            self.storage.garbage_collector.stop()
-            self.storage.garbage_collector = start_garbage_collector({'collect_interval': 3})
+            # self.storage.garbage_collector.stop()
+            self.storage.garbage_collector = start_garbage_collector(self.storage.db, {'collect_interval': 3})
 
             await asyncio.sleep(3.5)
             await self.get_event(ws, expiring_event["id"], exists=False)
-            self.storage.garbage_collector.stop()
+            self.storage.garbage_collector.cancel()
             await self.get_event(ws, distant_future_event["id"], exists=True)
 
     async def test_tag_search(self):
@@ -359,6 +352,102 @@ class TestEvents(unittest.IsolatedAsyncioTestCase):
                 assert data[3] != 'rate-limited: slow down'
             data = await self.send_event(ws, EVENTS[1], True)
             assert data[3] == 'rate-limited: slow down'
+
+
+class AuthTests(BaseTests):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.storage.authenticator = Authenticator(self.storage, {"enabled": True, "actions": {"save": "w", "query": "r"}})
+        self.readonly = ('f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753', '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d', 'r')
+        self.writeonly = ('e93505f081570221255f05341f4fbaeaf682d59d2e2472d7dd02d566f6372178', '647bf6e686fde33dfbfd4f3d987bc13b1c202f952b70dc3539d8d85172b40561', 'w')
+        self.readwrite = ('9679a595bdb5fe4330a263c96201eac204dfe24b2e2dc36ac12698faf9275130', '1bd80e4430c40a6fa9f59582124b5a6fbc1815e26455801e6b1edf113554de03', 'rw')
+        self.unknown = ('94cdca784fd5a951cc1a4672e86847f957f29b35b7ac9476bc891d68e5b68b34', 'a0f1e845b43508847d10cb7ac7928cd9dafc9b82d0b3c4c08b264e177b4355de', 's')
+
+        for _, pubkey, role in (self.readonly, self.writeonly, self.readwrite, self.unknown):
+            await self.storage.authenticator.set_roles(pubkey, role)
+
+    async def asyncTearDown(self):
+        await self.storage.db.execute("DELETE from auth")
+        await super().asyncTearDown()
+
+    def make_auth_event(self, privkey, pubkey, kind=22242, created_at=None, content='ws://localhost:6969', **kwargs):
+        auth_event = Event(kind=kind, pubkey=pubkey, created_at=created_at or time.time(), content=content, **kwargs)
+        auth_event.sign(privkey)
+        return auth_event.to_json_object()
+
+    async def test_auth_message(self):
+        """
+        Test AUTH message type
+        """
+        async with self.conductor.simulate_ws("/") as ws:
+            # send one with a bad signature
+            await ws.send_json(["AUTH", self.make_auth_event(self.unknown[0], self.readonly[1])])
+            data = await ws.receive_json()
+            assert data == ['NOTICE', 'invalid: Bad signature']
+
+            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1], created_at=time.time() - 3600)])
+            data = await ws.receive_json()
+            assert data == ['NOTICE', 'invalid: Too old']
+
+            # correct auth sends no response
+            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1])])
+
+
+    async def test_role_permissions(self):
+        """
+        Test read/write roles
+        """
+        # test write permission
+        async with self.conductor.simulate_ws("/") as ws:
+            response = await self.send_event(ws, EVENTS[1], True)
+            assert response[2] == False
+            assert response[3] == 'rejected: permission denied'
+
+            await ws.send_json(["AUTH", self.make_auth_event(self.writeonly[0], self.writeonly[1])])
+
+            response = await self.send_event(ws, EVENTS[1], True)
+            assert response[2] == True
+            assert response[3] == ''
+
+            # role is write only, so read will fail
+            await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
+            data = await ws.receive_json()
+            assert data == ['NOTICE', 'rejected: permission denied']
+
+        # test read permission
+        async with self.conductor.simulate_ws("/") as ws:
+            response = await self.send_event(ws, EVENTS[2], True)
+            assert response[2] == False
+            assert response[3] == 'rejected: permission denied'
+
+            await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
+            data = await ws.receive_json()
+            assert data == ['NOTICE', 'rejected: permission denied']
+
+            # authenticate as read only role
+            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1])])
+            response = await self.send_event(ws, EVENTS[2], True)
+            assert response[2] == False
+            assert response[3] == 'rejected: permission denied'
+
+            await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
+            data = await ws.receive_json()
+            assert data[0] == 'EVENT'
+            assert data[1] == 'read'
+            assert data[2]['id'] == EVENTS[1]['id']
+
+        # test unknown role
+        async with self.conductor.simulate_ws("/") as ws:
+            await ws.send_json(["AUTH", self.make_auth_event(self.unknown[0], self.unknown[1])])
+
+            # authenticated, but can't do anything
+            response = await self.send_event(ws, EVENTS[2], True)
+            assert response[2] == False
+            assert response[3] == 'rejected: permission denied'
+
+            await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
+            data = await ws.receive_json()
+            assert data == ['NOTICE', 'rejected: permission denied']
 
 
 if __name__ == "__main__":

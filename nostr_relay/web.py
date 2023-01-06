@@ -14,6 +14,7 @@ from .db import get_storage
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
+from .errors import AuthenticationError
 
 
 class Client:
@@ -33,7 +34,7 @@ class Client:
             return False
         if len(message) < 2:
             return False
-        if message[0] not in ('EVENT', 'REQ', 'CLOSE'):
+        if message[0] not in ('EVENT', 'REQ', 'CLOSE', 'AUTH'):
             return False
         return True
 
@@ -66,6 +67,7 @@ class Client:
         client_id = self.id
         remote_addr = self.remote_addr
 
+        auth_token = {}
         while ws.ready:
             try:
                 message = await ws.receive_media()
@@ -87,13 +89,13 @@ class Client:
                     if self.send_task is None:
                         self.send_task = asyncio.create_task(self.send_subscriptions())
                         await asyncio.sleep(0)
-                    await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue)
+                    await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue, auth_token=auth_token)
                 elif command == 'CLOSE':
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
                 elif command == 'EVENT':
                     try:
-                        event, result = await storage.add_event(message[1])
+                        event, result = await storage.add_event(message[1], auth_token=auth_token)
                     except Exception as e:
                         LOG.error(str(e))
                         result = False
@@ -104,6 +106,11 @@ class Client:
                         reason = '' if result else 'duplicate: exists'
                         LOG.info("%s added %s from %s", client_id, event.id, event.pubkey)
                     await ws.send_media(['OK', eventid, result, reason])
+                elif command == 'AUTH':
+                    auth_token = await storage.authenticator.authenticate(message[1])
+            except AuthenticationError as e:
+                LOG.warning("Auth error. %s token:%s", str(e), auth_token)
+                await ws.send_media(["NOTICE", str(e)])
             except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
             except rapidjson.JSONDecodeError:
@@ -238,7 +245,7 @@ class SetupMiddleware:
 
 
 
-def create_app(conf_file=None):
+def create_app(conf_file=None, storage=None):
     import os
     import os.path
     import logging, logging.config
@@ -250,7 +257,7 @@ def create_app(conf_file=None):
     if Config.DEBUG:
         print(Config)
 
-    storage = get_storage()
+    storage = storage or get_storage()
     if Config.logging:
         logging.config.dictConfig(Config.logging)
     else:
