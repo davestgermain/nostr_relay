@@ -1,4 +1,4 @@
-= Authentication =
+# Authentication
 
 nostr-relay implements authentication according to [NIP-42](https://github.com/nostr-protocol/nips/blob/auth/42.md).
 
@@ -11,7 +11,7 @@ Currently, this implementation defines `actions` and `roles`. The actions are `s
 There can be an arbitrary number of roles. The only role used internally is `a` -- corresponding to an anonymous, logged-out user.  
 You can associate public keys with whichever (single-letter) roles you want. In the future, there may be more actions and fine-grained permissions per role.
 
-== Configuration ==
+## Configuration
 
 To enable. Add this to your configuration file:
 ```
@@ -39,7 +39,7 @@ authentication:
 
 You must add the url(s) that your relay answers to, in order to validate the authentication event.
 
-== How to assign roles ==
+## How to assign roles
 
 `nostr-relay -c /your/config/file.yaml role set -p <public_key> -r <roles>`
 
@@ -47,7 +47,7 @@ To get roles:
 
 `nostr-relay -c /your/config/file.yaml role get -p <public_key>`
 
-== Extending Authentication ==
+## Extending Authentication
 
 To implement custom authentication or roles, create your own class somewhere with these methods:
 
@@ -78,7 +78,7 @@ Your class will be initialized like this:
 `MyAuthenticator(storage, authentication_config: dict)`
 
 
-== Future Work ==
+## Future Work
 
 There will be fine-grained, configurable permission checks -- for instance, to allow pubkeys to save only their own events, or events of pubkeys that follow them, etc.
 

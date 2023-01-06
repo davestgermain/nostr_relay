@@ -151,7 +151,7 @@ class NostrAPI(BaseResource):
                 'description': Config.relay_description,
                 'pubkey': Config.sysop_pubkey,
                 'contact': Config.sysop_contact,
-                'supported_nips': [1, 2, 5, 9, 11, 12, 15, 20, 26, 40],
+                'supported_nips': [1, 2, 5, 9, 11, 12, 15, 20, 26, 40, 42],
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay',
                 'version': __version__,
             }

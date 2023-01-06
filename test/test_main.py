@@ -102,6 +102,7 @@ class MainTests(BaseTests):
                 20,
                 26,
                 40,
+                42,
             ],
             'version': __version__,
         }
