@@ -308,7 +308,7 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=5000):
+    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=6000):
         self.db  = db
         self.sub_id = sub_id
         self.client_id = client_id
@@ -334,20 +334,21 @@ class Subscription:
 
         query = self.query
         LOG.debug(query)
-
+        sub_id = self.sub_id
+        queue = self.queue
         try:
             count = 0
             with catchtime() as t:
                 async with self.db.execute(query) as cursor:
                     async for row in cursor:
                         eid, event = row
-                        await self.queue.put((self.sub_id, event))
+                        await queue.put((sub_id, event))
                         count += 1
-                await self.queue.put((self.sub_id, None))
+                await queue.put((sub_id, None))
 
             duration = t()
             LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
-            if count > 2000:
+            if duration > 500:
                 LOG.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
         except Exception:
             LOG.exception("subscription")
