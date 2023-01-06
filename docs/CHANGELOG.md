@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.3.2
+
+* bugfix for garbage collector deadlock
+
 ## 1.3.1
 
 * Only advertise NIP-42 if authentication is enabled

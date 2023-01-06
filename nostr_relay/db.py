@@ -71,7 +71,8 @@ class Storage:
         LOG.info("Database filename: '%s'", self.filename)
         self.db = await aiosqlite.connect(self.filename, iter_chunk_size=200)
         await self.db.executescript('''
-            PRAGMA journal_mode=wal;
+            PRAGMA journal_mode = wal;
+            PRAGMA locking_mode = NORMAL;
             PRAGMA synchronous = normal;
             PRAGMA temp_store = memory;
             PRAGMA mmap_size = 30000000000;
@@ -287,16 +288,15 @@ class Storage:
         return data
 
     async def set_identified_pubkey(self, identifier, pubkey, relays=None):
-        async with self.db.cursor() as cursor:
-            if not pubkey:
-                pars = [identifier,]
-                await cursor.execute("DELETE FROM identity WHERE identifier = ?", pars)
-            elif not validate_id(pubkey):
-                raise StorageError("invalid public key")
-            else:
-                pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
-                await cursor.execute("INSERT OR REPLACE INTO identity (identifier, pubkey, relays) VALUES (?, ?, ?)", pars)
-            await self.db.commit()
+        if not pubkey:
+            pars = [identifier,]
+            await self.db.execute("DELETE FROM identity WHERE identifier = ?", pars)
+        elif not validate_id(pubkey):
+            raise StorageError("invalid public key")
+        else:
+            pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
+            await self.db.execute("INSERT OR REPLACE INTO identity (identifier, pubkey, relays) VALUES (?, ?, ?)", pars)
+        await self.db.commit()
 
     async def __aenter__(self):
         await self.setup_db()
@@ -498,18 +498,23 @@ class BaseGarbageCollector:
     async def start(self):
         self.log.info("Starting garbage collector %s. Interval %s", self.__class__.__name__, self.collect_interval)
         while self.running:
+            await asyncio.sleep(self.collect_interval)
+            collected = 0
+            cursor = None
             try:
-                collected = await self.collect(self.db)
+                cursor = await self.db.cursor()
+                collected = await self.collect(cursor)
             except sqlite3.OperationalError as e:
                 self.log.exception("collect")
                 break
             except Exception:
                 self.log.exception("collect")
-            else:
-                if collected:
-                    self.log.info("Collected garbage (%d events)", collected)
-                    await db.commit()
-            await asyncio.sleep(self.collect_interval)
+            finally:
+                if cursor:
+                    await cursor.close()
+            if collected:
+                self.log.info("Collected garbage (%d events)", collected)
+                await db.commit()
         self.log.info("Stopped")
 
     def stop(self):
@@ -529,10 +534,9 @@ class QueryGarbageCollector(BaseGarbageCollector):
         )
     '''
 
-    async def collect(self, db):
-        async with self.db.cursor() as cursor:
-            await cursor.execute(self.query)
-            return max(0, cursor.rowcount)
+    async def collect(self, cursor):
+        await cursor.execute(self.query)
+        return max(0, cursor.rowcount)
 
 
 def start_garbage_collector(db, options=None):
@@ -684,6 +688,7 @@ async def migrate(db):
         row = await cursor.fetchone()
         if row:
             version, lasttime = row
+        await cursor.close()
 
     migrated = False
     while 1:
