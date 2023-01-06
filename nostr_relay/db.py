@@ -502,19 +502,17 @@ class BaseGarbageCollector:
             collected = 0
             cursor = None
             try:
-                cursor = await self.db.cursor()
-                collected = await self.collect(cursor)
+                async with self.db.cursor() as cursor:
+                    collected = await self.collect(cursor)
+                if collected:
+                    self.log.info("Collected garbage (%d events)", collected)
+                await self.db.commit()
             except sqlite3.OperationalError as e:
                 self.log.exception("collect")
                 break
             except Exception:
                 self.log.exception("collect")
-            finally:
-                if cursor:
-                    await cursor.close()
-            if collected:
-                self.log.info("Collected garbage (%d events)", collected)
-                await db.commit()
+                continue
         self.log.info("Stopped")
 
     def stop(self):
