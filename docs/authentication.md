@@ -13,7 +13,7 @@ You can associate public keys with whichever (single-letter) roles you want. In 
 
 ## Configuration
 
-To enable. Add this to your configuration file:
+To enable, add this to your configuration file:
 ```
 authentication:
   valid_urls: 
