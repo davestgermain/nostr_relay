@@ -259,7 +259,7 @@ class Storage:
         num_clients = 0
         for k, v in subs.items():
             num_clients += 1
-            num_subs += len(v)
+            num_subs += v
         stats['active_subscriptions'] = num_subs
         stats['active_clients'] = num_clients
         return stats

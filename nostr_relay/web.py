@@ -251,8 +251,6 @@ def create_app(conf_file=None, storage=None):
     import logging, logging.config
     from functools import partial
 
-    print(f"Loading configuration from {conf_file}")
-
     Config.load(conf_file)
     if Config.DEBUG:
         print(Config)
