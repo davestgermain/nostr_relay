@@ -13,6 +13,7 @@ class ConfigClass:
     redirect_homepage = ''
 
     def __init__(self):
+        self.authentication = {}
         self.gunicorn = {}
         self.garbage_collector = {
             'class': 'nostr_relay.db:QueryGarbageCollector',

@@ -146,12 +146,15 @@ class NostrAPI(BaseResource):
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == 'application/nostr+json':
+            supported_nips = [1, 2, 5, 9, 11, 12, 15, 20, 26, 40]
+            if Config.authentication.get('enabled'):
+                supported_nips.append(42)
             metadata = {
                 'name': Config.relay_name,
                 'description': Config.relay_description,
                 'pubkey': Config.sysop_pubkey,
                 'contact': Config.sysop_contact,
-                'supported_nips': [1, 2, 5, 9, 11, 12, 15, 20, 26, 40, 42],
+                'supported_nips': supported_nips,
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay',
                 'version': __version__,
             }
