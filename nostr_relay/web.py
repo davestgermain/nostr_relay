@@ -1,10 +1,8 @@
 import asyncio
-import collections
 import logging
 import secrets
 import falcon
 import rapidjson
-import time
 from falcon import media
 from websockets.exceptions import ConnectionClosedError
 
@@ -141,7 +139,7 @@ class NostrAPI(BaseResource):
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == 'application/nostr+json':
-            media = {
+            metadata = {
                 'name': Config.relay_name,
                 'description': Config.relay_description,
                 'pubkey': Config.sysop_pubkey,
@@ -150,7 +148,7 @@ class NostrAPI(BaseResource):
                 'software': 'https://code.pobblelabs.org/fossil/nostr_relay',
                 'version': __version__,
             }
-            resp.media = media
+            resp.media = metadata
         elif Config.redirect_homepage:
             raise falcon.HTTPFound(Config.redirect_homepage)
         else:

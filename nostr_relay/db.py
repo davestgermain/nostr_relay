@@ -1,12 +1,10 @@
 import os.path
 import asyncio
 import sqlite3
-import time
 import collections
 import logging
-import traceback
 import threading
-from time import perf_counter
+from time import perf_counter, sleep, time
 from contextlib import contextmanager
 
 import aiosqlite
@@ -136,9 +134,9 @@ class Storage:
             raise StorageException("invalid: 280 characters should be enough for anybody")
         if not event.verify():
             raise StorageException("invalid: Bad signature")
-        if (time.time() - event.created_at) > Config.oldest_event:
+        if (time() - event.created_at) > Config.oldest_event:
             raise StorageException(f"invalid: {event.created_at} is too old")
-        elif (time.time() - event.created_at) < -3600:
+        elif (time() - event.created_at) < -3600:
             raise StorageException(f"invalid: {event.created_at} is in the future")
 
     async def pre_save(self, cursor, event):
@@ -242,12 +240,19 @@ class Storage:
             row = await cursor.fetchone()
             stats['num_verified'] = row[0]
         try:
-            async with self.db.execute('SELECT SUM("pgsize") FROM "dbstat" WHERE name="event"') as cursor:
+            async with self.db.execute('SELECT SUM("pgsize") FROM "dbstat" WHERE name in ("event", "tag")') as cursor:
                 row = await cursor.fetchone()
                 stats['db_size'] = row[0]
         except sqlite3.OperationalError:
             pass
-        stats['active_subscriptions'] = (await self.num_subscriptions())['total']
+        subs = await self.num_subscriptions(True)
+        num_subs = 0
+        num_clients = 0
+        for k, v in subs.items():
+            num_clients += 1
+            num_subs += len(v)
+        stats['active_subscriptions'] = num_subs
+        stats['active_clients'] = num_clients
         return stats
 
     async def get_identified_pubkey(self, identifier, domain=''):
@@ -484,7 +489,6 @@ class BaseGarbageCollector(threading.Thread):
         pass
 
     def run(self):
-        import sqlite3
         self.log.info("Starting garbage collector %s. Interval %s", self.__class__.__name__, self.collect_interval)
         while self.running:
             db = sqlite3.connect(self.db_filename)
@@ -497,7 +501,7 @@ class BaseGarbageCollector(threading.Thread):
                 self.log.info("Collected garbage (%d events)", collected)
                 db.commit()
             db.close()
-            time.sleep(self.collect_interval)
+            sleep(self.collect_interval)
 
     def stop(self):
         self.running = False
@@ -526,11 +530,15 @@ class QueryGarbageCollector(BaseGarbageCollector):
 def start_garbage_collector(options=None):
     options = options or Config.garbage_collector
     if options:
-        gc_path = options.pop("class", "nostr_relay.db.QueryGarbageCollector")
-        module_name, gc_class = gc_path.rsplit('.', 1)
-        import importlib
-        module = importlib.import_module(module_name)
-        gc_obj = getattr(module, gc_class)(Config.db_filename, **options)
+        gc_path = options.pop("class", "nostr_relay.db:QueryGarbageCollector")
+        module_name, gc_classname = gc_path.rsplit(':', 1)
+        if module_name != 'nostr_relay.db':
+            import importlib
+            module = importlib.import_module(module_name)
+            gc_class = getattr(module, gc_classname)
+        else:
+            gc_class = globals()[gc_classname]
+        gc_obj = gc_class(Config.db_filename, **options)
         gc_obj.start()
         return gc_obj
 
@@ -539,7 +547,6 @@ async def migrate(db):
     """
     Migrate the database
     """
-    import sqlite3
 
     async def migrate_to_1(db):
         """

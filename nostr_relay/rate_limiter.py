@@ -1,7 +1,5 @@
-import operator
 import logging
 import collections
-import importlib
 from time import time
 
 
@@ -147,11 +145,16 @@ def get_rate_limiter(options):
 
     If options["rate_limits"] is not set, return NullRateLimiter
     """
+
     if 'rate_limits' in options:
         classpath = options.get('rate_limiter_class', 'nostr_relay.rate_limiter:RateLimiter')
         modulename, classname = classpath.split(':', 1)
-        module = importlib.import_module(modulename)
-        classobj = getattr(module, classname)
+        if modulename == 'nostr_relay.rate_limiter':
+            classobj = globals()[classname]
+        else:
+            import importlib
+            module = importlib.import_module(modulename)
+            classobj = getattr(module, classname)
     else:
         classobj = NullRateLimiter
     return classobj(options.get('rate_limits', {}))
