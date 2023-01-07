@@ -46,41 +46,59 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         privkey1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
         pubkey1 = '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'
 
-        wrong_kind = Event(kind=22241, pubkey=pubkey1, created_at=time.time(), content='ws://localhost:6969')
+        challenge = 'challenge'
+        wrong_kind = Event(kind=22241, pubkey=pubkey1, created_at=time.time(), tags=[('relay', 'ws://localhost:6969'), ('challenge', challenge)])
         wrong_kind.sign(privkey1)
 
         with self.assertRaises(AuthenticationError) as e:
-            await auth.authenticate(wrong_kind.to_json_object())
+            await auth.authenticate(wrong_kind.to_json_object(), challenge)
 
         assert e.exception.args[0] == 'invalid: Wrong kind. Must be 22242.'
 
-        wrong_domain = Event(kind=22242, pubkey=pubkey1, created_at=time.time(), content='ws://relay.foo.biz')
+        wrong_domain = Event(kind=22242, pubkey=pubkey1, created_at=time.time(), tags=[('relay', 'ws://relay.foo.biz'), ('challenge', challenge)])
         wrong_domain.sign(privkey1)
 
         with self.assertRaises(AuthenticationError) as e:
-            await auth.authenticate(wrong_domain.to_json_object())
+            await auth.authenticate(wrong_domain.to_json_object(), challenge)
 
         assert e.exception.args[0] == 'invalid: Wrong domain'
 
-        too_old = Event(kind=22242, pubkey=pubkey1, created_at=time.time() - 605, content='ws://localhost:6969')
+        wrong_challenge = Event(kind=22242, pubkey=pubkey1, created_at=time.time(), tags=[('relay', 'ws://localhost:6969'), ('challenge', 'bad')])
+        wrong_challenge.sign(privkey1)
+
+        with self.assertRaises(AuthenticationError) as e:
+            await auth.authenticate(wrong_challenge.to_json_object(), challenge)
+
+        assert e.exception.args[0] == 'invalid: Wrong challenge'
+
+        missing_tags = Event(kind=22242, pubkey=pubkey1, created_at=time.time(), tags=[])
+        missing_tags.sign(privkey1)
+
+        with self.assertRaises(AuthenticationError) as e:
+            await auth.authenticate(missing_tags.to_json_object(), challenge)
+
+        assert e.exception.args[0] == 'invalid: Missing required tags'
+
+
+        too_old = Event(kind=22242, pubkey=pubkey1, created_at=time.time() - 605, tags=[('relay', 'ws://localhost:6969'), ('challenge', challenge)])
         too_old.sign(privkey1)
 
         with self.assertRaises(AuthenticationError) as e:
-            await auth.authenticate(too_old.to_json_object())
+            await auth.authenticate(too_old.to_json_object(), challenge)
 
         assert e.exception.args[0] == 'invalid: Too old'
 
-        good_event = Event(kind=22242, pubkey=pubkey1, created_at=time.time(), content='ws://localhost:6969')
+        good_event = Event(kind=22242, pubkey=pubkey1, created_at=time.time(), tags=[('relay', 'ws://localhost:6969'), ('challenge', challenge)])
         good_event.sign(privkey1)
 
-        token = await auth.authenticate(good_event.to_json_object())
+        token = await auth.authenticate(good_event.to_json_object(), challenge)
         assert token['pubkey'] == pubkey1
         assert token['roles'] == set('a')
 
         # now create a role
         await auth.set_roles(pubkey1, 'rw')
 
-        token = await auth.authenticate(good_event.to_json_object())
+        token = await auth.authenticate(good_event.to_json_object(), challenge)
         assert token['pubkey'] == pubkey1
         assert token['roles'] == set('rw')
         await storage.close()

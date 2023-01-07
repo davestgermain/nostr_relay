@@ -102,7 +102,7 @@ class MainTests(BaseTests):
                 20,
                 26,
                 40,
-                42,
+                # 42,
             ],
             'version': __version__,
         }
@@ -371,8 +371,17 @@ class AuthTests(BaseTests):
         await self.storage.db.execute("DELETE from auth")
         await super().asyncTearDown()
 
-    def make_auth_event(self, privkey, pubkey, kind=22242, created_at=None, content='ws://localhost:6969', **kwargs):
-        auth_event = Event(kind=kind, pubkey=pubkey, created_at=created_at or time.time(), content=content, **kwargs)
+    async def get_challenge(self, ws):
+        data = await ws.receive_json()
+        assert data[0] == 'AUTH'
+        return data[1]
+
+    def make_auth_event(self, privkey, pubkey, kind=22242, created_at=None, challenge='', relay='ws://localhost:6969', **kwargs):
+        tags = [
+            ['relay', relay],
+            ['challenge', challenge]
+        ]
+        auth_event = Event(kind=kind, pubkey=pubkey, created_at=created_at or time.time(), tags=tags, **kwargs)
         auth_event.sign(privkey)
         return auth_event.to_json_object()
 
@@ -381,18 +390,20 @@ class AuthTests(BaseTests):
         Test AUTH message type
         """
         async with self.conductor.simulate_ws("/") as ws:
+            # server sends AUTH message challenge
+            challenge = await self.get_challenge(ws)
+
             # send one with a bad signature
-            await ws.send_json(["AUTH", self.make_auth_event(self.unknown[0], self.readonly[1])])
+            await ws.send_json(["AUTH", self.make_auth_event(self.unknown[0], self.readonly[1], challenge=challenge)])
             data = await ws.receive_json()
             assert data == ['NOTICE', 'invalid: Bad signature']
 
-            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1], created_at=time.time() - 3600)])
+            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1], challenge=challenge, created_at=time.time() - 3600)])
             data = await ws.receive_json()
             assert data == ['NOTICE', 'invalid: Too old']
 
             # correct auth sends no response
-            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1])])
-
+            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1], challenge=challenge)])
 
     async def test_role_permissions(self):
         """
@@ -400,11 +411,13 @@ class AuthTests(BaseTests):
         """
         # test write permission
         async with self.conductor.simulate_ws("/") as ws:
+            challenge = await self.get_challenge(ws)
+
             response = await self.send_event(ws, EVENTS[1], True)
             assert response[2] == False
             assert response[3] == 'rejected: permission denied'
 
-            await ws.send_json(["AUTH", self.make_auth_event(self.writeonly[0], self.writeonly[1])])
+            await ws.send_json(["AUTH", self.make_auth_event(self.writeonly[0], self.writeonly[1], challenge=challenge)])
 
             response = await self.send_event(ws, EVENTS[1], True)
             assert response[2] == True
@@ -417,6 +430,8 @@ class AuthTests(BaseTests):
 
         # test read permission
         async with self.conductor.simulate_ws("/") as ws:
+            challenge = await self.get_challenge(ws)
+
             response = await self.send_event(ws, EVENTS[2], True)
             assert response[2] == False
             assert response[3] == 'rejected: permission denied'
@@ -426,7 +441,7 @@ class AuthTests(BaseTests):
             assert data == ['NOTICE', 'rejected: permission denied']
 
             # authenticate as read only role
-            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1])])
+            await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1], challenge=challenge)])
             response = await self.send_event(ws, EVENTS[2], True)
             assert response[2] == False
             assert response[3] == 'rejected: permission denied'
@@ -439,7 +454,8 @@ class AuthTests(BaseTests):
 
         # test unknown role
         async with self.conductor.simulate_ws("/") as ws:
-            await ws.send_json(["AUTH", self.make_auth_event(self.unknown[0], self.unknown[1])])
+            challenge = await self.get_challenge(ws)
+            await ws.send_json(["AUTH", self.make_auth_event(self.unknown[0], self.unknown[1], challenge=challenge)])
 
             # authenticated, but can't do anything
             response = await self.send_event(ws, EVENTS[2], True)

@@ -34,7 +34,7 @@ gunicorn:
   proc_name: test
 
 authentication:
-  enabled: true
+  enabled: false
   actions:
     query: a
     save: a

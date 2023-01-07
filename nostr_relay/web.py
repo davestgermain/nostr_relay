@@ -68,7 +68,11 @@ class Client:
         client_id = self.id
         remote_addr = self.remote_addr
 
-        auth_token = {}        
+        auth_token = {}
+
+        if storage.authenticator.is_enabled:
+            await ws.send_media(["AUTH", client_id])
+
         while ws.ready:
             try:
                 message = await ws.receive_media()
@@ -108,7 +112,7 @@ class Client:
                         LOG.info("%s added %s from %s", client_id, event.id, event.pubkey)
                     await ws.send_media(['OK', eventid, result, reason])
                 elif command == 'AUTH':
-                    auth_token = await storage.authenticator.authenticate(message[1])
+                    auth_token = await storage.authenticator.authenticate(message[1], challenge=client_id)
             except AuthenticationError as e:
                 LOG.warning("Auth error. %s token:%s", str(e), auth_token)
                 await ws.send_media(["NOTICE", str(e)])

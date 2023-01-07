@@ -1,6 +1,6 @@
 import enum
-from time import time
 import logging
+from time import time
 
 from .event import Event
 from .errors import StorageError, AuthenticationError
@@ -26,9 +26,9 @@ class Authenticator:
     def __init__(self, storage, options):
         self.default_roles = set(Role.anonymous.value)
         self.storage = storage
-        self.actions, self.valid_urls, self.enabled = self.parse_options(options)
+        self.actions, self.valid_urls, self.is_enabled = self.parse_options(options)
         self.log = logging.getLogger('nostr_relay.auth')
-        if self.enabled:
+        if self.is_enabled:
             self.log.info("Authentication enabled.")
 
     def parse_options(self, options):
@@ -43,7 +43,7 @@ class Authenticator:
         enabled = options.get('enabled', False)
         return actions, valid_urls, enabled
 
-    def check_auth_event(self, auth_event):
+    def check_auth_event(self, auth_event, challenge):
         """
         Validate the authentication event
         """
@@ -56,8 +56,18 @@ class Authenticator:
             raise AuthenticationError("invalid: Too old")
         elif since <= -600:
             raise AuthenticationError("invalid: Too new")
-        if auth_event.content not in self.valid_urls:
-            raise AuthenticationError("invalid: Wrong domain")
+        found_relay = found_challenge = False
+        for tag in auth_event.tags:
+            if tag[0] == 'relay':
+                if tag[1] not in self.valid_urls:
+                    raise AuthenticationError("invalid: Wrong domain")
+                found_relay = True
+            elif tag[0] == 'challenge':
+                if tag[1] != challenge:
+                    raise AuthenticationError("invalid: Wrong challenge")
+                found_challenge = True
+        if not (found_relay and found_challenge):
+            raise AuthenticationError("invalid: Missing required tags")
 
     async def evaluate_target(self, auth_token, action, target):
         # TODO: implement per-object permissions here
@@ -90,14 +100,14 @@ class Authenticator:
             await cursor.execute("INSERT OR REPLACE INTO auth (pubkey, roles, created) VALUES (?, ?, datetime('now'))", (pubkey, roles))
         await self.storage.db.commit()
 
-    async def authenticate(self, auth_event_json: dict):
+    async def authenticate(self, auth_event_json: dict, challenge: str=''):
         """
         Authenticate, using the authentication event described in NIP-42
 
         This will always return a token which can be used with can_do(auth_token, action)
         """
         auth_event = Event(**auth_event_json)
-        self.check_auth_event(auth_event)
+        self.check_auth_event(auth_event, challenge)
 
         token = {
             'pubkey': auth_event.pubkey,
@@ -115,7 +125,7 @@ class Authenticator:
         target can be any object and will be evaluated by evaluate_target(auth_token, action, target)
         """
         can_do = True
-        if self.enabled:
+        if self.is_enabled:
             if action in self.actions:
                 can_do = bool(self.actions[action].intersection(auth_token.get('roles', self.default_roles)))
                 if can_do and target:
