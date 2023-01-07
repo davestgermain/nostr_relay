@@ -180,7 +180,7 @@ class Verifier:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10.0), json_serialize=rapidjson.dumps) as session:
 
             for vid, identifier, verified_at, pubkey, metadata_id in candidates:
-                LOG.info("Checking verification for %s. Last verified %d", identifier, verified_at)
+                self.log.info("Checking verification for %s. Last verified %d", identifier, verified_at)
                 uname, domain = identifier.split('@', 1)
                 domain = domain.lower()
                 if not self.check_allowed_domains(domain):
