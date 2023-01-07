@@ -3,6 +3,7 @@ import logging
 import secrets
 import falcon
 import rapidjson
+from time import time
 from falcon import media
 from websockets.exceptions import ConnectionClosedError
 
@@ -67,7 +68,7 @@ class Client:
         client_id = self.id
         remote_addr = self.remote_addr
 
-        auth_token = {}
+        auth_token = {}        
         while ws.ready:
             try:
                 message = await ws.receive_media()
@@ -178,6 +179,8 @@ class NostrAPI(BaseResource):
         try:
             await ws.accept()
             self.connections += 1
+            start = time()
+
         except falcon.WebSocketDisconnected:
             return
 
@@ -192,7 +195,8 @@ class NostrAPI(BaseResource):
             await self.storage.unsubscribe(client.id)
             self.connections -= 1
             self.rate_limiter.cleanup()
-            LOG.info('Done {}. Sent {:,} bytes'.format(client, client.sent))
+            duration = time() - start
+            LOG.info('Done {}. sent: {:,} bytes. duration: {:.0f}sec'.format(client, client.sent, duration))
 
 
 class NostrStats(BaseResource):
