@@ -1,6 +1,6 @@
 import logging
 import collections
-from time import time
+from time import perf_counter
 
 
 class BaseRateLimiter:
@@ -65,7 +65,7 @@ class RateLimiter(BaseRateLimiter):
         return rules
 
     def evaluate_rules(self, rules, timestamps):
-        now = time()
+        now = perf_counter()
         if timestamps:
             if (now - timestamps[0]) > max(rules)[0]:
                 timestamps.clear()
@@ -94,7 +94,7 @@ class RateLimiter(BaseRateLimiter):
                     if self.evaluate_rules(rules[command], recent_timestamps):
                         self.log.warning("Rate limiting for %s %s", command, rules[command])
                         return True
-                    recent_timestamps.insert(0, time())
+                    recent_timestamps.insert(0, perf_counter())
                     if '.' in key:
                         # specific ip address rules take precedence
                         # stop evaluating global and ip rules
@@ -109,7 +109,7 @@ class RateLimiter(BaseRateLimiter):
             rule_res = max(rules)[0]
             max_interval = max(rule_res, max_interval)
 
-        now = time()
+        now = perf_counter()
         to_del = []
         for ip, commands in self.recent_commands.items():
             if ip == 'global':
