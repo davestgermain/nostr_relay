@@ -215,14 +215,14 @@ class Storage:
 
             asyncio.create_task(sub.run_query())
             self.clients[client_id][sub_id] = sub
-            LOG.info("%s/%s +", client_id, sub_id)
+            LOG.debug("%s/%s +", client_id, sub_id)
 
     async def unsubscribe(self, client_id, sub_id=None):
         if sub_id:
             try:
                 self.clients[client_id][sub_id].cancel()
                 del self.clients[client_id][sub_id]
-                LOG.info("%s/%s -", client_id, sub_id)
+                LOG.debug("%s/%s -", client_id, sub_id)
             except KeyError:
                 pass
         elif client_id in self.clients:
@@ -361,7 +361,8 @@ class Subscription:
 
         with catchtime() as t:
             matched = self.check_event(event, self.filters)
-        LOG.debug('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, t())
+        duration = t()
+        LOG.debug('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, duration)
         if matched:
             await self.queue.put((self.sub_id, event))
 
