@@ -196,7 +196,7 @@ class NostrAPI(BaseResource):
             self.connections -= 1
             self.rate_limiter.cleanup()
             duration = time() - start
-            LOG.info('Done {}. sent: {:,} bytes. duration: {:.0f}sec'.format(client, client.sent, duration))
+            LOG.info('Done {}. sent: {:,}B. duration: {:.0f}S'.format(client, client.sent, duration))
 
 
 class NostrStats(BaseResource):
@@ -282,7 +282,7 @@ def create_app(conf_file=None, storage=None):
     app = falcon.asgi.App(middleware=SetupMiddleware(storage))
     app.add_route('/', NostrAPI(storage, rate_limiter=rate_limiter))
     app.add_route('/stats/', NostrStats(storage))
-    app.add_route('/event/{event_id}', ViewEventResource(storage))
+    app.add_route('/e/{event_id}', ViewEventResource(storage))
     app.add_route('/.well-known/nostr.json', NostrIDP(storage))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
     

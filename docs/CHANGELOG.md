@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.3.5
+
+* Serve event json from /e/ instead of /event/
+
 ## 1.3.4
 
 * Added command `nostr-relay mirror` to mirror requests between relays

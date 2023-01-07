@@ -80,7 +80,7 @@ class MainTests(BaseTests):
     async def test_get_event(self):
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, EVENTS[0], True)
-        result = await self.conductor.simulate_get(f'/event/{EVENTS[0]["id"]}')
+        result = await self.conductor.simulate_get(f'/e/{EVENTS[0]["id"]}')
         data = result.json
         assert data == EVENTS[0]
 
