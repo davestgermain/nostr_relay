@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.3.4
+
+* Added command `nostr-relay mirror` to mirror requests between relays
+* Reduce noisy logging
+
 ## 1.3.3
 
 * bugfix for garbage collector deadlock
