@@ -176,3 +176,59 @@ async def get(pubkey):
             click.echo(roles)
 
 main.add_command(role)
+
+
+@main.command()
+@click.option('--ids', help='ids')
+@click.option('--authors', help='authors')
+@click.option('--kinds', help='kinds')
+@click.option('--etags', help='etags')
+@click.option('--ptags', help='ptags')
+@click.option('--since', help='since')
+@click.option('--until', help='until')
+@click.option('--limit', help='limit')
+@click.option('--source', help='source relay', default='ws://localhost:6969')
+@click.option('--target', help='to relay', default='ws://localhost:6969')
+def mirror(ids, authors, kinds, etags, ptags, since, until, limit, source, target):
+    """
+    Mirror REQ from source relay(s) to target relay(s)
+
+    (this just calls the commands: nostreq, jq, and nostcat, which must exist on the PATH)
+    """
+    cmd = ['nostreq']
+    if ids:
+        cmd.append(f'--ids {ids}')
+    if authors:
+        cmd.append(f'--authors {authors}')
+    if kinds:
+        cmd.append(f'--kinds {kinds}')
+    if etags:
+        cmd.append(f'--etags {etags}')
+    if ptags:
+        cmd.append(f'--ptags {ptags}')
+    if since:
+        cmd.append(f'--since {since}')
+    if until:
+        cmd.append(f'--until {until}')
+    if limit:
+        cmd.append(f'--limit {limit}')
+
+    cmd.append('|')
+    cmd.append("nostcat")
+    cmd.extend(source.split(','))
+    cmd.append('|')
+    cmd.append("jq -c 'del(.[1])'")
+    cmd.append('|')
+    cmd.append("nostcat --stream")
+    cmd.extend(target.split(','))
+
+    command = ' '.join(cmd)
+    print(command)
+    import subprocess, sys
+    proc = subprocess.Popen(command, shell=True, bufsize=0, stdout=sys.stdout, stderr=subprocess.PIPE)
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.kill()
+        return 0
+
