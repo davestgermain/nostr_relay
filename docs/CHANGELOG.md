@@ -2,6 +2,7 @@
 
 ## 1.3.5
 
+* Update authentication to reflect draft NIP-42
 * Serve event json from /e/ instead of /event/
 
 ## 1.3.4

@@ -108,7 +108,7 @@ class Storage:
         await asyncio.get_running_loop().run_in_executor(None, self.validate_event, event)
         # check authentication
         if not await self.authenticator.can_do(auth_token, Action.save.value, event):
-            raise AuthenticationError("rejected: permission denied")
+            raise AuthenticationError("restricted: permission denied")
 
         changed = False
         async with self.db.cursor() as cursor:
@@ -211,7 +211,7 @@ class Storage:
         sub = Subscription(self.db, sub_id, filters, queue=queue, client_id=client_id)
         if sub.prepare():
             if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
-                raise AuthenticationError("rejected: permission denied")
+                raise AuthenticationError("restricted: permission denied")
 
             asyncio.create_task(sub.run_query())
             self.clients[client_id][sub_id] = sub

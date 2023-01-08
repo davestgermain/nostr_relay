@@ -415,7 +415,7 @@ class AuthTests(BaseTests):
 
             response = await self.send_event(ws, EVENTS[1], True)
             assert response[2] == False
-            assert response[3] == 'rejected: permission denied'
+            assert response[3] == 'restricted: permission denied'
 
             await ws.send_json(["AUTH", self.make_auth_event(self.writeonly[0], self.writeonly[1], challenge=challenge)])
 
@@ -426,7 +426,7 @@ class AuthTests(BaseTests):
             # role is write only, so read will fail
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
             data = await ws.receive_json()
-            assert data == ['NOTICE', 'rejected: permission denied']
+            assert data == ['NOTICE', 'restricted: permission denied']
 
         # test read permission
         async with self.conductor.simulate_ws("/") as ws:
@@ -434,17 +434,17 @@ class AuthTests(BaseTests):
 
             response = await self.send_event(ws, EVENTS[2], True)
             assert response[2] == False
-            assert response[3] == 'rejected: permission denied'
+            assert response[3] == 'restricted: permission denied'
 
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
             data = await ws.receive_json()
-            assert data == ['NOTICE', 'rejected: permission denied']
+            assert data == ['NOTICE', 'restricted: permission denied']
 
             # authenticate as read only role
             await ws.send_json(["AUTH", self.make_auth_event(self.readonly[0], self.readonly[1], challenge=challenge)])
             response = await self.send_event(ws, EVENTS[2], True)
             assert response[2] == False
-            assert response[3] == 'rejected: permission denied'
+            assert response[3] == 'restricted: permission denied'
 
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
             data = await ws.receive_json()
@@ -460,11 +460,11 @@ class AuthTests(BaseTests):
             # authenticated, but can't do anything
             response = await self.send_event(ws, EVENTS[2], True)
             assert response[2] == False
-            assert response[3] == 'rejected: permission denied'
+            assert response[3] == 'restricted: permission denied'
 
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
             data = await ws.receive_json()
-            assert data == ['NOTICE', 'rejected: permission denied']
+            assert data == ['NOTICE', 'restricted: permission denied']
 
 
 if __name__ == "__main__":
