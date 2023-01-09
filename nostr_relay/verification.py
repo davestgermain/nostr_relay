@@ -31,14 +31,31 @@ class Verifier:
     SUCCESS_QUERY = "UPDATE verification SET verified_at = strftime('%s', 'now') WHERE id = ?"
 
 
-    def __init__(self):
+    def __init__(self, storage):
         self.running = True
         self.queue = asyncio.Queue()
         # nip05_verification can be "enabled", "disabled", or "passive"
         self.is_enabled = Config.nip05_verification == 'enabled'
         self.should_verify = Config.nip05_verification in ('enabled', 'passive')
         if self.should_verify:
+            self.setup_db(storage)
             self.log = logging.getLogger(__name__)
+
+    def setup_db(self, storage):
+        from sqlalchemy import Table, Integer, Column, Blob, Text, Timestamp, ForeignKey, Index
+        self.Verification = Table(
+            'verification',
+            storage.metadata,
+            Column('id', Integer(), primary_key=True),
+            Column('identifier', Text()),
+            Column('metadata_id', Blob(), ForeignKey(Event.c.id)),
+            Column('verified_at', Timestamp()),
+            Column('failed_at', Timestamp())
+        )
+        Index('identifieridx', self.Verification.c.identifier)
+        Index('metadataidx', self.Verification.c.metadata_id)
+        Index('verifiedidx', self.Verification.c.verified_at)
+
 
     async def update_metadata(self, cursor, event):
         # metadata events are evaluated as candidates
@@ -68,7 +85,7 @@ class Verifier:
             return False
         return True
 
-    async def verify(self, cursor, event):
+    async def verify(self, conn, event):
         """
         Check an event against the NIP-05
         verification table

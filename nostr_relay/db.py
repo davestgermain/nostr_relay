@@ -9,6 +9,9 @@ from contextlib import contextmanager
 
 import aiosqlite
 import rapidjson
+import sqlalchemy as sa
+from sqlalchemy.engine.base import Engine
+
 from .event import Event, EventKind
 from .config import Config
 from .verification import Verifier
@@ -44,53 +47,121 @@ def get_storage(reload=False):
     return STORAGE
 
 
-class Storage:
-    INSERT_EVENT = "INSERT OR IGNORE INTO event (id, event) VALUES (?, ?)"
-    CHECK_QUERY = 'SELECT 1 from event where id = ?'
 
-    def __init__(self, filename='nostr.sqlite3'):
-        self.filename = filename
-        self.clients = collections.defaultdict(dict)
-        self.db = None
-        self.verifier = Verifier()
-        self.garbage_collector_task = None
-
-    async def close(self):
-        if self.garbage_collector_task:
-            self.garbage_collector_task.cancel()
-        await self.verifier.stop()
-        await self.db.close()
-
-    async def optimize(self):
-         await self.db.executescript("""
-             PRAGMA analysis_limit=400;
-             PRAGMA optimize;
-         """)
-
-    async def setup_db(self):
-        LOG.info("Database filename: '%s'", self.filename)
-        self.db = await aiosqlite.connect(self.filename, iter_chunk_size=200)
-        await self.db.executescript('''
+@sa.event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    pragma = '''
             PRAGMA journal_mode = wal;
             PRAGMA locking_mode = NORMAL;
             PRAGMA synchronous = normal;
             PRAGMA temp_store = memory;
             PRAGMA mmap_size = 30000000000;
             PRAGMA foreign_keys = ON;
-        ''')
-        await migrate(self.db)
-        await self.verifier.start(self.db)
-        self.garbage_collector_task = start_garbage_collector(self.db)
+    '''
+    for stmt in pragma.split(';'):
+        cursor.execute(stmt)
+    cursor.close()
+
+
+class Storage:
+
+    def __init__(self, db_url='sqlite+aiosqlite:///nostr.sqlite3'):
+        if '://' not in db_url:
+            db_url = f'sqlite+aiosqlite:///{db_url}'
+        self.db_url = db_url
+        self.clients = collections.defaultdict(dict)
+        self.db = None
+        self.metadata = sa.MetaData()
+        self.verifier = Verifier(self)
+        self.garbage_collector_task = None
+
+    async def close(self):
+        if self.garbage_collector_task:
+            self.garbage_collector_task.cancel()
+        await self.verifier.stop()
+        await self.db.dispose()
+
+    async def optimize(self):
+        async with self.db.begin() as conn:
+            await conn.execute(sa.text("PRAGMA analysis_limit=400"))
+            await conn.execute(sa.text("PRAGMA optimize"))
+
+    async def setup_db(self):
+        LOG.info("Database URL: '%s'", self.db_url)
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        self.EventTable = sa.Table(
+            'event',
+            self.metadata,
+            sa.Column('id', sa.BLOB(), primary_key=True),
+            sa.Column('created_at', sa.Integer(), server_default=sa.Computed('json_extract(event, "$.created_at")', persisted=False)),
+            sa.Column('kind', sa.Integer(), server_default=sa.Computed('json_extract(event, "$.kind")', persisted=False)), 
+            sa.Column('pubkey', sa.Text(), server_default=sa.Computed('json_extract(event, "$.pubkey")', persisted=False)), 
+            sa.Column('hexid', sa.Text(), server_default=sa.Computed('lower(hex(id))', persisted=False)), 
+            sa.Column('event', sa.JSON())
+        )
+        sa.Index('cidx', self.EventTable.c.created_at)
+        sa.Index('kidx', self.EventTable.c.kind),
+        sa.Index('pkidx', self.EventTable.c.pubkey)
+
+
+        self.TagTable = sa.Table(
+            'tag', 
+            self.metadata,
+            sa.Column('id', sa.BLOB(), sa.ForeignKey(self.EventTable.c.id, ondelete="CASCADE")), 
+            sa.Column('name', sa.Text()),
+            sa.Column('value', sa.Text())
+        )
+        sa.Index('tag_idx', self.TagTable.c.id, self.TagTable.c.name, self.TagTable.c.value, unique=True)
+
+        self.IdentTable = sa.Table(
+            'identity',
+            self.metadata,
+            sa.Column('identifier', sa.Text(), primary_key=True),
+            sa.Column('pubkey', sa.Text()),
+            sa.Column('relays', sa.JSON()),
+        )
+
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
+        self.authenticator.setup_db(self.metadata)
+
+        self.db = create_async_engine(
+            self.db_url,
+            future=True,
+        )
+
+        async with self.db.begin() as conn:
+            await conn.run_sync(self.metadata.create_all)
+
+        self.garbage_collector_task = start_garbage_collector(self.db)
+        await self.verifier.start(self.db)
+
         LOG.debug("done setting up")
+
+
+        # self.db = await aiosqlite.connect(self.filename, iter_chunk_size=200)
+        # await self.db.executescript('''
+        #     PRAGMA journal_mode = wal;
+        #     PRAGMA locking_mode = NORMAL;
+        #     PRAGMA synchronous = normal;
+        #     PRAGMA temp_store = memory;
+        #     PRAGMA mmap_size = 30000000000;
+        #     PRAGMA foreign_keys = ON;
+        # ''')
+        # await migrate(self.db)
+        # await self.verifier.start(self.db)
+        # self.garbage_collector_task = start_garbage_collector(self.db)
+        # self.authenticator = get_authenticator(self, Config.get('authentication', {}))
+        # LOG.debug("done setting up")
 
     async def get_event(self, event_id):
         """
         Shortcut for retrieving an event by id
         """
-        async with self.db.cursor() as cursor:
-            await cursor.execute('select event from event where id = ?', (bytes.fromhex(event_id), ))
-            row = await cursor.fetchone()
+        async with self.db.begin() as conn:
+            result = await conn.execute(sa.select(self.EventTable.c.event).where(self.EventTable.c.id == bytes.fromhex(event_id)))
+            row = result.first()
             if row:
                 return row[0]
 
@@ -111,13 +182,12 @@ class Storage:
             raise AuthenticationError("restricted: permission denied")
 
         changed = False
-        async with self.db.cursor() as cursor:
-            do_save = await self.pre_save(cursor, event)
+        async with self.db.begin() as conn:
+            do_save = await self.pre_save(conn, event)
             if do_save:
-                await cursor.execute(self.INSERT_EVENT, (event.id_bytes, str(event)))
-                changed = cursor.rowcount == 1
-                await self.post_save(cursor, event)
-            await self.db.commit()
+                result = await conn.execute(sa.insert(self.EventTable).values(id=event.id_bytes, event=event.to_json_object()))
+                changed = result.rowcount == 1
+                await self.post_save(conn, event, changed)
         if changed:
             # notify all subscriptions
             count = 0
@@ -146,39 +216,49 @@ class Storage:
         elif (time() - event.created_at) < -3600:
             raise StorageError(f"invalid: {event.created_at} is in the future")
 
-    async def pre_save(self, cursor, event):
+    async def pre_save(self, conn, event):
         """
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
-        await cursor.execute(self.CHECK_QUERY, (event.id_bytes, ))
-        row = await cursor.fetchone()
+        result = await conn.execute(sa.select(self.EventTable.c.id).where(self.EventTable.c.id == event.id_bytes))
+        row = result.first()
         if row:
             # duplicate
             return False
         # check NIP05 verification, if enabled
-        await self.verifier.verify(cursor, event)
+        await self.verifier.verify(conn, event)
 
         if event.is_replaceable:
             # check for older event from same pubkey
-            await cursor.execute('select id, created_at from event where pubkey = ? and kind = ? and created_at <= ?', (event.pubkey, event.kind, event.created_at))
-            row = await cursor.fetchone()
+            result = await conn.execute(
+                    sa.select(
+                        self.EventTable.c.id, self.EventTable.c.created_at
+                    ).where(
+                        (self.EventTable.c.pubkey == event.pubkey) & 
+                        (self.EventTable.c.kind == event.kind) & 
+                        (self.EventTable.c.created_at < event.created_at)
+                    )
+            )
+            row = result.first()
             if row:
                 old_id = row[0]
                 old_ts = row[1]
                 LOG.info("Replacing event %s from %s@%s with %s", old_id, event.pubkey, old_ts, event.id)
-                await cursor.execute('delete from event where id = ?', (old_id, ))
+                await conn.execute(self.EventTable.delete().where(self.EventTable.c.id == old_id))
         return True
 
-    async def process_tags(self, cursor, event):
+    async def process_tags(self, conn, event):
         if event.tags:
             # update mentions
             # single-letter tags can be searched
             # delegation tags are also searched
             # expiration tags are also added for the garbage collector
-            tags = set((event.id_bytes, tag[0], tag[1]) for tag in event.tags if tag[0] in ('delegation', 'expiration') or len(tag[0]) == 1)
+            tags = [{'id': event.id_bytes, 'name': tag[0], 'value': tag[1]} for tag in event.tags if tag[0] in ('delegation', 'expiration') or len(tag[0]) == 1]
             if tags:
-                await cursor.executemany('INSERT OR IGNORE INTO tag (id, name, value) VALUES (?, ?, ?)', tags)
+                await conn.execute(self.TagTable.insert(),
+                    tags
+                )
 
             if event.kind == EventKind.DELETE:
                 # delete the referenced events
@@ -186,21 +266,25 @@ class Storage:
                     name = tag[0]
                     if name == 'e':
                         event_id = tag[1]
-                        await cursor.execute('DELETE FROM event WHERE id = ? AND pubkey = ?', (bytes.fromhex(event_id), event.pubkey))
+                        query = sa.delete(self.EventTable).where((self.EventTable.c.pubkey == event.pubkey) & (self.EventTable.c.id == bytes.fromhex(event_id)))
+                        result = await conn.execute(query)
 
-    async def post_save(self, cursor, event):
+    async def post_save(self, conn, event, changed):
         """
         Post-process event
         (clear old metadata, update tag references)
         """
 
-        if cursor.rowcount != -1:
+        if changed:
             if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
                 # older metadata events can be cleared
-                query = 'DELETE FROM event WHERE pubkey = ? AND kind = ? AND created_at < ?'
-                LOG.debug("q:%s kind:%s, key:%s", query, event.kind, event.pubkey)
-                await cursor.execute(query, (event.pubkey, event.kind, event.created_at))
-            await self.process_tags(cursor, event)
+                await conn.execute(self.EventTable.delete().where(
+                        (self.EventTable.c.pubkey == event.pubkey) & 
+                        (self.EventTable.c.kind == event.kind) & 
+                        (self.EventTable.c.created_at < event.created_at)
+                    )
+                )
+            await self.process_tags(conn, event)
         else:
             LOG.debug("skipped post-processing for %s", event)
 
@@ -240,21 +324,23 @@ class Storage:
 
     async def get_stats(self):
         stats = {'total': 0}
-        async with self.db.execute('SELECT kind, COUNT(*) FROM event GROUP BY kind order by 2 DESC') as cursor:
+        async with self.db.begin() as conn:
+            result = await cursor.stream(sa.text('SELECT kind, COUNT(*) FROM event GROUP BY kind order by 2 DESC'))
             kinds = {}
-            async for kind, count in cursor:
+            async for kind, count in result:
                 kinds[kind] = count
                 stats['total'] += count
             stats['kinds'] = kinds
-        async with self.db.execute('SELECT COUNT(*) FROM verification') as cursor:
-            row = await cursor.fetchone()
+
+            result = await cursor.stream(sa.text('SELECT COUNT(*) FROM verification'))
+            row = result.fetchone()
             stats['num_verified'] = row[0]
-        try:
-            async with self.db.execute('SELECT SUM("pgsize") FROM "dbstat" WHERE name in ("event", "tag")') as cursor:
-                row = await cursor.fetchone()
+            try:
+                result = await conn.execute(sa.text('SELECT SUM("pgsize") FROM "dbstat" WHERE name in ("event", "tag")'))
+                row = result.fetchone()
                 stats['db_size'] = row[0]
-        except sqlite3.OperationalError:
-            pass
+            except sqlite3.OperationalError:
+                pass
         subs = await self.num_subscriptions(True)
         num_subs = 0
         num_clients = 0
@@ -266,37 +352,37 @@ class Storage:
         return stats
 
     async def get_identified_pubkey(self, identifier, domain=''):
-        query = 'SELECT pubkey, identifier, relays FROM identity WHERE 1 '
+        query = sa.select(self.IdentTable.c.pubkey, self.IdentTable.c.identifier, self.IdentTable.c.relays)
         pars = []
         if domain:
-            query += ' AND identifier LIKE ? '
-            pars.append(f'%@{domain}')
+            query = query.where(self.IdentTable.c.identifier.like(f'%@{domain}'))
         if identifier:
-            query += ' AND identifier = ?'
-            pars.append(identifier)
+            query = query.where(self.IdentTable.c.identifier == identifier)
         data = {
             'names': {},
             'relays': {}
         }
         LOG.debug("Getting identity for ? ?", identifier, domain)
-        async with self.db.execute(query, pars) as cursor:
-            async for pubkey, identifier, relays in cursor:
+        async with self.db.begin() as conn:
+            result = await conn.stream(query)
+            async for pubkey, identifier, relays in result:
                 data['names'][identifier.split('@')[0]] = pubkey
                 if relays:
-                    data['relays'][pubkey] = rapidjson.loads(relays)
+                    data['relays'][pubkey] = relays
 
         return data
 
     async def set_identified_pubkey(self, identifier, pubkey, relays=None):
-        if not pubkey:
-            pars = [identifier,]
-            await self.db.execute("DELETE FROM identity WHERE identifier = ?", pars)
-        elif not validate_id(pubkey):
-            raise StorageError("invalid public key")
-        else:
-            pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
-            await self.db.execute("INSERT OR REPLACE INTO identity (identifier, pubkey, relays) VALUES (?, ?, ?)", pars)
-        await self.db.commit()
+        async with self.db.begin() as conn:
+            if not pubkey:
+                await conn.execute(self.IdentTable.delete().where(self.IdentTable.c.identifier == identifier))
+            elif not validate_id(pubkey):
+                raise StorageError("invalid public key")
+            else:
+                pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
+                await conn.execute(sa.delete(self.IdentTable).where(self.IdentTable.c.identifier == identifier))
+                stmt = sa.insert(self.IdentTable).values({'identifier': identifier, 'pubkey': pubkey, 'relays': relays})
+                await conn.execute(stmt)
 
     async def __aenter__(self):
         await self.setup_db()
@@ -339,8 +425,9 @@ class Subscription:
         try:
             count = 0
             with catchtime() as t:
-                async with self.db.execute(query) as cursor:
-                    async for row in cursor:
+                async with self.db.connect() as conn:
+                    result = await conn.stream(sa.text(query))
+                    async for row in result:
                         eid, event = row
                         await queue.put((sub_id, event))
                         count += 1
@@ -502,13 +589,11 @@ class BaseGarbageCollector:
         while self.running:
             await asyncio.sleep(self.collect_interval)
             collected = 0
-            cursor = None
             try:
-                async with self.db.cursor() as cursor:
-                    collected = await self.collect(cursor)
+                async with self.db.begin() as conn:
+                    collected = await self.collect(conn)
                 if collected:
                     self.log.info("Collected garbage (%d events)", collected)
-                await self.db.commit()
             except sqlite3.OperationalError as e:
                 self.log.exception("collect")
                 break
@@ -534,9 +619,9 @@ class QueryGarbageCollector(BaseGarbageCollector):
         )
     '''
 
-    async def collect(self, cursor):
-        await cursor.execute(self.query)
-        return max(0, cursor.rowcount)
+    async def collect(self, conn):
+        result = await conn.execute(sa.text(self.query))
+        return max(0, result.rowcount)
 
 
 def start_garbage_collector(db, options=None):

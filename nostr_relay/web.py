@@ -11,7 +11,6 @@ LOG = logging.getLogger('nostr_relay.web')
 
 import falcon.asgi
 
-from .db import get_storage
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
@@ -212,8 +211,7 @@ class ViewEventResource(BaseResource):
     async def on_get(self, req: falcon.Request, resp: falcon.Response, event_id: str):
         event = await self.storage.get_event(event_id)
         if event:
-            resp.text = event
-            resp.content_type = 'application/json'
+            resp.media = event
         else:
             raise falcon.HTTPNotFound
 
@@ -266,11 +264,13 @@ def create_app(conf_file=None, storage=None):
     if Config.DEBUG:
         print(Config)
 
-    storage = storage or get_storage()
     if Config.logging:
         logging.config.dictConfig(Config.logging)
     else:
         logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
+
+    from .db import get_storage
+    storage = storage or get_storage()
 
     rate_limiter = get_rate_limiter(Config)
 

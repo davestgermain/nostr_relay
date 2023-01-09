@@ -23,7 +23,9 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         assert auth.actions == {'save': set('a'), 'query': set('a')}
 
     async def test_can_perform(self):
-        auth = Authenticator(None, {'enabled': True, 'actions': {Action.save: Role.writer, Action.query: Role.reader}})
+        storage = get_storage(reload=True)
+        await storage.setup_db()
+        auth = Authenticator(storage, {'enabled': True, 'actions': {Action.save: Role.writer, Action.query: Role.reader}})
 
         token = {
             'roles': set((Role.writer.value, Role.reader.value))
@@ -37,11 +39,12 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         assert not await auth.can_do(token, 'save')
 
     async def test_authentication(self):
+        Config.authentication = {'actions': {Action.save: Role.writer, Action.query: Role.reader}}
         storage = get_storage(reload=True)
         await storage.setup_db()
+        auth = storage.authenticator
 
         from nostr_relay.event import Event, PrivateKey
-        auth = Authenticator(storage, {'actions': {Action.save: Role.writer, Action.query: Role.reader}})
 
         privkey1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
         pubkey1 = '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'

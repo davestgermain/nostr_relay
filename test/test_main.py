@@ -6,10 +6,12 @@ import logging
 import time
 import threading
 
+import sqlalchemy as sa
 from falcon import testing, errors
 
 from nostr_relay.config import Config
-from nostr_relay.web import create_app, get_storage
+from nostr_relay.web import create_app
+from nostr_relay.db import get_storage
 from nostr_relay.event import Event, PrivateKey
 from nostr_relay.auth import Authenticator
 
@@ -51,9 +53,8 @@ class BaseTests(unittest.IsolatedAsyncioTestCase):
         await self.storage.setup_db()
 
     async def asyncTearDown(self):
-        await self.storage.db.execute("DELETE from event")
-        await self.storage.db.commit()
-        await self.storage.close()
+        async with self.storage.db.begin() as conn:
+            await conn.execute(self.storage.EventTable.delete())
 
     async def send_event(self, ws, event, get_response=False):
         await ws.send_json(["EVENT", event])
@@ -357,8 +358,8 @@ class MainTests(BaseTests):
 
 class AuthTests(BaseTests):
     async def asyncSetUp(self):
+        Config.authentication = {"enabled": True, "actions": {"save": "w", "query": "r"}}
         await super().asyncSetUp()
-        self.storage.authenticator = Authenticator(self.storage, {"enabled": True, "actions": {"save": "w", "query": "r"}})
         self.readonly = ('f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753', '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d', 'r')
         self.writeonly = ('e93505f081570221255f05341f4fbaeaf682d59d2e2472d7dd02d566f6372178', '647bf6e686fde33dfbfd4f3d987bc13b1c202f952b70dc3539d8d85172b40561', 'w')
         self.readwrite = ('9679a595bdb5fe4330a263c96201eac204dfe24b2e2dc36ac12698faf9275130', '1bd80e4430c40a6fa9f59582124b5a6fbc1815e26455801e6b1edf113554de03', 'rw')
@@ -368,7 +369,8 @@ class AuthTests(BaseTests):
             await self.storage.authenticator.set_roles(pubkey, role)
 
     async def asyncTearDown(self):
-        await self.storage.db.execute("DELETE from auth")
+        async with self.storage.db.begin() as conn:
+            await conn.execute(self.storage.authenticator.AuthTable.delete())
         await super().asyncTearDown()
 
     async def get_challenge(self, ws):

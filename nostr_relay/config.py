@@ -35,6 +35,9 @@ class ConfigClass:
                     }
                 }, 
                 'loggers': {
+                    'sqlalchemy.engine': {
+                        'level': 'WARNING',
+                    },
                     'nostr_relay': {
                         'level': 'INFO', 
                         'handlers': ['console'], 
