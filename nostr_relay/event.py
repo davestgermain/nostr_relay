@@ -82,7 +82,10 @@ class Event:
         self.sig = sig.hex()
 
     def verify(self) -> bool:
-        pub_key = PublicKey(bytes.fromhex("02" + self.pubkey), True) # add 02 for schnorr (bip340)
+        try:
+            pub_key = PublicKey(bytes.fromhex("02" + self.pubkey), True) # add 02 for schnorr (bip340)
+        except Exception as e:
+            return False
         event_id = Event.compute_id(self.pubkey, self.created_at, self.kind, self.tags, self.content)
         verified = pub_key.schnorr_verify(bytes.fromhex(event_id), bytes.fromhex(self.sig), None, raw=True)
         for tag in self.tags:

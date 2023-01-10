@@ -14,6 +14,8 @@ import asyncio
 import logging
 import time
 import rapidjson
+import sqlalchemy as sa
+
 from .config import Config
 
 
@@ -38,24 +40,22 @@ class Verifier:
         self.is_enabled = Config.nip05_verification == 'enabled'
         self.should_verify = Config.nip05_verification in ('enabled', 'passive')
         if self.should_verify:
-            self.setup_db(storage)
             self.log = logging.getLogger(__name__)
 
-    def setup_db(self, storage):
-        from sqlalchemy import Table, Integer, Column, Blob, Text, Timestamp, ForeignKey, Index
-        self.Verification = Table(
-            'verification',
-            storage.metadata,
-            Column('id', Integer(), primary_key=True),
-            Column('identifier', Text()),
-            Column('metadata_id', Blob(), ForeignKey(Event.c.id)),
-            Column('verified_at', Timestamp()),
-            Column('failed_at', Timestamp())
-        )
-        Index('identifieridx', self.Verification.c.identifier)
-        Index('metadataidx', self.Verification.c.metadata_id)
-        Index('verifiedidx', self.Verification.c.verified_at)
+    def setup_db(self, metadata):
 
+        self.Verification = sa.Table(
+            'verification',
+            metadata,
+            sa.Column('id', sa.Integer(), primary_key=True),
+            sa.Column('identifier', sa.Text()),
+            sa.Column('metadata_id', metadata.tables['event'].c.id.type, sa.ForeignKey('event.id', ondelete='CASCADE')),
+            sa.Column('verified_at', sa.TIMESTAMP()),
+            sa.Column('failed_at', sa.TIMESTAMP())
+        )
+        sa.Index('identifieridx', self.Verification.c.identifier)
+        sa.Index('metadataidx', self.Verification.c.metadata_id)
+        sa.Index('verifiedidx', self.Verification.c.verified_at)
 
     async def update_metadata(self, cursor, event):
         # metadata events are evaluated as candidates
@@ -95,7 +95,7 @@ class Verifier:
 
         
         if event.kind == 0:
-            is_candidate = await self.update_metadata(cursor, event)
+            is_candidate = await self.update_metadata(conn, event)
             if not is_candidate:
                 if self.is_enabled:
                     raise VerificationError("rejected: metadata must have nip05 tag")
@@ -104,8 +104,9 @@ class Verifier:
             else:
                 return True
 
-        await cursor.execute(self.VERIFICATION_QUERY, (event.pubkey, ))
-        row = await cursor.fetchone()
+        query = sa.select(self.Verification)
+        result = await conn.execute(self.VERIFICATION_QUERY, (event.pubkey, ))
+        row = await conn.fetchone()
         if not row:
             if self.is_enabled:
                 raise VerificationError(f"rejected: pubkey {event.pubkey} must be verified")

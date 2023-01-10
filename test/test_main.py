@@ -14,6 +14,7 @@ from nostr_relay.web import create_app
 from nostr_relay.db import get_storage
 from nostr_relay.event import Event, PrivateKey
 from nostr_relay.auth import Authenticator
+from nostr_relay.errors import StorageError
 
 from nostr_relay import __version__
 
@@ -47,14 +48,162 @@ class BaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.storage = get_storage(reload=True)
-
-        self.conductor = testing.ASGIConductor(create_app(storage=self.storage))
-
         await self.storage.setup_db()
 
     async def asyncTearDown(self):
         async with self.storage.db.begin() as conn:
             await conn.execute(self.storage.EventTable.delete())
+
+    def make_event(self, privkey, pubkey=None, kind=0, created_at=None, tags=None, **kwargs):
+        if pubkey is None:
+            private_key = PrivateKey(bytes.fromhex(privkey))
+            pubkey = private_key.pubkey.serialize()[1:].hex()
+
+        evt = Event(kind=kind, pubkey=pubkey, created_at=created_at or time.time(), tags=tags or [], **kwargs)
+        evt.sign(privkey)
+        return evt.to_json_object()
+
+
+class DBTests(BaseTests):
+    async def test_add_bad_event(self):
+        with self.assertRaises(StorageError) as e:
+            await self.storage.add_event([1,2,3])
+        assert e.exception.args[0] == 'invalid: Bad JSON'
+
+        with self.assertRaises(StorageError) as e:
+            evt = self.make_event(PK1, pubkey=PK2)
+            await self.storage.add_event(evt)
+        assert e.exception.args[0] == 'invalid: Bad signature'
+
+        with self.assertRaises(StorageError) as e:
+            evt = self.make_event(PK1, created_at=123)
+            await self.storage.add_event(evt)
+        assert e.exception.args[0] == 'invalid: 123 is too old'
+
+        with self.assertRaises(StorageError) as e:
+            t = int(time.time() + 86400)
+            evt = self.make_event(PK1, created_at=t)
+            await self.storage.add_event(evt)
+        assert e.exception.args[0] == f'invalid: {t} is in the future'
+
+        with self.assertRaises(StorageError) as e:
+            evt = self.make_event(PK1, content='x' * 64000)
+            await self.storage.add_event(evt)
+        assert e.exception.args[0] == f'invalid: 280 characters should be enough for anybody'
+
+    async def test_add_event(self):
+        event, changed = await self.storage.add_event(EVENTS[0])
+        assert event.id == EVENTS[0]['id']
+        assert changed
+
+        event, changed = await self.storage.add_event(EVENTS[0])
+        assert event.id == EVENTS[0]['id']
+        assert not changed
+
+    async def test_replaceable_event(self):
+        evt1 = self.make_event(PK1, kind=11111, content='event 1', tags=[['e', '1234'], ['foo', 'bar']])
+        event, changed = await self.storage.add_event(evt1)
+        assert event.id == evt1['id']
+
+        evt2 = self.make_event(PK1, kind=11111, content='event 2')
+        event, changed = await self.storage.add_event(evt2)
+        assert event.id == evt2['id']
+
+        # first event should be gone
+        evt = await self.storage.get_event(evt1['id'])
+        assert evt is None
+
+        # an event from a different pubkey won't replace event 2
+        evt3 = self.make_event(PK2, kind=11111, content='event 3')
+        event, changed = await self.storage.add_event(evt2)
+        assert event.id == evt2['id']
+        evt = await self.storage.get_event(evt2['id'])
+        assert evt['content'] == 'event 2'
+
+    async def test_expiration_tag(self):
+        expiring_event = {"id": "075040fbf395db975fccf36948908474994f70c871be0d1755459851438577d1", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1672329427]], "content": "this will expire", "sig": "77509c595b5e4e86a74dc1fa0b4a484a8bca6acc89e2e32b9794c9e0c59a0313521295e8c4b6b844be5ce83bab2cb7230bc0d9761fbf3845a2cd04dab2d70cda"}
+        distant_future_event = {"id": "eb41e9b29e08aa73bb73ebe6daa73ce59b484cfe62b95449d0bcd551186ee61c", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1987990393]], "content": "this will expire in a long time", "sig": "046d4ad7eb8b7b64528cfcde2f4171d8ad375467447a134dbd14b764973a237f977c3f8a5d3ba6cfcc5ed07d0fa68b222a18c81c2c9c115bdd55734c7006877b"}
+
+        await self.storage.add_event(expiring_event)
+        await self.storage.add_event(distant_future_event)
+        assert (await self.storage.get_event(expiring_event["id"]))['id'] == expiring_event['id']
+        assert (await self.storage.get_event(distant_future_event["id"]))['id'] == distant_future_event['id']
+
+        # stop and restart garbage collector to have it run immediately
+        from nostr_relay.db import start_garbage_collector
+        # self.storage.garbage_collector.stop()
+        self.storage.garbage_collector = start_garbage_collector(self.storage.db, {'collect_interval': 2})
+
+        await asyncio.sleep(2.5)
+        assert (await self.storage.get_event(expiring_event["id"])) is None
+        self.storage.garbage_collector.cancel()
+        assert (await self.storage.get_event(distant_future_event["id"]))['id'] == distant_future_event['id']
+
+    async def test_ephemeral_event(self):
+        from nostr_relay.db import start_garbage_collector
+        self.storage.garbage_collector_task = start_garbage_collector(self.storage.db, {'collect_interval': 2})
+        ephemeral_event = {"id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 22222, "tags": [], "content": "ephemeral", "sig": "66f8a055bb3c3fc3fe0ca0ead4d5558d69627dc4f40c7320228d9e4c266509f6ac8a2ff085abbd1a9d3b0c733529bf3fcd87d43f731990467181ed1995aad5bc"}
+
+        assert (await self.storage.add_event(ephemeral_event))[1]
+        assert (await self.storage.get_event(ephemeral_event['id']))['id'] == '2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7'
+        await asyncio.sleep(2.2)
+        assert (await self.storage.get_event(ephemeral_event['id'])) is None
+
+    async def test_delete_event(self):
+        evt1 = self.make_event(PK1, kind=1, content='delete me')
+        event, changed = await self.storage.add_event(evt1)
+
+        delete_event = self.make_event(PK2, kind=5)
+        await self.storage.add_event(delete_event)
+        assert (await self.storage.get_event(evt1['id'])) is not None
+
+        delete_event = self.make_event(PK2, kind=5, tags=[['e', evt1['id']]])
+        await self.storage.add_event(delete_event)
+        assert (await self.storage.get_event(evt1['id'])) is not None
+
+        delete_event = self.make_event(PK1, kind=5, tags=[['e', evt1['id']]])
+        await self.storage.add_event(delete_event)
+        assert (await self.storage.get_event(evt1['id'])) is None
+
+    async def test_get_stats(self):
+        for evt in EVENTS:
+            await self.storage.add_event(evt)
+
+        queue = asyncio.Queue()
+        sub = await self.storage.subscribe('test', 'test', [{'kinds': [1]}], queue)
+        stats = await self.storage.get_stats()
+        assert stats['total'] == 3
+        assert stats['active_subscriptions'] == 1
+        await self.storage.unsubscribe('test')
+
+    async def test_set_idp_identifier(self):
+        await self.storage.set_identified_pubkey('test@localhost', '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d', relays='ws://localhost:6969')
+
+        data = await self.storage.get_identified_pubkey('test@localhost')
+        assert data == {
+            'names': {
+                'test': '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'
+            },
+            'relays': {
+                '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d': 'ws://localhost:6969'
+            }
+        }
+
+        data = await self.storage.get_identified_pubkey('', domain='foo.com')
+        assert data == {'names': {}, 'relays': {}}
+
+        with self.assertRaises(StorageError):
+            await self.storage.set_identified_pubkey('test@localhost', 'asd')
+
+        await self.storage.set_identified_pubkey('test@localhost', '')
+        data = await self.storage.get_identified_pubkey('test@localhost')
+        assert data['names'] == {}
+
+
+class APITests(BaseTests):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.conductor = testing.ASGIConductor(create_app(storage=self.storage))
 
     async def send_event(self, ws, event, get_response=False):
         await ws.send_json(["EVENT", event])
@@ -77,7 +226,7 @@ class BaseTests(unittest.IsolatedAsyncioTestCase):
         return data
 
 
-class MainTests(BaseTests):
+class MainTests(APITests):
     async def test_get_event(self):
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, EVENTS[0], True)
@@ -153,13 +302,6 @@ class MainTests(BaseTests):
             data = await self.send_event(ws, EVENTS[0], True)
             assert data == ['OK', '0d7721e1ee4a343f623cfb86374cc2d4688784bd264b5bc26079843169f28d88', False, 'duplicate: exists']
 
-            # check for existence
-            data = await self.get_event(ws, EVENTS[0]["id"])
-
-            for event in EVENTS:
-                await self.send_event(ws, event, True)
-
-
     async def test_req(self):
         async with self.conductor.simulate_ws('/') as ws:
             for event in EVENTS:
@@ -208,6 +350,10 @@ class MainTests(BaseTests):
             data = await ws.receive_json()
             assert data == ['EOSE', 'test']
 
+            await ws.send_json(["REQ", "missing", {"kinds": [1000]}])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 'missing']
+
             # now add a new event
             data = await self.send_event(ws, EVENTS[2], True)
             if data[0] == 'OK':
@@ -245,80 +391,12 @@ class MainTests(BaseTests):
             data = await ws.receive_json()
             assert data == ['EOSE', 'junk']
 
-    async def test_replace_events(self):
-        async with self.conductor.simulate_ws('/') as ws:
-            await self.send_event(ws, REPLACE_EVENTS[0], True)
-            await self.send_event(ws, REPLACE_EVENTS[1], True)
-            await ws.send_json(["REQ", "test", {"kinds": [11111]}])
-            data = await ws.receive_json()
-            assert data == ['EVENT', 'test', REPLACE_EVENTS[1]]
-            data = await ws.receive_json()
-            assert data == ['EOSE', 'test']
-
     async def test_delegation_event(self):
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, DELEGATION_EVENT, True)
             await ws.send_json(["REQ", "delegation", {"authors": ["86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e"]}])
             data = await ws.receive_json()
             assert data == ["EVENT", "delegation", DELEGATION_EVENT]
-
-    async def test_delete_event(self):
-        async with self.conductor.simulate_ws('/') as ws:
-            await self.send_event(ws, EVENTS[1], True)
-            await self.send_event(ws, EVENTS[2], True)
-
-            # send valid delete event
-            response = await self.send_event(ws, {"id": "6b91c6821f4b480c493b4a07e736675ed078fdcdf71a3918fe59e3d1ef2da907", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 5, "tags": [["e", "46981a47c7e28f720a2609a5872c62b6e8b9ae612db3f8320b68be446ad77e11"]], "content": "delete mistake", "sig": "f6a41a55c4b1bf964db2d67a14b1680c6ba39f7216fc45b195d760eb6b9308c73694dd7cc61283562409328daedea3a733e8e692ded46bb3e61e2195ab0ce655"}, True)
-            assert response == ["OK", "6b91c6821f4b480c493b4a07e736675ed078fdcdf71a3918fe59e3d1ef2da907", True, '']
-
-            # event should be deleted
-            await ws.send_json(["REQ", "deleted", {"ids": ["46981a47c7e28f720a2609a5872c62b6e8b9ae612db3f8320b68be446ad77e11"]}])
-            data = await ws.receive_json()
-            assert data == ['EOSE', 'deleted']
-
-            # send invalid delete event
-            response = await self.send_event(ws, {"id": "61b5e7adaefaefc600ae838806667d87ca9aef19993707190f0fffa2dbee71b0", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 5, "tags": [["e", "ea54cf0e912b3fc482ee842195c8db670df6d958b2ae86e039b7c56690d81ef9"]], "content": "bad deletion", "sig": "6a274fa7c18fe34fcc29aa4690286941c288ef57d1ff083645f96549276ea7c4655ddc03a05fcc7167483247f4aadde71d89794421f24da7f7958e065e44744c"}, True)
-            assert response == ["OK", "61b5e7adaefaefc600ae838806667d87ca9aef19993707190f0fffa2dbee71b0", True, '']
-
-            # event will not be deleted
-            await ws.send_json(["REQ", "deleted", {"ids": ["ea54cf0e912b3fc482ee842195c8db670df6d958b2ae86e039b7c56690d81ef9"]}])
-            data = await ws.receive_json()
-            assert data == ['EVENT', 'deleted', EVENTS[2]]
-
-    async def test_ephemeral_event(self):
-        from nostr_relay.db import start_garbage_collector
-        # self.storage.garbage_collector.stop()
-        self.storage.garbage_collector_task = start_garbage_collector(self.storage.db, {'collect_interval': 3})
-        ephemeral_event = {"id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 22222, "tags": [], "content": "ephemeral", "sig": "66f8a055bb3c3fc3fe0ca0ead4d5558d69627dc4f40c7320228d9e4c266509f6ac8a2ff085abbd1a9d3b0c733529bf3fcd87d43f731990467181ed1995aad5bc"}
-
-        async with self.conductor.simulate_ws("/") as ws:
-            data = await self.send_event(ws, ephemeral_event, True)
-            assert data[2] == True
-            data = await self.get_event(ws, ephemeral_event["id"], exists=True)
-            await asyncio.sleep(3.5)
-            data = await self.get_event(ws, ephemeral_event["id"], exists=False)
-        # self.storage.garbage_collector.stop()
-
-    async def test_expiration_tag(self):
-
-        async with self.conductor.simulate_ws("/") as ws:
-            expiring_event = {"id": "075040fbf395db975fccf36948908474994f70c871be0d1755459851438577d1", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1672329427]], "content": "this will expire", "sig": "77509c595b5e4e86a74dc1fa0b4a484a8bca6acc89e2e32b9794c9e0c59a0313521295e8c4b6b844be5ce83bab2cb7230bc0d9761fbf3845a2cd04dab2d70cda"}
-            distant_future_event = {"id": "eb41e9b29e08aa73bb73ebe6daa73ce59b484cfe62b95449d0bcd551186ee61c", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1987990393]], "content": "this will expire in a long time", "sig": "046d4ad7eb8b7b64528cfcde2f4171d8ad375467447a134dbd14b764973a237f977c3f8a5d3ba6cfcc5ed07d0fa68b222a18c81c2c9c115bdd55734c7006877b"}
-
-            await self.send_event(ws, expiring_event, True)
-            await self.send_event(ws, distant_future_event, True)
-            await self.get_event(ws, expiring_event["id"], exists=True)
-            await self.get_event(ws, distant_future_event["id"], exists=True)
-
-            # stop and restart garbage collector to have it run immediately
-            from nostr_relay.db import start_garbage_collector
-            # self.storage.garbage_collector.stop()
-            self.storage.garbage_collector = start_garbage_collector(self.storage.db, {'collect_interval': 3})
-
-            await asyncio.sleep(3.5)
-            await self.get_event(ws, expiring_event["id"], exists=False)
-            self.storage.garbage_collector.cancel()
-            await self.get_event(ws, distant_future_event["id"], exists=True)
 
     async def test_tag_search(self):
         async with self.conductor.simulate_ws("/") as ws:
@@ -356,7 +434,7 @@ class MainTests(BaseTests):
             assert data[3] == 'rate-limited: slow down'
 
 
-class AuthTests(BaseTests):
+class AuthTests(APITests):
     async def asyncSetUp(self):
         Config.authentication = {"enabled": True, "actions": {"save": "w", "query": "r"}}
         await super().asyncSetUp()
@@ -378,14 +456,12 @@ class AuthTests(BaseTests):
         assert data[0] == 'AUTH'
         return data[1]
 
-    def make_auth_event(self, privkey, pubkey, kind=22242, created_at=None, challenge='', relay='ws://localhost:6969', **kwargs):
+    def make_auth_event(self, privkey, pubkey, created_at=None, challenge='', relay='ws://localhost:6969', **kwargs):
         tags = [
             ['relay', relay],
             ['challenge', challenge]
         ]
-        auth_event = Event(kind=kind, pubkey=pubkey, created_at=created_at or time.time(), tags=tags, **kwargs)
-        auth_event.sign(privkey)
-        return auth_event.to_json_object()
+        return self.make_event(privkey, pubkey=pubkey, kind=22242, created_at=created_at, tags=tags, **kwargs)
 
     async def test_auth_message(self):
         """
