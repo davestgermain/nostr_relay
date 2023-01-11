@@ -60,7 +60,6 @@ async def query(ctx, query, results):
     Run a REQ query and display results
     """
     import rapidjson
-    import asyncio
     from .db import get_storage, Subscription
     if not query:
         click.echo("query is required")
@@ -98,7 +97,6 @@ async def update_tags(ctx, query):
     Update the tags in the tag table, from a REQ query
     """
     import rapidjson
-    import asyncio
     from .event import Event
     from .db import get_storage, Subscription
 
@@ -106,29 +104,34 @@ async def update_tags(ctx, query):
         query = '[{}]'
 
     query = rapidjson.loads(query)
-    queue = asyncio.Queue()
 
     async with get_storage() as storage:
-        sub = Subscription(storage.db, 'cli', query, queue=queue, default_limit=600000)
-        sub.prepare()
-        click.echo(click.style('Query:', bold=True))
-        click.echo(click.style(sub.query, fg="green"))
-        await sub.run_query()
-
         count = 0
-        async with storage.db.cursor() as cursor:
+        async with storage.db.begin() as cursor:
+            async for event_json in storage.run_single_query(query):
+                event = Event(**rapidjson.loads(event_json))
+                await storage.process_tags(cursor, event)
+                count += 1
 
-            while True:
-                sub, event_json = await queue.get()
-                if event_json:
-                    event = Event(**rapidjson.loads(event_json))
-                    await storage.process_tags(cursor, event)
-                    count += 1
-                else:
-                    break
-
-        await storage.db.commit()
         click.echo("Processed %d events" % count)
+
+
+@main.command()
+@click.option("--as-event", '-e', help="Return as EVENT message JSON", default=True)
+@click.pass_context
+@async_cmd
+async def dump(ctx, as_event):
+    """
+    Dump all events
+    """
+    query = [{'since': 1}]
+    from .db import get_storage
+    async with get_storage() as storage:
+        async for event_json in storage.run_single_query(query):
+            if as_event:
+                print(f'["EVENT", {event_json}]')
+            else:
+                print(event_json)
 
 
 @click.group()

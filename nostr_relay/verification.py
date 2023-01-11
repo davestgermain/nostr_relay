@@ -49,7 +49,7 @@ class Verifier:
             metadata,
             sa.Column('id', sa.Integer(), primary_key=True),
             sa.Column('identifier', sa.Text()),
-            sa.Column('metadata_id', metadata.tables['event'].c.id.type, sa.ForeignKey('event.id', ondelete='CASCADE')),
+            sa.Column('metadata_id', metadata.tables['events'].c.id.type, sa.ForeignKey('events.id', ondelete='CASCADE')),
             sa.Column('verified_at', sa.TIMESTAMP()),
             sa.Column('failed_at', sa.TIMESTAMP())
         )

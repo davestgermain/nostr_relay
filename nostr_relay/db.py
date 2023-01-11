@@ -100,25 +100,28 @@ class Storage:
         if self.is_postgres:
             from sqlalchemy.dialects.postgresql import BYTEA, JSONB
             self.EventTable = sa.Table(
-                'event',
+                'events',
                 metadata,
                 sa.Column('id', BYTEA(), primary_key=True),
-                sa.Column('created_at', sa.Integer(), server_default=sa.Computed("(event ->> 'created_at') :: INTEGER", persisted=self.is_postgres)),
-                sa.Column('kind', sa.Integer(), server_default=sa.Computed("(event ->> 'kind') :: INTEGER", persisted=self.is_postgres)), 
-                sa.Column('pubkey', sa.Text(), server_default=sa.Computed("event ->> 'pubkey'", persisted=self.is_postgres)), 
-                sa.Column('hexid', sa.Text(), server_default=sa.Computed("encode(id, 'hex')", persisted=self.is_postgres)), 
-                sa.Column('event', JSONB())
+                sa.Column('created_at', sa.Integer()),
+                sa.Column('kind', sa.Integer()), 
+                sa.Column('pubkey', BYTEA()),
+                sa.Column('tags', JSONB()),
+                sa.Column('sig', BYTEA()),
+                sa.Column('content', sa.Text()),
+                sa.Column('hexid', sa.Text(), server_default=sa.Computed("encode(id, 'hex')")), 
             )
         else:
             self.EventTable = sa.Table(
-                'event',
+                'events',
                 metadata,
                 sa.Column('id', sa.BLOB(), primary_key=True),
-                sa.Column('created_at', sa.Integer(), server_default=sa.Computed("CAST(event ->> 'created_at' as INTEGER)", persisted=False)),
-                sa.Column('kind', sa.Integer(), server_default=sa.Computed("CAST(event ->> 'kind' as INTEGER)", persisted=False)), 
-                sa.Column('pubkey', sa.Text(), server_default=sa.Computed("event ->> 'pubkey'", persisted=False)), 
-                sa.Column('hexid', sa.Text(), server_default=sa.Computed("lower(hex(id))", persisted=False)), 
-                sa.Column('event', sa.JSON())
+                sa.Column('created_at', sa.Integer()),
+                sa.Column('kind', sa.Integer()), 
+                sa.Column('pubkey', sa.BLOB()),
+                sa.Column('tags', sa.JSON()),
+                sa.Column('sig', sa.BLOB()),
+                sa.Column('content', sa.Text()),
             )
         sa.Index('cidx', self.EventTable.c.created_at)
         sa.Index('kidx', self.EventTable.c.kind),
@@ -165,10 +168,10 @@ class Storage:
         Shortcut for retrieving an event by id
         """
         async with self.db.begin() as conn:
-            result = await conn.execute(sa.select(self.EventTable.c.event).where(self.EventTable.c.id == bytes.fromhex(event_id)))
+            result = await conn.execute(sa.select(self.EventTable).where(self.EventTable.c.id == bytes.fromhex(event_id)))
             row = result.first()
             if row:
-                return row[0]
+                return Event.from_tuple(row).to_json_object()
 
     async def add_event(self, event_json, auth_token=None):
         """
@@ -190,7 +193,15 @@ class Storage:
         async with self.db.begin() as conn:
             do_save = await self.pre_save(conn, event)
             if do_save:
-                result = await conn.execute(sa.insert(self.EventTable).values(id=event.id_bytes, event=event.to_json_object()))
+                result = await conn.execute(sa.insert(self.EventTable).values(
+                    id=event.id_bytes,
+                    created_at=event.created_at,
+                    pubkey=bytes.fromhex(event.pubkey),
+                    sig=bytes.fromhex(event.sig),
+                    content=event.content,
+                    kind=event.kind,
+                    tags=event.tags,
+                ))
                 changed = result.rowcount == 1
                 await self.post_save(conn, event, changed)
         if changed:
@@ -240,7 +251,7 @@ class Storage:
                     sa.select(
                         self.EventTable.c.id, self.EventTable.c.created_at
                     ).where(
-                        (self.EventTable.c.pubkey == event.pubkey) & 
+                        (self.EventTable.c.pubkey == bytes.fromhex(event.pubkey)) & 
                         (self.EventTable.c.kind == event.kind) & 
                         (self.EventTable.c.created_at < event.created_at)
                     )
@@ -266,7 +277,7 @@ class Storage:
                 elif len(tag[0]) == 1:
                     tags.add((tag[0], tag[1]))
             if tags:
-                await conn.execute(self.TagTable.insert(),
+                result = await conn.execute(self.TagTable.insert(),
                     [{'id': event.id_bytes, 'name': tag[0], 'value': tag[1]} for tag in tags]
                 )
 
@@ -276,7 +287,7 @@ class Storage:
                     name = tag[0]
                     if name == 'e':
                         event_id = tag[1]
-                        query = sa.delete(self.EventTable).where((self.EventTable.c.pubkey == event.pubkey) & (self.EventTable.c.id == bytes.fromhex(event_id)))
+                        query = sa.delete(self.EventTable).where((self.EventTable.c.pubkey == bytes.fromhex(event.pubkey)) & (self.EventTable.c.id == bytes.fromhex(event_id)))
                         result = await conn.execute(query)
 
     async def post_save(self, conn, event, changed):
@@ -289,7 +300,7 @@ class Storage:
             if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
                 # older metadata events can be cleared
                 await conn.execute(self.EventTable.delete().where(
-                        (self.EventTable.c.pubkey == event.pubkey) & 
+                        (self.EventTable.c.pubkey == bytes.fromhex(event.pubkey)) & 
                         (self.EventTable.c.kind == event.kind) & 
                         (self.EventTable.c.created_at < event.created_at)
                     )
@@ -298,11 +309,32 @@ class Storage:
         else:
             LOG.debug("skipped post-processing for %s", event)
 
+    async def run_single_query(self, query_filters):
+        """
+        Run a single query, yielding json events
+        """
+        queue = asyncio.Queue()
+        sub = Subscription(self.db, '', query_filters, queue=queue, default_limit=600000)
+        sub.prepare()
+        await sub.run_query()
+        while True:
+            _, event = await queue.get()
+            if event is None:
+                break
+            yield event
+
     async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None):
         LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             await self.unsubscribe(client_id, sub_id)
-        sub = Subscription(self.db, sub_id, filters, queue=queue, client_id=client_id)
+        sub = Subscription(
+                self.db,
+                sub_id,
+                filters,
+                queue=queue,
+                client_id=client_id,
+                is_postgres=self.is_postgres,
+        )
         if sub.prepare():
             if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
                 raise AuthenticationError("restricted: permission denied")
@@ -322,7 +354,6 @@ class Storage:
         elif client_id in self.clients:
             del self.clients[client_id]
 
-
     async def num_subscriptions(self, byclient=False):
         subs = {}
         for client_id, client in self.clients.items():
@@ -335,7 +366,7 @@ class Storage:
     async def get_stats(self):
         stats = {'total': 0}
         async with self.db.begin() as conn:
-            result = await conn.stream(sa.text('SELECT kind, COUNT(*) FROM event GROUP BY kind order by 2 DESC'))
+            result = await conn.stream(sa.text('SELECT kind, COUNT(*) FROM events GROUP BY kind order by 2 DESC'))
             kinds = {}
             async for kind, count in result:
                 kinds[kind] = count
@@ -404,7 +435,7 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=6000):
+    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=6000, is_postgres=False):
         self.db  = db
         self.sub_id = sub_id
         self.client_id = client_id
@@ -412,6 +443,7 @@ class Subscription:
         self.queue = queue
         self.query_task = None
         self.default_limit = default_limit
+        self.is_postgres = is_postgres
 
     def prepare(self):
         try:
@@ -438,8 +470,8 @@ class Subscription:
                 async with self.db.connect() as conn:
                     result = await conn.stream(sa.text(query))
                     async for row in result:
-                        eid, event = row
-                        await queue.put((sub_id, event))
+                        event = Event.from_tuple(row)
+                        await queue.put((sub_id, str(event)))
                         count += 1
                 await queue.put((sub_id, None))
 
@@ -500,19 +532,25 @@ class Subscription:
                         eid = validate_id(eid)
                         if eid:
                             if len(eid) == 64:
-                                exact.append(f"x'{eid}'")
-                                # exact.append(f"decode('{eid}', 'hex')")
+                                if self.is_postgres:
+                                    exact.append(f"decode('{eid}', 'hex')")
+                                else:
+                                    exact.append(f"x'{eid}'")
                             elif len(eid) > 2:
-                                subwhere.append(f"event.hexid LIKE '{eid}%'")
+                                if self.is_postgres:
+                                    subwhere.append(f"decode(id) LIKE '{eid}%'")
+                                else:
+                                    subwhere.append(f"lower(hex(id) LIKE '{eid}%')")
+                                # subwhere.append(f"event.hexid LIKE '{eid}%'")
                     if exact:
                         idstr = ','.join(exact)
-                        subwhere.append(f'event.id IN ({idstr})')
+                        subwhere.append(f'events.id IN ({idstr})')
                 else:
                     # invalid query
                     raise ValueError("ids")
             elif key == 'authors' and isinstance(value, list):
                 if value:
-                    astr = ','.join("'%s'" % validate_id(a) for a in set(value))
+                    astr = ','.join("x'%s'" % validate_id(a) for a in set(value))
                     if astr:
                         subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tag WHERE name = 'delegation' AND value IN ({astr})))")
                     else:
@@ -545,13 +583,16 @@ class Subscription:
                         pstr.append(f"'{val}'")
                 if pstr:
                     pstr = ','.join(pstr)
-                    subwhere.append(f"id IN (SELECT id FROM tag WHERE name = '{key[1]}' AND value IN ({pstr})) ")
+                    subwhere.append(f"events.id IN (SELECT id FROM tag WHERE name = '{key[1]}' AND value IN ({pstr})) ")
         return filter_obj
 
     def build_query(self, filters):
-        select = '''
-        SELECT event.id, event.event FROM event
-        '''
+        if self.is_postgres:
+            select = 'SELECT event.id, event.event :: TEXT FROM event\n'
+        else:
+            select = '''
+                SELECT id, created_at, kind, pubkey, tags, sig, content FROM events
+            '''
         where = set()
         limit = None
         new_filters = []
@@ -619,19 +660,19 @@ class BaseGarbageCollector:
 
 class QueryGarbageCollector(BaseGarbageCollector):
     query = '''
-        DELETE FROM event WHERE event.id IN
+        DELETE FROM events WHERE events.id IN
         (
-            SELECT event.id FROM event
-            LEFT JOIN tag on tag.id = event.id
+            SELECT events.id FROM events
+            LEFT JOIN tag on tag.id = events.id
             WHERE 
                 (kind >= 20000 and kind < 30000)
             OR
-                (tag.name = 'expiration' AND tag.value < strftime('%s'))
+                (tag.name = 'expiration' AND tag.value < '%NOW%')
         )
     '''
 
     async def collect(self, conn):
-        result = await conn.execute(sa.text(self.query))
+        result = await conn.execute(sa.text(self.query.replace('%NOW%', str(int(time())))))
         return max(0, result.rowcount)
 
 

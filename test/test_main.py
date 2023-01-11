@@ -165,6 +165,13 @@ class DBTests(BaseTests):
         await self.storage.add_event(delete_event)
         assert (await self.storage.get_event(evt1['id'])) is None
 
+    async def test_delegation_event(self):
+        event, changed = await self.storage.add_event(DELEGATION_EVENT)
+        assert changed
+        import json
+        async for event in self.storage.run_single_query([{"authors": ["86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e"]}]):
+            assert json.loads(event)['id'] == DELEGATION_EVENT['id']
+
     async def test_get_stats(self):
         for evt in EVENTS:
             await self.storage.add_event(evt)
@@ -390,13 +397,6 @@ class MainTests(APITests):
             ])
             data = await ws.receive_json()
             assert data == ['EOSE', 'junk']
-
-    async def test_delegation_event(self):
-        async with self.conductor.simulate_ws('/') as ws:
-            await self.send_event(ws, DELEGATION_EVENT, True)
-            await ws.send_json(["REQ", "delegation", {"authors": ["86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e"]}])
-            data = await ws.receive_json()
-            assert data == ["EVENT", "delegation", DELEGATION_EVENT]
 
     async def test_tag_search(self):
         async with self.conductor.simulate_ws("/") as ws:

@@ -67,13 +67,17 @@ class Event:
 
     @staticmethod
     def from_tuple(row):
+        tags = row[4]
+        if isinstance(tags, str):
+            tags = json.loads(tags)
         return Event(
-            pubkey=row[1],
-            content=row[5],
-            created_at=row[2],
-            kind=row[3],
-            tags=json.loads(row[4]),
-            sig=row[6]
+            id=row[0].hex(),
+            created_at=row[1],
+            kind=row[2],
+            pubkey=row[3].hex(),
+            tags=tags,
+            sig=row[5].hex(),
+            content=row[6],
         )
 
     def sign(self, private_key_hex: str) -> None:

@@ -199,7 +199,7 @@ class NostrAPI(BaseResource):
             self.connections -= 1
             self.rate_limiter.cleanup()
             duration = time() - start
-            LOG.info('Done {}. sent: {:,}B. duration: {:.0f}S'.format(client, client.sent, duration))
+            LOG.info('Done {}. Sent: {:,} Bytes. Duration: {:.0f} Seconds'.format(client, client.sent, duration))
 
 
 class NostrStats(BaseResource):
@@ -303,7 +303,12 @@ def run_with_gunicorn(conf_file=None):
 
     class ASGIApplication(Application):
         def load_config(self):
-            self.cfg.set('worker_class', 'uvicorn.workers.UvicornWorker')
+            import sys
+            if sys.implementation.name == 'pypy':
+                worker_class = 'uvicorn.workers.UvicornH11Worker'
+            else:
+                worker_class = 'uvicorn.workers.UvicornWorker'
+            self.cfg.set('worker_class', worker_class)
             for k, v in Config.gunicorn.items():
                 self.cfg.set(k.lower(), v)
 
