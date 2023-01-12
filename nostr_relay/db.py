@@ -43,7 +43,9 @@ STORAGE = None
 def get_storage(reload=False):
     global STORAGE
     if STORAGE is None or reload:
-        STORAGE = Storage(Config.db_filename)
+        if Config.db_filename:
+            raise StorageError("Please set db_url in config file and remove option db_filename")
+        STORAGE = Storage(Config.db_url)
     return STORAGE
 
 
@@ -71,8 +73,6 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 class Storage:
 
     def __init__(self, db_url='sqlite+aiosqlite:///nostr.sqlite3'):
-        if '://' not in db_url:
-            db_url = f'sqlite+aiosqlite:///{db_url}'
         self.db_url = db_url
         self.clients = collections.defaultdict(dict)
         self.db = None
