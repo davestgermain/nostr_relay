@@ -551,7 +551,10 @@ class Subscription:
                     raise ValueError("ids")
             elif key == 'authors' and isinstance(value, list):
                 if value:
-                    astr = ','.join("x'%s'" % validate_id(a) for a in set(value))
+                    if self.is_postgres:
+                        astr = ','.join("'\\x%s'" % validate_id(a) for a in set(value))
+                    else:
+                        astr = ','.join("x'%s'" % validate_id(a) for a in set(value))
                     if astr:
                         subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tag WHERE name = 'delegation' AND value IN ({astr})))")
                     else:
@@ -588,12 +591,9 @@ class Subscription:
         return filter_obj
 
     def build_query(self, filters):
-        if self.is_postgres:
-            select = 'SELECT event.id, event.event :: TEXT FROM event\n'
-        else:
-            select = '''
-                SELECT id, created_at, kind, pubkey, tags, sig, content FROM events
-            '''
+        select = '''
+            SELECT id, created_at, kind, pubkey, tags, sig, content FROM events
+        '''
         where = set()
         limit = None
         new_filters = []
