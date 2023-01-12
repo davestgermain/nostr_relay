@@ -162,6 +162,12 @@ class Storage:
         self.garbage_collector_task = start_garbage_collector(self.db)
         await self.verifier.start(self.db)
 
+        if self.is_postgres:
+            from sqlalchemy.dialects.postgresql import insert
+            self.tag_insert_query = insert(self.TagTable).on_conflict_do_nothing(index_elements=['id', 'name', 'value'])
+        else:
+            self.tag_insert_query = sa.insert(self.TagTable).prefix_with('OR IGNORE')
+
         LOG.debug("done setting up")
 
     async def get_event(self, event_id):
@@ -278,7 +284,7 @@ class Storage:
                 elif len(tag[0]) == 1:
                     tags.add((tag[0], tag[1]))
             if tags:
-                result = await conn.execute(self.TagTable.insert(),
+                result = await conn.execute(self.tag_insert_query,
                     [{'id': event.id_bytes, 'name': tag[0], 'value': tag[1]} for tag in tags]
                 )
 
