@@ -117,14 +117,15 @@ async def update_tags(ctx, query):
 
 
 @main.command()
-@click.option("--as-event", '-e', help="Return as EVENT message JSON", default=True)
+@click.option("--event/--no-event", '-e', help="Return as EVENT message JSON", default=True)
 @click.pass_context
 @async_cmd
-async def dump(ctx, as_event):
+async def dump(ctx, event):
     """
     Dump all events
     """
     query = [{'since': 1}]
+    as_event = event
     from .db import get_storage
     async with get_storage() as storage:
         async for event_json in storage.run_single_query(query):

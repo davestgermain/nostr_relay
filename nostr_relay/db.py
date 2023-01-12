@@ -1,9 +1,12 @@
+import os
 import os.path
 import asyncio
 import sqlite3
 import collections
 import logging
+import secrets
 import threading
+
 from time import perf_counter, sleep, time
 from contextlib import contextmanager
 
@@ -49,10 +52,18 @@ def get_storage(reload=False):
     return STORAGE
 
 
+class Storage:
 
-@sa.event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    if 'sqlite' in str(type(dbapi_connection)):
+    def __init__(self, db_url='sqlite+aiosqlite:///nostr.sqlite3'):
+        self.db_url = db_url
+        self.clients = collections.defaultdict(dict)
+        self.db = None
+        self.garbage_collector_task = None
+        self.is_postgres = 'postgresql' in db_url
+        self._my_token = secrets.token_hex(4)
+
+
+    def _set_sqlite_pragma(self, dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         pragma = '''
                 PRAGMA journal_mode = wal;
@@ -68,16 +79,16 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor.execute(stmt)
         cursor.close()
 
+    def _subscribe_to_channel(self, dbapi_connection, connection_record):
+        def add_listener():
+            asyncio.create_task(dbapi_connection.driver_connection.add_listener('addevent', self._event_listener))
+        asyncio.get_event_loop().call_later(2.0, add_listener)
 
-
-class Storage:
-
-    def __init__(self, db_url='sqlite+aiosqlite:///nostr.sqlite3'):
-        self.db_url = db_url
-        self.clients = collections.defaultdict(dict)
-        self.db = None
-        self.garbage_collector_task = None
-        self.is_postgres = 'postgresql' in db_url
+    async def _event_listener(self, connection, serverpid, channel, payload):
+        token, event_id = payload.split(':')
+        if token != self._my_token:
+            event = await self.get_event(event_id)
+            self._notify_all(event)
 
     async def close(self):
         if self.garbage_collector_task:
@@ -97,6 +108,8 @@ class Storage:
 
         metadata = sa.MetaData()
         if self.is_postgres:
+            sa.event.listen(Engine, "connect", self._subscribe_to_channel)
+
             from sqlalchemy.dialects.postgresql import BYTEA, JSONB
             self.EventTable = sa.Table(
                 'events',
@@ -111,6 +124,9 @@ class Storage:
                 sa.Column('hexid', sa.Text(), server_default=sa.Computed("encode(id, 'hex')")), 
             )
         else:
+            # add event listener to set appropriate PRAGMA items
+            sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
+
             self.EventTable = sa.Table(
                 'events',
                 metadata,
@@ -132,9 +148,9 @@ class Storage:
             sa.Column('id', self.EventTable.c.id.type, sa.ForeignKey(self.EventTable.c.id, ondelete="CASCADE")), 
             sa.Column('name', sa.Text()),
             sa.Column('value', sa.Text()),
-
+            sa.UniqueConstraint("id", "name", "value", name="unique_tag"),
         )
-        sa.Index('tag_idx', self.TagTable.c.id, self.TagTable.c.name, self.TagTable.c.value, unique=True)
+        sa.Index('tag_idx', self.TagTable.c.name, self.TagTable.c.value)
 
         self.IdentTable = sa.Table(
             'identity',
@@ -146,14 +162,15 @@ class Storage:
 
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
         self.authenticator.setup_db(metadata)
-        self.verifier = Verifier(self, Config.get('verification', {}))
 
+        self.verifier = Verifier(self, Config.get('verification', {}))
         self.verifier.setup_db(metadata)
 
         self.db = create_async_engine(
             self.db_url,
             future=True,
             json_deserializer=rapidjson.loads,
+            pool_pre_ping=True,
         )
 
         async with self.db.begin() as conn:
@@ -165,8 +182,10 @@ class Storage:
         if self.is_postgres:
             from sqlalchemy.dialects.postgresql import insert
             self.tag_insert_query = insert(self.TagTable).on_conflict_do_nothing(index_elements=['id', 'name', 'value'])
+            self.event_insert_query = insert(self.EventTable).on_conflict_do_nothing(index_elements=['id'])
         else:
             self.tag_insert_query = sa.insert(self.TagTable).prefix_with('OR IGNORE')
+            self.event_insert_query = sa.insert(self.EventTable).prefix_with('OR IGNORE')
 
         LOG.debug("done setting up")
 
@@ -200,7 +219,7 @@ class Storage:
         async with self.db.begin() as conn:
             do_save = await self.pre_save(conn, event)
             if do_save:
-                result = await conn.execute(sa.insert(self.EventTable).values(
+                result = await conn.execute(self.event_insert_query.values(
                     id=event.id_bytes,
                     created_at=event.created_at,
                     pubkey=bytes.fromhex(event.pubkey),
@@ -212,16 +231,19 @@ class Storage:
                 changed = result.rowcount == 1
                 await self.post_save(conn, event, changed)
         if changed:
-            # notify all subscriptions
-            count = 0
-            with catchtime() as t:
-                for client in self.clients.values():
-                    for sub in client.values():
-                        asyncio.create_task(sub.notify(event))
-                        count += 1
-            if count:
-                LOG.debug("notify-all took %.2fms for %d subscriptions", t(), count)
+            self._notify_all(event)
         return event, changed
+
+    def _notify_all(self, event):
+        # notify all subscriptions
+        count = 0
+        with catchtime() as t:
+            for client in self.clients.values():
+                for sub in client.values():
+                    asyncio.create_task(sub.notify(event))
+                    count += 1
+        if count:
+            LOG.debug("notify-all took %.2fms for %d subscriptions", t(), count)
 
     def validate_event(self, event):
         """
@@ -296,6 +318,7 @@ class Storage:
                         event_id = tag[1]
                         query = sa.delete(self.EventTable).where((self.EventTable.c.pubkey == bytes.fromhex(event.pubkey)) & (self.EventTable.c.id == bytes.fromhex(event_id)))
                         result = await conn.execute(query)
+                        LOG.info('Deleted event %s', event_id)
 
     async def post_save(self, conn, event, changed):
         """
@@ -313,6 +336,7 @@ class Storage:
                     )
                 )
             await self.process_tags(conn, event)
+            await conn.execute(sa.text(f"NOTIFY addevent, '{self._my_token}:{event.id}'"))
         else:
             LOG.debug("skipped post-processing for %s", event)
 
