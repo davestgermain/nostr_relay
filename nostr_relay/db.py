@@ -87,8 +87,8 @@ class Storage:
     async def _event_listener(self, connection, serverpid, channel, payload):
         token, event_id = payload.split(':')
         if token != self._my_token:
-            event = await self.get_event(event_id)
-            self._notify_all(event)
+            event_json = await self.get_event(event_id)
+            self._notify_all(Event(**event_json))
 
     async def close(self):
         if self.garbage_collector_task:
@@ -108,7 +108,7 @@ class Storage:
 
         metadata = sa.MetaData()
         if self.is_postgres:
-            sa.event.listen(Engine, "connect", self._subscribe_to_channel)
+            # sa.event.listen(Engine, "connect", self._subscribe_to_channel)
 
             from sqlalchemy.dialects.postgresql import BYTEA, JSONB
             self.EventTable = sa.Table(
@@ -336,9 +336,8 @@ class Storage:
                     )
                 )
             await self.process_tags(conn, event)
-            await conn.execute(sa.text(f"NOTIFY addevent, '{self._my_token}:{event.id}'"))
-        else:
-            LOG.debug("skipped post-processing for %s", event)
+            # if self.is_postgres:
+            #     await conn.execute(sa.text(f"NOTIFY addevent, '{self._my_token}:{event.id}'"))
 
     async def run_single_query(self, query_filters):
         """
@@ -502,7 +501,7 @@ class Subscription:
                     result = await conn.stream(sa.text(query))
                     async for row in result:
                         event = Event.from_tuple(row)
-                        await queue.put((sub_id, str(event)))
+                        await queue.put((sub_id, event))
                         count += 1
                 await queue.put((sub_id, None))
 
@@ -564,15 +563,14 @@ class Subscription:
                         if eid:
                             if len(eid) == 64:
                                 if self.is_postgres:
-                                    exact.append(f"decode('{eid}', 'hex')")
+                                    exact.append(f"'\\x{eid}'")
                                 else:
                                     exact.append(f"x'{eid}'")
                             elif len(eid) > 2:
                                 if self.is_postgres:
-                                    subwhere.append(f"decode(id) LIKE '{eid}%'")
+                                    subwhere.append(f"encode(id, 'hex) LIKE '{eid}%'")
                                 else:
                                     subwhere.append(f"lower(hex(id) LIKE '{eid}%')")
-                                # subwhere.append(f"event.hexid LIKE '{eid}%'")
                     if exact:
                         idstr = ','.join(exact)
                         subwhere.append(f'events.id IN ({idstr})')
@@ -617,7 +615,7 @@ class Subscription:
                         pstr.append(f"'{val}'")
                 if pstr:
                     pstr = ','.join(pstr)
-                    subwhere.append(f"events.id IN (SELECT id FROM tag WHERE name = '{key[1]}' AND value IN ({pstr})) ")
+                    subwhere.append(f"id IN (SELECT id FROM tag WHERE name = '{key[1]}' AND value IN ({pstr})) ")
         return filter_obj
 
     def build_query(self, filters):

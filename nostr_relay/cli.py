@@ -82,7 +82,7 @@ async def query(ctx, query, results):
         while True:
             sub, event = await queue.get()
             if event:
-                click.echo(click.style(rapidjson.dumps(rapidjson.loads(event), indent=4), fg="red"))
+                click.echo(click.style(rapidjson.dumps(event.to_json_object(), indent=4), fg="red"))
                 click.echo('')
             else:
                 break
@@ -96,7 +96,6 @@ async def update_tags(ctx, query):
     """
     Update the tags in the tag table, from a REQ query
     """
-    import rapidjson
     from .event import Event
     from .db import get_storage, Subscription
 
@@ -108,8 +107,7 @@ async def update_tags(ctx, query):
     async with get_storage() as storage:
         count = 0
         async with storage.db.begin() as cursor:
-            async for event_json in storage.run_single_query(query):
-                event = Event(**rapidjson.loads(event_json))
+            async for event in storage.run_single_query(query):
                 await storage.process_tags(cursor, event)
                 count += 1
 
@@ -133,6 +131,43 @@ async def dump(ctx, event):
                 print(f'["EVENT", {event_json}]')
             else:
                 print(event_json)
+
+
+@main.command
+@click.pass_context
+@async_cmd
+async def load(ctx):
+    """
+    Load events
+    """
+    import sys
+    import collections
+    from rapidjson import loads
+
+    from .db import get_storage
+    kinds = collections.defaultdict(int)
+    count = 0
+    async with get_storage() as storage:
+        while sys.stdin:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            js = loads(line)
+            if isinstance(js, list):
+                event = js[1]
+            else:
+                event = js
+            event, added = await storage.add_event(event)
+            if added:
+                kinds[event.kind] += 1
+                count += 1
+            if count and count % 500 == 0:
+                click.echo(f"Added {count} events...")
+    click.echo("\nTotal events:")
+    for kind, num in sorted(kinds.items()):
+        click.echo(f"\tkind-{kind}: {num}")
+    click.echo(f"total: {count}")
+
 
 
 @click.group()
