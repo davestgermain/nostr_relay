@@ -6,14 +6,17 @@ relay_name: python relay
 relay_description: relay written in python
 sysop_pubkey: 
 sysop_contact: 
-# options are disabled, passive, enabled
-nip05_verification: disabled
-verification_expiration: 86400 * 30
-verification_update_frequency: 3600
-#verification_blacklist:
-# - badhost.biz
-#verification_whitelist:
-# - goodhost.com
+
+
+verification:
+  # options are disabled, passive, enabled
+  nip05_verification: disabled
+  expiration: 86400 * 30
+  update_frequency: 3600
+  #blacklist:
+  # - badhost.biz
+  #whitelist:
+  # - goodhost.com
 
 
 gunicorn:

@@ -18,6 +18,7 @@ from nostr_relay.errors import StorageError
 
 from nostr_relay import __version__
 
+from . import BaseTestsWithStorage
 
 PK1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
 PK2 = '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d'
@@ -36,35 +37,8 @@ REPLACE_EVENTS = [
 DELEGATION_EVENT = { "id": "a080fd288b60ac2225ff2e2d815291bd730911e583e177302cc949a15dc2b2dc",  "pubkey": "62903b1ff41559daf9ee98ef1ae67cc52f301bb5ce26d14baba3052f649c3f49",  "created_at": 1660896109,  "kind": 1, "tags":[["delegation","86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e","kind=1&created_at>1640995200","c33c88ba78ec3c760e49db591ac5f7b129e3887c8af7729795e85a0588007e5ac89b46549232d8f918eefd73e726cb450135314bfda419c030d0b6affe401ec1"]],  "content": "Hello world",  "sig": "cd4a3cd20dc61dcbc98324de561a07fd23b3d9702115920c0814b5fb822cc5b7c5bcdaf3fa326d24ed50c5b9c8214d66c75bae34e3a84c25e4d122afccb66eb6"}
 
 
-class BaseTests(unittest.IsolatedAsyncioTestCase):
-    @classmethod
-    def setUpClass(cls):
-        Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'))
 
-    def setUp(self):
-        pass
-        # logging.disable(logging.CRITICAL)
-
-
-    async def asyncSetUp(self):
-        self.storage = get_storage(reload=True)
-        await self.storage.setup_db()
-
-    async def asyncTearDown(self):
-        async with self.storage.db.begin() as conn:
-            await conn.execute(self.storage.EventTable.delete())
-
-    def make_event(self, privkey, pubkey=None, kind=0, created_at=None, tags=None, **kwargs):
-        if pubkey is None:
-            private_key = PrivateKey(bytes.fromhex(privkey))
-            pubkey = private_key.pubkey.serialize()[1:].hex()
-
-        evt = Event(kind=kind, pubkey=pubkey, created_at=created_at or time.time(), tags=tags or [], **kwargs)
-        evt.sign(privkey)
-        return evt.to_json_object()
-
-
-class DBTests(BaseTests):
+class DBTests(BaseTestsWithStorage):
     async def test_add_bad_event(self):
         with self.assertRaises(StorageError) as e:
             await self.storage.add_event([1,2,3])
@@ -207,7 +181,7 @@ class DBTests(BaseTests):
         assert data['names'] == {}
 
 
-class APITests(BaseTests):
+class APITests(BaseTestsWithStorage):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.conductor = testing.ASGIConductor(create_app(storage=self.storage))

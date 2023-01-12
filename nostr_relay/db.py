@@ -76,7 +76,6 @@ class Storage:
         self.db_url = db_url
         self.clients = collections.defaultdict(dict)
         self.db = None
-        self.verifier = Verifier(self)
         self.garbage_collector_task = None
         self.is_postgres = 'postgresql' in db_url
 
@@ -147,6 +146,8 @@ class Storage:
 
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
         self.authenticator.setup_db(metadata)
+        self.verifier = Verifier(self, Config.get('verification', {}))
+
         self.verifier.setup_db(metadata)
 
         self.db = create_async_engine(
