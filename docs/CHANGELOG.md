@@ -4,6 +4,7 @@
 
 * Update authentication to reflect draft NIP-42
 * Serve event json from /e/ instead of /event/
+* Added `nostr-relay dump` command to dump all events as JSON
 
 ## 1.3.4
 

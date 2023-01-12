@@ -90,6 +90,25 @@ async def query(ctx, query, results):
 
 
 @main.command()
+@click.option("--event/--no-event", '-e', help="Return as EVENT message JSON", default=True)
+@click.pass_context
+@async_cmd
+async def dump(ctx, event):
+    """
+    Dump all events
+    """
+    query = [{'since': 1}]
+    as_event = event
+    from .db import get_storage
+    async with get_storage() as storage:
+        async for event_json in storage.run_single_query(query):
+            if as_event:
+                print(f'["EVENT", {event_json}]')
+            else:
+                print(event_json)
+
+
+@main.command()
 @click.option("--query", '-q', help="Query", prompt="Enter REQ filters", default='[{"kinds":[0,1,2,3,4,5,5,6,7,8,9]}]')
 @click.pass_context
 @async_cmd

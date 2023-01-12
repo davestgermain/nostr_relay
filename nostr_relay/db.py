@@ -204,6 +204,20 @@ class Storage:
         else:
             LOG.debug("skipped post-processing for %s", event)
 
+    async def run_single_query(self, query_filters):
+        """
+        Run a single query, yielding json events
+        """
+        queue = asyncio.Queue()
+        sub = Subscription(self.db, '', query_filters, queue=queue, default_limit=600000)
+        sub.prepare()
+        await sub.run_query()
+        while True:
+            _, event = await queue.get()
+            if event is None:
+                break
+            yield event
+
     async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None):
         LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
