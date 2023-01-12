@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.4.0
+
+* Switch to sqlalchemy for data access
+
+
 ## 1.3.5
 
 * Update authentication to reflect draft NIP-42

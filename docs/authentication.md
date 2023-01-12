@@ -68,7 +68,7 @@ Then, in your configuration:
 ```
 authentication:
   enabled: true
-  authenticator_class: my.custom.module:MyAuthenticator
+  authenticator_class: my.custom.module.MyAuthenticator
   actions:
     save: w
     query: ra

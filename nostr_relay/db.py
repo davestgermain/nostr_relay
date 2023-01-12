@@ -20,6 +20,7 @@ from .config import Config
 from .verification import Verifier
 from .auth import get_authenticator, Action
 from .errors import StorageError, AuthenticationError
+from .util import call_from_path
 
 
 LOG = logging.getLogger(__name__)
@@ -708,15 +709,7 @@ class QueryGarbageCollector(BaseGarbageCollector):
 def start_garbage_collector(db, options=None):
     options = options or Config.garbage_collector
     if options:
-        gc_path = options.pop("class", "nostr_relay.db:QueryGarbageCollector")
-        module_name, gc_classname = gc_path.split(':', 1)
-        if module_name != 'nostr_relay.db':
-            import importlib
-            module = importlib.import_module(module_name)
-            gc_class = getattr(module, gc_classname)
-        else:
-            gc_class = globals()[gc_classname]
-        gc_obj = gc_class(db, **options)
+        gc_obj = call_from_path(options.pop("class", "nostr_relay.db.QueryGarbageCollector"), db, **options)
         return asyncio.create_task(gc_obj.start())
 
 

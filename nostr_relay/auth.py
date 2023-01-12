@@ -7,6 +7,7 @@ import sqlalchemy as sa
 
 from .event import Event
 from .errors import StorageError, AuthenticationError
+from .util import call_from_path
 
 
 class Role(enum.Enum):
@@ -152,14 +153,6 @@ def get_authenticator(storage, configuration: dict):
     Return an authenticator object, according to the configuration dict
     """
 
-    classpath = configuration.get('authenticator_class', 'nostr_relay.auth:Authenticator')
-    modulename, classname = classpath.split(':', 1)
-    if modulename == 'nostr_relay.auth':
-        classobj = globals()[classname]
-    else:
-        import importlib
-        module = importlib.import_module(modulename)
-        classobj = getattr(module, classname)
-    auth_obj = classobj(storage, configuration)
-    return auth_obj
+    classpath = configuration.get('authenticator_class', 'nostr_relay.auth.Authenticator')
+    return call_from_path(classpath, storage, configuration)
 

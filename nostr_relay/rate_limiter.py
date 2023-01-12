@@ -1,6 +1,7 @@
 import logging
 import collections
 from time import perf_counter
+from .util import call_from_path
 
 
 class BaseRateLimiter:
@@ -147,14 +148,7 @@ def get_rate_limiter(options):
     """
 
     if 'rate_limits' in options:
-        classpath = options.get('rate_limiter_class', 'nostr_relay.rate_limiter:RateLimiter')
-        modulename, classname = classpath.split(':', 1)
-        if modulename == 'nostr_relay.rate_limiter':
-            classobj = globals()[classname]
-        else:
-            import importlib
-            module = importlib.import_module(modulename)
-            classobj = getattr(module, classname)
+        classpath = options.get('rate_limiter_class', 'nostr_relay.rate_limiter.RateLimiter')
     else:
-        classobj = NullRateLimiter
-    return classobj(options.get('rate_limits', {}))
+        classpath = 'nostr_relay.rate_limiter.NullRateLimiter'
+    return call_from_path(classpath, options.get('rate_limits', {}))
