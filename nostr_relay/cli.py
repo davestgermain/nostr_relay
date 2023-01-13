@@ -66,7 +66,7 @@ async def query(ctx, query, results):
     """
     import rapidjson
     from .storage import get_storage
-    from .db import Subscription
+    from .storage.db import Subscription
     if not query:
         click.echo("query is required")
         return -1
@@ -156,9 +156,14 @@ async def load(ctx, filename):
     from rapidjson import loads
 
     Config.authentication['enabled'] = False
-    Config.verification['nip05_verification'] = 'disabled'
+    # this will reverify profiles but not reject unverified events
+    if Config.verification['nip05_verification'] == 'enabled':
+        Config.verification['nip05_verification'] = 'passive'
+
+    Config.oldest_event = 315360000
 
     from .storage import get_storage
+    from .errors import StorageError
     kinds = collections.defaultdict(int)
     count = 0
     async with get_storage() as storage:
@@ -171,7 +176,11 @@ async def load(ctx, filename):
                 event = js[1]
             else:
                 event = js
-            event, added = await storage.add_event(event)
+            try:
+                event, added = await storage.add_event(event)
+            except StorageError as e:
+                print(f'Error: {e} for {event}')
+                added = False
             if added:
                 kinds[event.kind] += 1
                 count += 1

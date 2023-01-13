@@ -126,7 +126,7 @@ class DBStorage(BaseStorage):
         metadata = get_metadata()
         self.EventTable = metadata.tables['events']
         self.IdentTable = metadata.tables['identity']
-        TagTable = metadata.tables['tag']
+        TagTable = metadata.tables['tags']
         if self.is_postgres:
             from sqlalchemy.dialects.postgresql import insert
             self.tag_insert_query = insert(TagTable).on_conflict_do_nothing(index_elements=['id', 'name', 'value'])
@@ -535,7 +535,7 @@ class Subscription:
                     else:
                         astr = ','.join("x'%s'" % validate_id(a) for a in set(value))
                     if astr:
-                        subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tag WHERE name = 'delegation' AND value IN ({astr})))")
+                        subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tags WHERE name = 'delegation' AND value IN ({astr})))")
                     else:
                         raise ValueError("authors")
                 else:
@@ -566,7 +566,7 @@ class Subscription:
                         pstr.append(f"'{val}'")
                 if pstr:
                     pstr = ','.join(pstr)
-                    subwhere.append(f"id IN (SELECT id FROM tag WHERE name = '{key[1]}' AND value IN ({pstr})) ")
+                    subwhere.append(f"id IN (SELECT id FROM tags WHERE name = '{key[1]}' AND value IN ({pstr})) ")
         return filter_obj
 
     def build_query(self, filters):
@@ -643,11 +643,11 @@ class QueryGarbageCollector(BaseGarbageCollector):
         DELETE FROM events WHERE events.id IN
         (
             SELECT events.id FROM events
-            LEFT JOIN tag on tag.id = events.id
+            LEFT JOIN tags on tags.id = events.id
             WHERE 
                 (kind >= 20000 and kind < 30000)
             OR
-                (tag.name = 'expiration' AND tag.value < '%NOW%')
+                (tags.name = 'expiration' AND tags.value < '%NOW%')
         )
     '''
 

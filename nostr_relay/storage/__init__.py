@@ -55,7 +55,7 @@ def get_metadata():
         sa.Index('pkidx', EventTable.c.pubkey)
 
         TagTable = sa.Table(
-            'tag', 
+            'tags', 
             _METADATA,
             sa.Column('id', EventTable.c.id.type, sa.ForeignKey(EventTable.c.id, ondelete="CASCADE")), 
             sa.Column('name', sa.Text()),
