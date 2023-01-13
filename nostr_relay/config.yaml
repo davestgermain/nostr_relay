@@ -1,12 +1,12 @@
 DEBUG: false
 
-db_url: sqlite+aiosqlite:///nostr.sqlite3
-
 relay_name: python relay
 relay_description: relay written in python
 sysop_pubkey: 
 sysop_contact: 
 
+storage:
+  sqlalchemy.url: sqlite+aiosqlite:///nostr.sqlite3
 
 verification:
   # options are disabled, passive, enabled

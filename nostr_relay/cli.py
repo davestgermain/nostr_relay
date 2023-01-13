@@ -27,6 +27,11 @@ def serve(ctx):
     """
     Start the http relay server 
     """
+    import os.path
+    from alembic import config
+    config.Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+    config.main(['upgrade', 'head'])
+
     run_with_gunicorn()
 
 
@@ -45,7 +50,7 @@ async def adduser(ctx, identifier='', pubkey='', relay=None):
     else:
         click.echo(f'Adding {identifier} = {pubkey} with relays: {relay}')
 
-        from .db import get_storage
+        from .storage import get_storage
         async with get_storage() as storage:
             await storage.set_identified_pubkey(identifier, pubkey, relays=relay)
 
@@ -60,7 +65,8 @@ async def query(ctx, query, results):
     Run a REQ query and display results
     """
     import rapidjson
-    from .db import get_storage, Subscription
+    from .storage import get_storage
+    from .db import Subscription
     if not query:
         click.echo("query is required")
         return -1
@@ -97,7 +103,7 @@ async def update_tags(ctx, query):
     Update the tags in the tag table, from a REQ query
     """
     from .event import Event
-    from .db import get_storage, Subscription
+    from .storage import get_storage
 
     if not query:
         query = '[{}]'
@@ -124,7 +130,7 @@ async def dump(ctx, event):
     """
     query = [{'since': 1}]
     as_event = event
-    from .db import get_storage
+    from .storage import get_storage
     async with get_storage() as storage:
         async for event_json in storage.run_single_query(query):
             if as_event:
@@ -134,22 +140,30 @@ async def dump(ctx, event):
 
 
 @main.command
+@click.argument("filename", required=False)
 @click.pass_context
 @async_cmd
-async def load(ctx):
+async def load(ctx, filename):
     """
     Load events
     """
     import sys
+    if filename:
+        fileobj = open(filename, 'r')
+    else:
+        fileobj = sys.stdin
     import collections
     from rapidjson import loads
 
-    from .db import get_storage
+    Config.authentication['enabled'] = False
+    Config.verification['nip05_verification'] = 'disabled'
+
+    from .storage import get_storage
     kinds = collections.defaultdict(int)
     count = 0
     async with get_storage() as storage:
-        while sys.stdin:
-            line = sys.stdin.readline()
+        while fileobj:
+            line = fileobj.readline()
             if not line:
                 break
             js = loads(line)
@@ -163,6 +177,7 @@ async def load(ctx):
                 count += 1
             if count and count % 500 == 0:
                 click.echo(f"Added {count} events...")
+    fileobj.close()
     click.echo("\nTotal events:")
     for kind, num in sorted(kinds.items()):
         click.echo(f"\tkind-{kind}: {num}")
@@ -187,7 +202,7 @@ async def set(pubkey, roles):
     """
     Set roles in the authentication table
     """
-    from .db import get_storage
+    from .storage import get_storage
 
     if not pubkey:
         click.echo('public key is required')
@@ -205,7 +220,7 @@ async def get(pubkey):
     """
     Get roles from the authentication table
     """
-    from .db import get_storage
+    from .storage import get_storage
     async with get_storage() as storage:
         if not pubkey:
             async for pubkey, role in storage.authenticator.get_all_roles():
@@ -270,4 +285,16 @@ def mirror(ids, authors, kinds, etags, ptags, since, until, limit, source, targe
     except KeyboardInterrupt:
         proc.kill()
         return 0
+
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+))
+@click.argument('alembic_args', nargs=-1, type=click.UNPROCESSED)
+@click.pass_context
+def alembic(ctx, alembic_args):
+    import os.path
+    from alembic import config
+    config.Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+    return config.main(alembic_args)
 

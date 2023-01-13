@@ -18,6 +18,23 @@ from datetime import datetime, timedelta
 import sqlalchemy as sa
 
 from .errors import VerificationError
+from nostr_relay.storage import get_metadata
+
+
+_metadata = get_metadata()
+
+Verification = sa.Table(
+    'verification',
+    _metadata,
+    sa.Column('id', sa.Integer(), primary_key=True),
+    sa.Column('identifier', sa.Text()),
+    sa.Column('metadata_id', _metadata.tables['events'].c.id.type, sa.ForeignKey('events.id', ondelete='CASCADE')),
+    sa.Column('verified_at', sa.TIMESTAMP()),
+    sa.Column('failed_at', sa.TIMESTAMP())
+)
+sa.Index('identifieridx', Verification.c.identifier)
+sa.Index('metadataidx', Verification.c.metadata_id)
+sa.Index('verifiedidx', Verification.c.verified_at)
 
 
 
@@ -35,21 +52,6 @@ class Verifier:
         self.should_verify = options.get('nip05_verification', '') in ('enabled', 'passive')
         if self.should_verify:
             self.log = logging.getLogger(__name__)
-
-    def setup_db(self, metadata):
-
-        self.Verification = sa.Table(
-            'verification',
-            metadata,
-            sa.Column('id', sa.Integer(), primary_key=True),
-            sa.Column('identifier', sa.Text()),
-            sa.Column('metadata_id', metadata.tables['events'].c.id.type, sa.ForeignKey('events.id', ondelete='CASCADE')),
-            sa.Column('verified_at', sa.TIMESTAMP()),
-            sa.Column('failed_at', sa.TIMESTAMP())
-        )
-        sa.Index('identifieridx', self.Verification.c.identifier)
-        sa.Index('metadataidx', self.Verification.c.metadata_id)
-        sa.Index('verifiedidx', self.Verification.c.verified_at)
 
     async def update_metadata(self, cursor, event):
         # metadata events are evaluated as candidates
@@ -98,8 +100,8 @@ class Verifier:
             else:
                 return True
 
-        query = sa.select(self.Verification.c.id, self.Verification.c.identifier, self.Verification.c.verified_at, self.Verification.c.failed_at, sa.column('events.created_at')).select_from(
-                sa.join(self.Verification, self.storage.EventTable, self.Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
+        query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, Verification.c.failed_at, sa.column('events.created_at')).select_from(
+                sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
             ).where(
                 (self.storage.EventTable.c.pubkey == bytes.fromhex(event.pubkey))
             )
@@ -145,10 +147,10 @@ class Verifier:
             try:
                 if (time.time() - last_run) > self.options['update_frequency']:
                     self.log.debug("running batch query")
-                    query = sa.select(self.Verification.c.id, self.Verification.c.identifier, sa.column('events.pubkey'), self.Verification.c.metadata_id).select_from(
-                        sa.join(self.Verification, self.storage.EventTable, self.Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
+                    query = sa.select(Verification.c.id, Verification.c.identifier, sa.column('events.pubkey'), Verification.c.metadata_id).select_from(
+                        sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
                     ).where(
-                        (sa.column('events.pubkey') != None) & (self.Verification.c.verified_at > (int(time.time() - self.options['expiration'])))
+                        (sa.column('events.pubkey') != None) & (Verification.c.verified_at > (int(time.time() - self.options['expiration'])))
                     )
 
                     async with db.begin() as cursor:
@@ -175,15 +177,15 @@ class Verifier:
                         for vid, identifier, metadata_id in success:
                             if vid is None:
                                 # first time verifying
-                                await conn.execute(sa.insert(self.Verification).values({'identifier': identifier, 'metadata_id': metadata_id, 'verified_at': datetime.now()}))
+                                await conn.execute(sa.insert(Verification).values({'identifier': identifier, 'metadata_id': metadata_id, 'verified_at': datetime.now()}))
                             else:
-                                await conn.execute(sa.update(self.Verification).where({'id': vid}).set({'verified_at': datetime.now()}))
+                                await conn.execute(sa.update(Verification).where({'id': vid}).set({'verified_at': datetime.now()}))
                         for vid, identifier, metadata_id in failure:
                             if vid is None:
                                 # don't persist first time candidates
                                 continue
                             else:
-                                await conn.execute(sa.update(self.Verification).where({'id': vid}).set({'failed_at': datetime.now()}))
+                                await conn.execute(sa.update(Verification).where({'id': vid}).set({'failed_at': datetime.now()}))
                     self.log.info("Saved success:%d failure:%d", len(success), len(failure))
             last_run = time.time()
 

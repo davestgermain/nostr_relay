@@ -21,9 +21,8 @@ from .verification import Verifier
 from .auth import get_authenticator, Action
 from .errors import StorageError, AuthenticationError
 from .util import call_from_path
+from .storage import get_metadata
 
-
-LOG = logging.getLogger(__name__)
 
 force_hex_translation = str.maketrans('abcdef0213456789','abcdef0213456789', 'ghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
@@ -41,18 +40,6 @@ def catchtime() -> float:
     yield lambda: (perf_counter() - start) * 1000
 
 
-
-STORAGE = None
-
-def get_storage(reload=False):
-    global STORAGE
-    if STORAGE is None or reload:
-        if Config.db_filename:
-            raise StorageError("Please set db_url in config file and remove option db_filename")
-        STORAGE = Storage(Config.db_url)
-    return STORAGE
-
-
 class Storage:
 
     def __init__(self, db_url='sqlite+aiosqlite:///nostr.sqlite3'):
@@ -62,7 +49,7 @@ class Storage:
         self.garbage_collector_task = None
         self.is_postgres = 'postgresql' in db_url
         self._my_token = secrets.token_hex(4)
-
+        self.log = logging.getLogger(__name__)
 
     def _set_sqlite_pragma(self, dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
@@ -104,68 +91,19 @@ class Storage:
                 await conn.execute(sa.text("PRAGMA optimize"))
 
     async def setup_db(self):
-        LOG.info("Database URL: '%s'", self.db_url)
+        self.log.info("Database URL: '%s'", self.db_url)
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        metadata = sa.MetaData()
         if self.is_postgres:
             # sa.event.listen(Engine, "connect", self._subscribe_to_channel)
-
-            from sqlalchemy.dialects.postgresql import BYTEA, JSONB
-            self.EventTable = sa.Table(
-                'events',
-                metadata,
-                sa.Column('id', BYTEA(), primary_key=True),
-                sa.Column('created_at', sa.Integer()),
-                sa.Column('kind', sa.Integer()), 
-                sa.Column('pubkey', BYTEA()),
-                sa.Column('tags', JSONB()),
-                sa.Column('sig', BYTEA()),
-                sa.Column('content', sa.Text()),
-                sa.Column('hexid', sa.Text(), server_default=sa.Computed("encode(id, 'hex')")), 
-            )
+            pass
         else:
             # add event listener to set appropriate PRAGMA items
             sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
 
-            self.EventTable = sa.Table(
-                'events',
-                metadata,
-                sa.Column('id', sa.BLOB(), primary_key=True),
-                sa.Column('created_at', sa.Integer()),
-                sa.Column('kind', sa.Integer()), 
-                sa.Column('pubkey', sa.BLOB()),
-                sa.Column('tags', sa.JSON()),
-                sa.Column('sig', sa.BLOB()),
-                sa.Column('content', sa.Text()),
-            )
-        sa.Index('cidx', self.EventTable.c.created_at)
-        sa.Index('kidx', self.EventTable.c.kind),
-        sa.Index('pkidx', self.EventTable.c.pubkey)
-
-        self.TagTable = sa.Table(
-            'tag', 
-            metadata,
-            sa.Column('id', self.EventTable.c.id.type, sa.ForeignKey(self.EventTable.c.id, ondelete="CASCADE")), 
-            sa.Column('name', sa.Text()),
-            sa.Column('value', sa.Text()),
-            sa.UniqueConstraint("id", "name", "value", name="unique_tag"),
-        )
-        sa.Index('tag_idx', self.TagTable.c.name, self.TagTable.c.value)
-
-        self.IdentTable = sa.Table(
-            'identity',
-            metadata,
-            sa.Column('identifier', sa.Text(), primary_key=True),
-            sa.Column('pubkey', sa.Text()),
-            sa.Column('relays', sa.JSON()),
-        )
-
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
-        self.authenticator.setup_db(metadata)
 
         self.verifier = Verifier(self, Config.get('verification', {}))
-        self.verifier.setup_db(metadata)
 
         self.db = create_async_engine(
             self.db_url,
@@ -174,21 +112,22 @@ class Storage:
             pool_pre_ping=True,
         )
 
-        async with self.db.begin() as conn:
-            await conn.run_sync(metadata.create_all)
-
         self.garbage_collector_task = start_garbage_collector(self.db)
         await self.verifier.start(self.db)
 
+        metadata = get_metadata()
+        self.EventTable = metadata.tables['events']
+        self.IdentTable = metadata.tables['identity']
+        TagTable = metadata.tables['tag']
         if self.is_postgres:
             from sqlalchemy.dialects.postgresql import insert
-            self.tag_insert_query = insert(self.TagTable).on_conflict_do_nothing(index_elements=['id', 'name', 'value'])
+            self.tag_insert_query = insert(TagTable).on_conflict_do_nothing(index_elements=['id', 'name', 'value'])
             self.event_insert_query = insert(self.EventTable).on_conflict_do_nothing(index_elements=['id'])
         else:
-            self.tag_insert_query = sa.insert(self.TagTable).prefix_with('OR IGNORE')
+            self.tag_insert_query = sa.insert(TagTable).prefix_with('OR IGNORE')
             self.event_insert_query = sa.insert(self.EventTable).prefix_with('OR IGNORE')
 
-        LOG.debug("done setting up")
+        self.log.debug("done setting up")
 
     async def get_event(self, event_id):
         """
@@ -208,7 +147,7 @@ class Storage:
         try:
             event = Event(**event_json)
         except Exception as e:
-            LOG.error("bad json")
+            self.log.error("bad json")
             raise StorageError("invalid: Bad JSON")
 
         await asyncio.get_running_loop().run_in_executor(None, self.validate_event, event)
@@ -244,14 +183,14 @@ class Storage:
                     asyncio.create_task(sub.notify(event))
                     count += 1
         if count:
-            LOG.debug("notify-all took %.2fms for %d subscriptions", t(), count)
+            self.log.debug("notify-all took %.2fms for %d subscriptions", t(), count)
 
     def validate_event(self, event):
         """
         Validate basic format and signature
         """
         if Config.max_event_size and len(event.content) > Config.max_event_size:
-            LOG.error("Received large event %s from %s size:%d max_size:%d",
+            self.log.error("Received large event %s from %s size:%d max_size:%d",
                 event.id, event.pubkey, len(event.content), Config.max_event_size
             )
             raise StorageError("invalid: 280 characters should be enough for anybody")
@@ -290,7 +229,7 @@ class Storage:
             if row:
                 old_id = row[0]
                 old_ts = row[1]
-                LOG.info("Replacing event %s from %s@%s with %s", old_id, event.pubkey, old_ts, event.id)
+                self.log.info("Replacing event %s from %s@%s with %s", old_id, event.pubkey, old_ts, event.id)
                 await conn.execute(self.EventTable.delete().where(self.EventTable.c.id == old_id))
         return True
 
@@ -319,7 +258,7 @@ class Storage:
                         event_id = tag[1]
                         query = sa.delete(self.EventTable).where((self.EventTable.c.pubkey == bytes.fromhex(event.pubkey)) & (self.EventTable.c.id == bytes.fromhex(event_id)))
                         result = await conn.execute(query)
-                        LOG.info('Deleted event %s', event_id)
+                        self.log.info('Deleted event %s', event_id)
 
     async def post_save(self, conn, event, changed):
         """
@@ -345,7 +284,7 @@ class Storage:
         Run a single query, yielding json events
         """
         queue = asyncio.Queue()
-        sub = Subscription(self.db, '', query_filters, queue=queue, default_limit=600000)
+        sub = Subscription(self.db, '', query_filters, queue=queue, default_limit=600000, log=self.log)
         sub.prepare()
         await sub.run_query()
         while True:
@@ -354,8 +293,8 @@ class Storage:
                 break
             yield event
 
-    async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None):
-        LOG.debug('%s/%s filters: %s', client_id, sub_id, filters)
+    async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None, **kwargs):
+        self.log.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             await self.unsubscribe(client_id, sub_id)
         sub = Subscription(
@@ -365,6 +304,8 @@ class Storage:
                 queue=queue,
                 client_id=client_id,
                 is_postgres=self.is_postgres,
+                log=self.log,
+                **kwargs
         )
         if sub.prepare():
             if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
@@ -372,14 +313,14 @@ class Storage:
 
             asyncio.create_task(sub.run_query())
             self.clients[client_id][sub_id] = sub
-            LOG.debug("%s/%s +", client_id, sub_id)
+            self.log.debug("%s/%s +", client_id, sub_id)
 
     async def unsubscribe(self, client_id, sub_id=None):
         if sub_id:
             try:
                 self.clients[client_id][sub_id].cancel()
                 del self.clients[client_id][sub_id]
-                LOG.debug("%s/%s -", client_id, sub_id)
+                self.log.debug("%s/%s -", client_id, sub_id)
             except KeyError:
                 pass
         elif client_id in self.clients:
@@ -434,7 +375,7 @@ class Storage:
             'names': {},
             'relays': {}
         }
-        LOG.debug("Getting identity for ? ?", identifier, domain)
+        self.log.debug("Getting identity for ? ?", identifier, domain)
         async with self.db.begin() as conn:
             result = await conn.stream(query)
             async for pubkey, identifier, relays in result:
@@ -466,7 +407,7 @@ class Storage:
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=6000, is_postgres=False):
+    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=6000, is_postgres=False, log=None):
         self.db  = db
         self.sub_id = sub_id
         self.client_id = client_id
@@ -475,12 +416,13 @@ class Subscription:
         self.query_task = None
         self.default_limit = default_limit
         self.is_postgres = is_postgres
+        self.log = log
 
     def prepare(self):
         try:
             self.query, self.filters = self.build_query(self.filters)
         except Exception:
-            LOG.exception("build_query")
+            self.log.exception("build_query")
             return False
         return True
 
@@ -492,7 +434,7 @@ class Subscription:
         self.query_task = asyncio.current_task()
 
         query = self.query
-        LOG.debug(query)
+        self.log.debug(query)
         sub_id = self.sub_id
         queue = self.queue
         try:
@@ -507,11 +449,11 @@ class Subscription:
                 await queue.put((sub_id, None))
 
             duration = t()
-            LOG.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
+            self.log.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
             if duration > 500:
-                LOG.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
+                self.log.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
         except Exception:
-            LOG.exception("subscription")
+            self.log.exception("subscription")
 
     async def notify(self, event):
         # every time an event is added, all subscribers are notified.
@@ -522,7 +464,7 @@ class Subscription:
         with catchtime() as t:
             matched = self.check_event(event, self.filters)
         duration = t()
-        LOG.debug('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, duration)
+        self.log.debug('%s/%s notify match %s %s duration:%.2fms', self.client_id, self.sub_id, event.id, matched, duration)
         if matched:
             await self.queue.put((self.sub_id, event))
 
@@ -569,7 +511,7 @@ class Subscription:
                                     exact.append(f"x'{eid}'")
                             elif len(eid) > 2:
                                 if self.is_postgres:
-                                    subwhere.append(f"encode(id, 'hex) LIKE '{eid}%'")
+                                    subwhere.append(f"encode(id, 'hex') LIKE '{eid}%'")
                                 else:
                                     subwhere.append(f"lower(hex(id) LIKE '{eid}%')")
                     if exact:
@@ -631,7 +573,7 @@ class Subscription:
             try:
                 filter_obj = self.evaluate_filter(filter_obj, subwhere)
             except ValueError:
-                LOG.debug("bad query %s", filter_obj)
+                self.log.debug("bad query %s", filter_obj)
                 filter_obj = {}
                 subwhere = []
             if subwhere:

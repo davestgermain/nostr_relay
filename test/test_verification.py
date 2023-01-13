@@ -6,7 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from nostr_relay.db import get_storage
+from nostr_relay.storage import get_storage
 from nostr_relay.config import Config
 from nostr_relay.verification import Verifier
 from nostr_relay.errors import VerificationError
@@ -43,7 +43,6 @@ class VerificationTests(BaseTestsWithStorage):
 
     async def test_enabled_unverified(self):
         verifier = Verifier(self.storage, {'nip05_verification': 'enabled', 'blacklist': 'baddomain.biz'})
-        verifier.Verification = self.storage.verifier.Verification
 
         async with self.storage.db.begin() as conn:
             with self.assertRaises(VerificationError) as e:
@@ -73,13 +72,11 @@ class VerificationTests(BaseTestsWithStorage):
 
     async def test_enabled_candidate(self):
         verifier = Verifier(self.storage, {'nip05_verification': 'enabled', 'blacklist': 'baddomain.biz'})
-        verifier.Verification = self.storage.verifier.Verification
 
         async with self.storage.db.begin() as conn:
             assert await verifier.verify(conn, self.make_profile(PK1, identifier='test@localhost'))
 
             verifier = Verifier(self.storage, {'nip05_verification': 'passive', 'blacklist': 'baddomain.biz'})
-            verifier.Verification = self.storage.verifier.Verification
             assert await verifier.verify(conn, self.make_profile(PK1, identifier='test@localhost'))
 
             assert await verifier.verify(conn, self.make_profile(PK1))
@@ -97,7 +94,6 @@ class VerificationTests(BaseTestsWithStorage):
     @patch('nostr_relay.verification.Verifier.get_aiohttp_session')
     async def test_process_verifications(self, mock):
         verifier = Verifier(self.storage, {'nip05_verification': 'enabled', 'blacklist': 'baddomain.biz'})
-        verifier.Verification = self.storage.verifier.Verification
 
         response = self.mock_session(mock)
 
@@ -137,7 +133,6 @@ class VerificationTests(BaseTestsWithStorage):
         response.return_value = {'names': {'test': '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'}}
 
         verifier = Verifier(self.storage, {'nip05_verification': 'enabled'})
-        verifier.Verification = self.storage.verifier.Verification
 
         profile_event = self.make_profile(PK1, identifier='test@localhost')
         await self.storage.add_event(profile_event.to_json_object())

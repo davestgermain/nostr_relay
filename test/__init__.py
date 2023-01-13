@@ -4,7 +4,8 @@ import os.path
 import time
 
 from nostr_relay.config import Config
-from nostr_relay.db import get_storage
+Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'), reload=True)
+
 from nostr_relay.event import Event, PrivateKey
 
 
@@ -12,8 +13,8 @@ from nostr_relay.event import Event, PrivateKey
 class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'), reload=True)
         logging.basicConfig()
+        Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'), reload=True)
 
     def setUp(self):
         pass
@@ -21,8 +22,11 @@ class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
 
 
     async def asyncSetUp(self):
+        from nostr_relay.storage import get_storage, get_metadata
         self.storage = get_storage(reload=True)
         await self.storage.setup_db()
+        async with self.storage.db.begin() as conn:
+            await conn.run_sync(get_metadata().create_all)
 
     async def asyncTearDown(self):
         async with self.storage.db.begin() as conn:

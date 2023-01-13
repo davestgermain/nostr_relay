@@ -11,10 +11,11 @@ from falcon import testing, errors
 
 from nostr_relay.config import Config
 from nostr_relay.web import create_app
-from nostr_relay.db import get_storage
-from nostr_relay.event import Event, PrivateKey
+from nostr_relay.storage import get_storage
 from nostr_relay.auth import Authenticator
+from nostr_relay.event import Event, PrivateKey
 from nostr_relay.errors import StorageError
+
 
 from nostr_relay import __version__
 
@@ -421,8 +422,9 @@ class AuthTests(APITests):
             await self.storage.authenticator.set_roles(pubkey, role)
 
     async def asyncTearDown(self):
+        from nostr_relay.auth import AuthTable
         async with self.storage.db.begin() as conn:
-            await conn.execute(self.storage.authenticator.AuthTable.delete())
+            await conn.execute(AuthTable.delete())
         await super().asyncTearDown()
 
     async def get_challenge(self, ws):

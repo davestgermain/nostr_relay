@@ -8,6 +8,16 @@ import sqlalchemy as sa
 from .event import Event
 from .errors import StorageError, AuthenticationError
 from .util import call_from_path
+from .storage import get_metadata
+
+
+AuthTable = sa.Table(
+    'auth',
+    get_metadata(),
+    sa.Column('pubkey', sa.Text(), primary_key=True),
+    sa.Column('roles', sa.Text()),
+    sa.Column('created', sa.DateTime())
+)
 
 
 class Role(enum.Enum):
@@ -34,16 +44,6 @@ class Authenticator:
         self.log = logging.getLogger('nostr_relay.auth')
         if self.is_enabled:
             self.log.info("Authentication enabled.")
-
-    def setup_db(self, metadata):
-        self.AuthTable = sa.Table(
-            'auth',
-            metadata,
-            sa.Column('pubkey', sa.Text(), primary_key=True),
-            sa.Column('roles', sa.Text()),
-            sa.Column('created', sa.DateTime())
-        )
-        self.log.info("initialized table")
 
     def parse_options(self, options):
         actions = {Action.save.value: self.default_roles, Action.query.value: self.default_roles}
@@ -92,7 +92,7 @@ class Authenticator:
         Get the roles assigned to the public key
         """
         async with self.storage.db.begin() as conn:
-            result = await conn.execute(sa.select(self.AuthTable.c.roles).where(self.AuthTable.c.pubkey == pubkey))
+            result = await conn.execute(sa.select(AuthTable.c.roles).where(AuthTable.c.pubkey == pubkey))
             row = result.fetchone()
         if row:
             return set(row[0].lower())
@@ -104,7 +104,7 @@ class Authenticator:
         Return all roles in authentication table
         """
         async with self.storage.db.begin() as conn:
-            result = await conn.stream(sa.select(self.AuthTable.c.pubkey, self.AuthTable.c.roles))
+            result = await conn.stream(sa.select(AuthTable.c.pubkey, AuthTable.c.roles))
             async for pubkey, role in result:
                 yield pubkey, set((role or '').lower())
 
@@ -113,7 +113,7 @@ class Authenticator:
         Assign roles to the given public key
         """
         async with self.storage.db.begin() as conn:
-            await conn.execute(sa.insert(self.AuthTable).values(pubkey=pubkey, roles=roles, created=datetime.now()))
+            await conn.execute(sa.insert(AuthTable).values(pubkey=pubkey, roles=roles, created=datetime.now()))
 
     async def authenticate(self, auth_event_json: dict, challenge: str=''):
         """

@@ -1,6 +1,7 @@
 DEBUG: false
 
-db_url: 'sqlite+aiosqlite:///:memory:'
+storage:
+  sqlalchemy.url: 'sqlite+aiosqlite:///:memory:'
 
 relay_name: test relay
 relay_description: test relay description
