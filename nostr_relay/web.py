@@ -245,7 +245,7 @@ class SetupMiddleware:
         import random
         if Config.DEBUG:
             asyncio.get_running_loop().set_debug(True)
-        await self.storage.setup_db()
+        await self.storage.setup()
 
     async def process_shutdown(self, scope, event):
         await self.storage.optimize()

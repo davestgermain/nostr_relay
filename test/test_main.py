@@ -105,7 +105,7 @@ class DBTests(BaseTestsWithStorage):
         assert (await self.storage.get_event(distant_future_event["id"]))['id'] == distant_future_event['id']
 
         # stop and restart garbage collector to have it run immediately
-        from nostr_relay.db import start_garbage_collector
+        from nostr_relay.storage.db import start_garbage_collector
         # self.storage.garbage_collector.stop()
         self.storage.garbage_collector = start_garbage_collector(self.storage.db, {'collect_interval': 2})
 
@@ -115,7 +115,7 @@ class DBTests(BaseTestsWithStorage):
         assert (await self.storage.get_event(distant_future_event["id"]))['id'] == distant_future_event['id']
 
     async def test_ephemeral_event(self):
-        from nostr_relay.db import start_garbage_collector
+        from nostr_relay.storage.db import start_garbage_collector
         self.storage.garbage_collector_task = start_garbage_collector(self.storage.db, {'collect_interval': 2})
         ephemeral_event = {"id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 22222, "tags": [], "content": "ephemeral", "sig": "66f8a055bb3c3fc3fe0ca0ead4d5558d69627dc4f40c7320228d9e4c266509f6ac8a2ff085abbd1a9d3b0c733529bf3fcd87d43f731990467181ed1995aad5bc"}
 

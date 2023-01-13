@@ -1,16 +1,20 @@
 import sqlalchemy as sa
 from nostr_relay.config import Config
+from nostr_relay.util import call_from_path
+
+__all__ = ('get_storage', 'get_metadata')
 
 
 _STORAGE = None
-
 def get_storage(reload=False):
+    """
+    Return singleton instance of storage object
+    """
     global _STORAGE
     if _STORAGE is None or reload:
         if Config.db_filename:
             raise StorageError("Please set storage/sqlalchemy.url in config file and remove option db_filename")
-        from nostr_relay.db import Storage
-        _STORAGE = Storage(Config.storage.get('sqlalchemy.url'))
+        _STORAGE = call_from_path(Config.storage.get('class', 'nostr_relay.storage.db.DBStorage'), Config.storage)
     return _STORAGE
 
 

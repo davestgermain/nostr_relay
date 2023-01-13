@@ -24,7 +24,7 @@ class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from nostr_relay.storage import get_storage, get_metadata
         self.storage = get_storage(reload=True)
-        await self.storage.setup_db()
+        await self.storage.setup()
         async with self.storage.db.begin() as conn:
             await conn.run_sync(get_metadata().create_all)
 

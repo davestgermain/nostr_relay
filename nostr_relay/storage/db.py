@@ -7,21 +7,20 @@ import logging
 import secrets
 import threading
 
-from time import perf_counter, sleep, time
-from contextlib import contextmanager
+from time import time
 
 import aiosqlite
 import rapidjson
 import sqlalchemy as sa
 from sqlalchemy.engine.base import Engine
 
-from .event import Event, EventKind
-from .config import Config
-from .verification import Verifier
-from .auth import get_authenticator, Action
-from .errors import StorageError, AuthenticationError
-from .util import call_from_path
-from .storage import get_metadata
+from ..event import Event, EventKind
+from ..config import Config
+from ..verification import Verifier
+from ..auth import get_authenticator, Action
+from ..errors import StorageError, AuthenticationError
+from ..util import call_from_path, catchtime
+from . import get_metadata
 
 
 force_hex_translation = str.maketrans('abcdef0213456789','abcdef0213456789', 'ghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
@@ -34,22 +33,38 @@ def validate_id(obj_id):
     return ''
 
 
-@contextmanager
-def catchtime() -> float:
-    start = perf_counter()
-    yield lambda: (perf_counter() - start) * 1000
+class BaseStorage:
+    async def add_event(self, event_json: dict, auth_token=None):
+        raise NotImplentedError()
+
+    async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None, **kwargs):
+        raise NotImplementedError()
+
+    async def unsubscribe(self, client_id, sub_id=None):
+        raise NotImplementedError()
+
+    async def close(self):
+        pass
 
 
-class Storage:
 
-    def __init__(self, db_url='sqlite+aiosqlite:///nostr.sqlite3'):
-        self.db_url = db_url
+class DBStorage(BaseStorage):
+
+    def __init__(self, options):
+        self.options = options
+        self.db_url = options.get('sqlalchemy.url', 'sqlite+aiosqlite:///nostr.sqlite3')
         self.clients = collections.defaultdict(dict)
         self.db = None
         self.garbage_collector_task = None
-        self.is_postgres = 'postgresql' in db_url
+        self.is_postgres = 'postgresql' in self.db_url
         self._my_token = secrets.token_hex(4)
         self.log = logging.getLogger(__name__)
+        if self.is_postgres:
+            # sa.event.listen(Engine, "connect", self._subscribe_to_channel)
+            pass
+        else:
+            # add event listener to set appropriate PRAGMA items
+            sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
 
     def _set_sqlite_pragma(self, dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
@@ -90,16 +105,9 @@ class Storage:
                 await conn.execute(sa.text("PRAGMA analysis_limit=400"))
                 await conn.execute(sa.text("PRAGMA optimize"))
 
-    async def setup_db(self):
+    async def setup(self):
         self.log.info("Database URL: '%s'", self.db_url)
         from sqlalchemy.ext.asyncio import create_async_engine
-
-        if self.is_postgres:
-            # sa.event.listen(Engine, "connect", self._subscribe_to_channel)
-            pass
-        else:
-            # add event listener to set appropriate PRAGMA items
-            sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
 
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
 
@@ -398,7 +406,7 @@ class Storage:
                 await conn.execute(stmt)
 
     async def __aenter__(self):
-        await self.setup_db()
+        await self.setup()
         return self
 
     async def __aexit__(self, ex_type, ex, tb):
@@ -651,7 +659,7 @@ class QueryGarbageCollector(BaseGarbageCollector):
 def start_garbage_collector(db, options=None):
     options = options or Config.garbage_collector
     if options:
-        gc_obj = call_from_path(options.pop("class", "nostr_relay.db.QueryGarbageCollector"), db, **options)
+        gc_obj = call_from_path(options.pop("class", "nostr_relay.storage.db.QueryGarbageCollector"), db, **options)
         return asyncio.create_task(gc_obj.start())
 
 
