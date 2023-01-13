@@ -29,8 +29,8 @@ def serve(ctx):
     """
     import os.path
     from alembic import config
-    config.Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
-    config.main(['upgrade', 'head'])
+    alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
+    config.main([f'-c{alembic_config_file}', 'upgrade', 'head'])
 
     run_with_gunicorn()
 
@@ -295,6 +295,6 @@ def mirror(ids, authors, kinds, etags, ptags, since, until, limit, source, targe
 def alembic(ctx, alembic_args):
     import os.path
     from alembic import config
-    config.Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+    alembic_args = (f'-c{os.path.join(os.path.dirname(__file__), "alembic.ini")}', ) + alembic_args
     return config.main(alembic_args)
 
