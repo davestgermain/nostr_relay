@@ -7,7 +7,7 @@ Create Date: 2023-01-13 15:36:06.861535
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from nostr_relay.event import Event
 from rapidjson import loads, dumps
 
@@ -23,7 +23,9 @@ def upgrade() -> None:
     connection = op.get_bind()
     try:
         result = connection.execute(sa.text('select id, event from event'))
-    except OperationalError:
+    except (OperationalError, ProgrammingError):
+        connection.rollback()
+        connection.begin()
         print("Old data does not exist")
         return
     insert = sa.insert(sa.table('events',

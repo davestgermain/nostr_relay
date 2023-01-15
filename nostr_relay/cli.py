@@ -210,6 +210,7 @@ async def load(ctx, filename):
     kinds = collections.defaultdict(int)
     count = 0
     async with get_storage() as storage:
+        await storage.verifier.stop()
         while fileobj:
             line = fileobj.readline()
             if not line:
