@@ -55,7 +55,7 @@ In this case, 8.8.8.8 would never be limited.
 
 You can also customize rate limiting with your own class:
 ```
-rate_limiter_class: my_custom_module:MyRateLimiter
+rate_limiter_class: my_custom_module.MyRateLimiter
 rate_limits:
     arbitrary_option: foo
 ```

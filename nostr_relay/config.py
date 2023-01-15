@@ -4,19 +4,21 @@ import yaml
 class ConfigClass:
     DEBUG = True
     max_event_size = 4096
-    nip05_verification = 'disabled'
-    verification_blacklist = None
-    verification_whitelist = None
-    verification_expiration = 86400 * 30
-    verification_update_frequency = 3600
     oldest_event = 31536000
     redirect_homepage = ''
 
     def __init__(self):
         self.authentication = {}
         self.gunicorn = {}
+        self.verification = {
+            'nip05_verification': 'disabled',
+            'blacklist': None,
+            'whitelist': None,
+            'expiration': 86400 * 30,
+            'update_frequency': 3600,
+        }
         self.garbage_collector = {
-            'class': 'nostr_relay.db:QueryGarbageCollector',
+            'class': 'nostr_relay.storage.db.QueryGarbageCollector',
             'collect_interval': 300,
         }
         self.logging = {
@@ -35,6 +37,9 @@ class ConfigClass:
                     }
                 }, 
                 'loggers': {
+                    'sqlalchemy.engine': {
+                        'level': 'WARNING',
+                    },
                     'nostr_relay': {
                         'level': 'INFO', 
                         'handlers': ['console'], 
@@ -57,8 +62,8 @@ class ConfigClass:
         s += ')'
         return s
 
-    def load(self, filename=None):
-        if self._is_loaded:
+    def load(self, filename=None, reload=False):
+        if self._is_loaded and not reload:
             return
 
         filename = filename or os.path.abspath(os.path.join(os.path.dirname(__file__), 'config.yaml'))

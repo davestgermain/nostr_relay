@@ -1,9 +1,23 @@
 import enum
 import logging
 from time import time
+from datetime import datetime
+
+import sqlalchemy as sa
 
 from .event import Event
 from .errors import StorageError, AuthenticationError
+from .util import call_from_path
+from .storage import get_metadata
+
+
+AuthTable = sa.Table(
+    'auth',
+    get_metadata(),
+    sa.Column('pubkey', sa.Text(), primary_key=True),
+    sa.Column('roles', sa.Text()),
+    sa.Column('created', sa.DateTime())
+)
 
 
 class Role(enum.Enum):
@@ -77,8 +91,9 @@ class Authenticator:
         """
         Get the roles assigned to the public key
         """
-        async with self.storage.db.execute("SELECT roles FROM auth WHERE pubkey = ?", (pubkey, )) as cursor:
-            row = await cursor.fetchone()
+        async with self.storage.db.begin() as conn:
+            result = await conn.execute(sa.select(AuthTable.c.roles).where(AuthTable.c.pubkey == pubkey))
+            row = result.fetchone()
         if row:
             return set(row[0].lower())
         else:
@@ -88,17 +103,17 @@ class Authenticator:
         """
         Return all roles in authentication table
         """
-        async with self.storage.db.execute("SELECT pubkey, roles FROM auth") as cursor:
-            async for pubkey, role in cursor:
+        async with self.storage.db.begin() as conn:
+            result = await conn.stream(sa.select(AuthTable.c.pubkey, AuthTable.c.roles))
+            async for pubkey, role in result:
                 yield pubkey, set((role or '').lower())
 
     async def set_roles(self, pubkey, roles):
         """
         Assign roles to the given public key
         """
-        async with self.storage.db.cursor() as cursor:
-            await cursor.execute("INSERT OR REPLACE INTO auth (pubkey, roles, created) VALUES (?, ?, datetime('now'))", (pubkey, roles))
-        await self.storage.db.commit()
+        async with self.storage.db.begin() as conn:
+            await conn.execute(sa.insert(AuthTable).values(pubkey=pubkey, roles=roles, created=datetime.now()))
 
     async def authenticate(self, auth_event_json: dict, challenge: str=''):
         """
@@ -138,14 +153,6 @@ def get_authenticator(storage, configuration: dict):
     Return an authenticator object, according to the configuration dict
     """
 
-    classpath = configuration.get('authenticator_class', 'nostr_relay.auth:Authenticator')
-    modulename, classname = classpath.split(':', 1)
-    if modulename == 'nostr_relay.auth':
-        classobj = globals()[classname]
-    else:
-        import importlib
-        module = importlib.import_module(modulename)
-        classobj = getattr(module, classname)
-    auth_obj = classobj(storage, configuration)
-    return auth_obj
+    classpath = configuration.get('authenticator_class', 'nostr_relay.auth.Authenticator')
+    return call_from_path(classpath, storage, configuration)
 

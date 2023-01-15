@@ -27,6 +27,11 @@ def serve(ctx):
     """
     Start the http relay server 
     """
+    import os.path
+    from alembic import config
+    alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
+    config.main([f'-c{alembic_config_file}', 'upgrade', 'head'])
+
     run_with_gunicorn()
 
 
@@ -45,7 +50,7 @@ async def adduser(ctx, identifier='', pubkey='', relay=None):
     else:
         click.echo(f'Adding {identifier} = {pubkey} with relays: {relay}')
 
-        from .db import get_storage
+        from .storage import get_storage
         async with get_storage() as storage:
             await storage.set_identified_pubkey(identifier, pubkey, relays=relay)
 
@@ -60,8 +65,8 @@ async def query(ctx, query, results):
     Run a REQ query and display results
     """
     import rapidjson
-    import asyncio
-    from .db import get_storage, Subscription
+    from .storage import get_storage
+    from .storage.db import Subscription
     if not query:
         click.echo("query is required")
         return -1
@@ -83,7 +88,7 @@ async def query(ctx, query, results):
         while True:
             sub, event = await queue.get()
             if event:
-                click.echo(click.style(rapidjson.dumps(rapidjson.loads(event), indent=4), fg="red"))
+                click.echo(click.style(rapidjson.dumps(event.to_json_object(), indent=4), fg="red"))
                 click.echo('')
             else:
                 break
@@ -109,45 +114,127 @@ async def dump(ctx, event):
 
 
 @main.command()
-@click.option("--query", '-q', help="Query", prompt="Enter REQ filters", default='[{"kinds":[0,1,2,3,4,5,5,6,7,8,9]}]')
+@click.option("--query", '-q', help="Query", prompt="Enter REQ filters", default='[{"since": 1}]')
 @click.pass_context
 @async_cmd
 async def update_tags(ctx, query):
     """
     Update the tags in the tag table, from a REQ query
     """
-    import rapidjson
-    import asyncio
-    from .event import Event
-    from .db import get_storage, Subscription
+    from .storage import get_storage
 
     if not query:
-        query = '[{}]'
+        query = '[{"since": 1}]'
 
     query = rapidjson.loads(query)
-    queue = asyncio.Queue()
 
     async with get_storage() as storage:
-        sub = Subscription(storage.db, 'cli', query, queue=queue, default_limit=600000)
-        sub.prepare()
-        click.echo(click.style('Query:', bold=True))
-        click.echo(click.style(sub.query, fg="green"))
-        await sub.run_query()
-
         count = 0
-        async with storage.db.cursor() as cursor:
+        async with storage.db.begin() as cursor:
+            async for event in storage.run_single_query(query):
+                await storage.process_tags(cursor, event)
+                count += 1
 
-            while True:
-                sub, event_json = await queue.get()
-                if event_json:
-                    event = Event(**rapidjson.loads(event_json))
-                    await storage.process_tags(cursor, event)
-                    count += 1
-                else:
-                    break
-
-        await storage.db.commit()
         click.echo("Processed %d events" % count)
+
+
+@main.command()
+@click.pass_context
+@async_cmd
+async def reverify(ctx):
+    """
+    Reverify all NIP-05 metadata events
+    """
+    from .storage import get_storage
+    from rapidjson import loads
+
+    async with get_storage() as storage:
+        count = 0
+        async with storage.db.begin() as cursor:
+            async for event in storage.run_single_query([{'kinds': [0]}]):
+                meta = loads(event.content)
+                if 'nip05' in meta:
+                    await storage.verifier.verify(cursor, event)
+                    count += 1
+
+        click.echo("Found %d events" % count)
+        if count:
+            while storage.verifier.is_processing():
+                await asyncio.sleep(1)
+
+
+@main.command()
+@click.option("--event/--no-event", '-e', help="Return as EVENT message JSON", default=True)
+@click.pass_context
+@async_cmd
+async def dump(ctx, event):
+    """
+    Dump all events
+    """
+    query = [{'since': 1}]
+    as_event = event
+    from .storage import get_storage
+    async with get_storage() as storage:
+        async for event_json in storage.run_single_query(query):
+            if as_event:
+                print(f'["EVENT", {event_json}]')
+            else:
+                print(event_json)
+
+
+@main.command
+@click.argument("filename", required=False)
+@click.pass_context
+@async_cmd
+async def load(ctx, filename):
+    """
+    Load events
+    """
+    import sys
+    if filename:
+        fileobj = open(filename, 'r')
+    else:
+        fileobj = sys.stdin
+    import collections
+    from rapidjson import loads
+
+    Config.authentication['enabled'] = False
+    # this will reverify profiles but not reject unverified events
+    if Config.verification['nip05_verification'] == 'enabled':
+        Config.verification['nip05_verification'] = 'passive'
+
+    Config.oldest_event = 315360000
+
+    from .storage import get_storage
+    from .errors import StorageError
+    kinds = collections.defaultdict(int)
+    count = 0
+    async with get_storage() as storage:
+        while fileobj:
+            line = fileobj.readline()
+            if not line:
+                break
+            js = loads(line)
+            if isinstance(js, list):
+                event = js[1]
+            else:
+                event = js
+            try:
+                event, added = await storage.add_event(event)
+            except StorageError as e:
+                print(f'Error: {e} for {event}')
+                added = False
+            if added:
+                kinds[event.kind] += 1
+                count += 1
+            if count and count % 500 == 0:
+                click.echo(f"Added {count} events...")
+    fileobj.close()
+    click.echo("\nTotal events:")
+    for kind, num in sorted(kinds.items()):
+        click.echo(f"\tkind-{kind}: {num}")
+    click.echo(f"total: {count}")
+
 
 
 @click.group()
@@ -167,7 +254,7 @@ async def set(pubkey, roles):
     """
     Set roles in the authentication table
     """
-    from .db import get_storage
+    from .storage import get_storage
 
     if not pubkey:
         click.echo('public key is required')
@@ -185,7 +272,7 @@ async def get(pubkey):
     """
     Get roles from the authentication table
     """
-    from .db import get_storage
+    from .storage import get_storage
     async with get_storage() as storage:
         if not pubkey:
             async for pubkey, role in storage.authenticator.get_all_roles():
@@ -250,4 +337,16 @@ def mirror(ids, authors, kinds, etags, ptags, since, until, limit, source, targe
     except KeyboardInterrupt:
         proc.kill()
         return 0
+
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+))
+@click.argument('alembic_args', nargs=-1, type=click.UNPROCESSED)
+@click.pass_context
+def alembic(ctx, alembic_args):
+    import os.path
+    from alembic import config
+    alembic_args = (f'-c{os.path.join(os.path.dirname(__file__), "alembic.ini")}', ) + alembic_args
+    return config.main(alembic_args)
 

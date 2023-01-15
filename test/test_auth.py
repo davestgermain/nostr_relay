@@ -3,19 +3,15 @@ import time
 import rapidjson
 import os.path
 import asyncio
-from nostr_relay.db import get_storage
+
 from nostr_relay.config import Config
+from nostr_relay.storage import get_storage
 from nostr_relay.auth import Authenticator, Action, Role
 from nostr_relay.errors import AuthenticationError
+from . import BaseTestsWithStorage
 
 
-class AuthTests(unittest.IsolatedAsyncioTestCase):
-    @classmethod
-    def setUpClass(cls):
-        Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'))
-        import logging
-        logging.basicConfig()
-
+class AuthTests(BaseTestsWithStorage):
     async def test_parse_options(self):
         auth = Authenticator(None, {'actions': {Action.save: Role.writer, Action.query: Role.reader}})
         assert auth.actions == {'save': set('w'), 'query': set('r')}
@@ -23,25 +19,25 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         assert auth.actions == {'save': set('a'), 'query': set('a')}
 
     async def test_can_perform(self):
-        auth = Authenticator(None, {'enabled': True, 'actions': {Action.save: Role.writer, Action.query: Role.reader}})
+        async with get_storage(reload=True) as storage:
+            auth = Authenticator(storage, {'enabled': True, 'actions': {Action.save: Role.writer, Action.query: Role.reader}})
 
-        token = {
-            'roles': set((Role.writer.value, Role.reader.value))
-        }
+            token = {
+                'roles': set((Role.writer.value, Role.reader.value))
+            }
 
-        assert await auth.can_do(token, 'save', {'foo': 1})
+            assert await auth.can_do(token, 'save', {'foo': 1})
 
-        token = {
-            'roles': set((Role.anonymous.value))
-        }
-        assert not await auth.can_do(token, 'save')
+            token = {
+                'roles': set((Role.anonymous.value))
+            }
+            assert not await auth.can_do(token, 'save')
 
     async def test_authentication(self):
-        storage = get_storage(reload=True)
-        await storage.setup_db()
+        Config.authentication = {'actions': {Action.save: Role.writer, Action.query: Role.reader}}
+        auth = self.storage.authenticator
 
         from nostr_relay.event import Event, PrivateKey
-        auth = Authenticator(storage, {'actions': {Action.save: Role.writer, Action.query: Role.reader}})
 
         privkey1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
         pubkey1 = '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'
@@ -101,4 +97,3 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         token = await auth.authenticate(good_event.to_json_object(), challenge)
         assert token['pubkey'] == pubkey1
         assert token['roles'] == set('rw')
-        await storage.close()

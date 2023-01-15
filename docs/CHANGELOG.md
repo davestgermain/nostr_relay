@@ -1,5 +1,12 @@
 # CHANGES
 
+## 1.4.0
+
+* See [140upgrade.md](140upgrade.md) for upgrade instructions
+* Switch to sqlalchemy for data access
+* Refactor to allow pluggable storage backend
+* Added `nostr-relay load` command
+
 ## 1.3.5
 
 * Update authentication to reflect draft NIP-42

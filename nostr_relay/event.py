@@ -67,13 +67,17 @@ class Event:
 
     @staticmethod
     def from_tuple(row):
+        tags = row[4]
+        if isinstance(tags, str):
+            tags = json.loads(tags)
         return Event(
-            pubkey=row[1],
-            content=row[5],
-            created_at=row[2],
-            kind=row[3],
-            tags=json.loads(row[4]),
-            sig=row[6]
+            id=row[0].hex(),
+            created_at=row[1],
+            kind=row[2],
+            pubkey=row[3].hex(),
+            tags=tags,
+            sig=row[5].hex(),
+            content=row[6],
         )
 
     def sign(self, private_key_hex: str) -> None:
@@ -82,7 +86,10 @@ class Event:
         self.sig = sig.hex()
 
     def verify(self) -> bool:
-        pub_key = PublicKey(bytes.fromhex("02" + self.pubkey), True) # add 02 for schnorr (bip340)
+        try:
+            pub_key = PublicKey(bytes.fromhex("02" + self.pubkey), True) # add 02 for schnorr (bip340)
+        except Exception as e:
+            return False
         event_id = Event.compute_id(self.pubkey, self.created_at, self.kind, self.tags, self.content)
         verified = pub_key.schnorr_verify(bytes.fromhex(event_id), bytes.fromhex(self.sig), None, raw=True)
         for tag in self.tags:
