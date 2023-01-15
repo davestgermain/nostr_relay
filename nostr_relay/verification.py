@@ -200,7 +200,7 @@ class Verifier:
         failure = []
         async with self.get_aiohttp_session() as session:
             for vid, identifier, verified_at, pubkey, metadata_id in candidates:
-                self.log.info("Checking verification for %s. Last verified %d", identifier, verified_at)
+                self.log.info("Checking verification for %s. Last verified %s", identifier, verified_at)
                 uname, domain = identifier.split('@', 1)
                 domain = domain.lower()
                 if not self.check_allowed_domains(domain):
