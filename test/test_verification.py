@@ -1,4 +1,3 @@
-import unittest
 import time
 import rapidjson
 import os.path
@@ -6,12 +5,13 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from . import BaseTestsWithStorage
+
 from nostr_relay.storage import get_storage
 from nostr_relay.config import Config
 from nostr_relay.verification import Verifier
 from nostr_relay.errors import VerificationError
 
-from . import BaseTestsWithStorage
 
 PK1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
 PK2 = '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d'

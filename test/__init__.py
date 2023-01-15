@@ -13,8 +13,8 @@ from nostr_relay.event import Event, PrivateKey
 class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        logging.basicConfig()
         Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'), reload=True)
+        logging.basicConfig()
 
     def setUp(self):
         pass

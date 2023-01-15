@@ -209,7 +209,12 @@ class NostrStats(BaseResource):
 
 class ViewEventResource(BaseResource):
     async def on_get(self, req: falcon.Request, resp: falcon.Response, event_id: str):
-        event = await self.storage.get_event(event_id)
+        try:
+            event = await self.storage.get_event(event_id)
+        except ValueError:
+            raise falcon.HTTPNotFound
+        except Exception:
+            self.log.exception('get-event')
         if event:
             resp.media = event
         else:

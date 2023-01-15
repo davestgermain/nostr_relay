@@ -5,6 +5,15 @@ from nostr_relay.util import call_from_path
 __all__ = ('get_storage', 'get_metadata')
 
 
+def _fix_old_config():
+    if Config.db_filename or not Config.storage:
+        import warnings
+        warnings.warn("Please read https://code.pobblelabs.org/fossil/nostr_relay/doc/tip/docs/140upgrade.md for important upgrade information")
+        Config.storage = {'sqlalchemy.url': f'sqlite+aiosqlite:///{Config.db_filename}'}
+        Config.db_filename = None
+        print(Config.storage)
+
+
 _STORAGE = None
 def get_storage(reload=False):
     """
@@ -12,8 +21,7 @@ def get_storage(reload=False):
     """
     global _STORAGE
     if _STORAGE is None or reload:
-        if Config.db_filename:
-            raise StorageError("Please set storage/sqlalchemy.url in config file and remove option db_filename")
+        _fix_old_config()
         _STORAGE = call_from_path(Config.storage.get('class', 'nostr_relay.storage.db.DBStorage'), Config.storage)
     return _STORAGE
 
@@ -22,9 +30,8 @@ _METADATA = None
 def get_metadata():
     global _METADATA
     if _METADATA is None:
+        _fix_old_config()
         _METADATA = sa.MetaData()
-        if 'storage' not in Config:
-            raise Exception("Storage is not configured in config file.")
         if 'asyncpg' in Config.storage.get('sqlalchemy.url', ''):
             from sqlalchemy.dialects.postgresql import BYTEA, JSONB
             EventTable = sa.Table(
