@@ -95,18 +95,17 @@ async def query(ctx, query, results):
 
 
 @main.command()
-@click.option("--query", '-q', help="Query", prompt="Enter REQ filters", default='[{"kinds":[0,1,2,3,4,5,5,6,7,8,9]}]')
+@click.option("--query", '-q', help="Query", prompt="Enter REQ filters", default='[{"since": 1}]')
 @click.pass_context
 @async_cmd
 async def update_tags(ctx, query):
     """
     Update the tags in the tag table, from a REQ query
     """
-    from .event import Event
     from .storage import get_storage
 
     if not query:
-        query = '[{}]'
+        query = '[{"since": 1}]'
 
     query = rapidjson.loads(query)
 
@@ -118,6 +117,31 @@ async def update_tags(ctx, query):
                 count += 1
 
         click.echo("Processed %d events" % count)
+
+
+@main.command()
+@click.pass_context
+@async_cmd
+async def reverify(ctx):
+    """
+    Reverify all NIP-05 metadata events
+    """
+    from .storage import get_storage
+    from rapidjson import loads
+
+    async with get_storage() as storage:
+        count = 0
+        async with storage.db.begin() as cursor:
+            async for event in storage.run_single_query([{'kinds': [0]}]):
+                meta = loads(event.content)
+                if 'nip05' in meta:
+                    await storage.verifier.verify(cursor, event)
+                    count += 1
+
+        click.echo("Found %d events" % count)
+        if count:
+            while storage.verifier.is_processing():
+                await asyncio.sleep(1)
 
 
 @main.command()

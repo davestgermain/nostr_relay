@@ -2,8 +2,9 @@
 
 ## 1.4.0
 
+* See [140UPGRADE](140UPGRADE.md) for upgrade instructions
 * Switch to sqlalchemy for data access
-
+* Refactor to allow pluggable storage backend
 
 ## 1.3.5
 

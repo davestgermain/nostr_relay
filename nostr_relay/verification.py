@@ -147,7 +147,7 @@ class Verifier:
             try:
                 if (time.time() - last_run) > self.options['update_frequency']:
                     self.log.debug("running batch query")
-                    query = sa.select(Verification.c.id, Verification.c.identifier, sa.column('events.pubkey'), Verification.c.metadata_id).select_from(
+                    query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, sa.column('events.pubkey'), Verification.c.metadata_id).select_from(
                         sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
                     ).where(
                         (sa.column('events.pubkey') != None) & (Verification.c.verified_at > (int(time.time() - self.options['expiration'])))
@@ -179,13 +179,13 @@ class Verifier:
                                 # first time verifying
                                 await conn.execute(sa.insert(Verification).values({'identifier': identifier, 'metadata_id': metadata_id, 'verified_at': datetime.now()}))
                             else:
-                                await conn.execute(sa.update(Verification).where({'id': vid}).set({'verified_at': datetime.now()}))
+                                await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'verified_at': datetime.now()}))
                         for vid, identifier, metadata_id in failure:
                             if vid is None:
                                 # don't persist first time candidates
                                 continue
                             else:
-                                await conn.execute(sa.update(Verification).where({'id': vid}).set({'failed_at': datetime.now()}))
+                                await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'failed_at': datetime.now()}))
                     self.log.info("Saved success:%d failure:%d", len(success), len(failure))
             last_run = time.time()
 
@@ -238,4 +238,5 @@ class Verifier:
             self.running = False
             await self.queue.put(None)
 
-
+    def is_processing(self):
+        return not self.queue.empty()

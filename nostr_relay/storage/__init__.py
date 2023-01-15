@@ -50,9 +50,9 @@ def get_metadata():
                 sa.Column('sig', sa.BLOB()),
                 sa.Column('content', sa.Text()),
             )
-        sa.Index('cidx', EventTable.c.created_at)
-        sa.Index('kidx', EventTable.c.kind),
-        sa.Index('pkidx', EventTable.c.pubkey)
+        sa.Index('createdidx', EventTable.c.created_at)
+        sa.Index('kindidx', EventTable.c.kind),
+        sa.Index('pubkeyidx', EventTable.c.pubkey)
 
         TagTable = sa.Table(
             'tags', 
@@ -62,7 +62,7 @@ def get_metadata():
             sa.Column('value', sa.Text()),
             sa.UniqueConstraint("id", "name", "value", name="unique_tag"),
         )
-        sa.Index('tag_idx', TagTable.c.name, TagTable.c.value)
+        sa.Index('tagidx', TagTable.c.name, TagTable.c.value)
 
         IdentTable = sa.Table(
             'identity',
