@@ -36,6 +36,7 @@ sa.Index('identifieridx', Verification.c.identifier)
 sa.Index('metadataidx', Verification.c.metadata_id)
 sa.Index('verifiedidx', Verification.c.verified_at)
 
+EventTable = _metadata.tables['events']
 
 
 class Verifier:
@@ -100,7 +101,7 @@ class Verifier:
             else:
                 return True
 
-        query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, Verification.c.failed_at, sa.column('events.created_at')).select_from(
+        query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, Verification.c.failed_at, EventTable.c.created_at).select_from(
                 sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
             ).where(
                 (self.storage.EventTable.c.pubkey == bytes.fromhex(event.pubkey))
@@ -147,10 +148,10 @@ class Verifier:
             try:
                 if (time.time() - last_run) > self.options['update_frequency']:
                     self.log.debug("running batch query")
-                    query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, sa.column('events.pubkey'), Verification.c.metadata_id).select_from(
+                    query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, EventTable.c.pubkey, Verification.c.metadata_id).select_from(
                         sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
                     ).where(
-                        (sa.column('events.pubkey') != None) & (Verification.c.verified_at > (int(time.time() - self.options['expiration'])))
+                        (EventTable.c.pubkey != None) & (Verification.c.verified_at > (int(time.time() - self.options['expiration'])))
                     )
 
                     async with db.begin() as cursor:
