@@ -588,7 +588,7 @@ class Subscription:
                 subwhere = ' AND '.join(subwhere)
                 where.add(subwhere)
             else:
-                where.add('0')
+                where.add('false')
             if 'limit' in filter_obj:
                 limit = filter_obj['limit']
             new_filters.append(filter_obj)
