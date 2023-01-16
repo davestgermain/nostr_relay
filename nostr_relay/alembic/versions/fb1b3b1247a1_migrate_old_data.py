@@ -21,13 +21,12 @@ depends_on = None
 
 def upgrade() -> None:
     connection = op.get_bind()
-    try:
-        result = connection.execute(sa.text('select id, event from event'))
-    except (OperationalError, ProgrammingError):
-        connection.rollback()
-        connection.begin()
+    metadata_obj = sa.MetaData()
+    metadata_obj.reflect(bind=connection)
+    if 'event' not in metadata_obj.tables:
         print("Old data does not exist")
         return
+
     insert = sa.insert(sa.table('events',
         sa.column('id'),
         sa.column('created_at'),

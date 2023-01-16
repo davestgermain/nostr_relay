@@ -204,7 +204,10 @@ class NostrAPI(BaseResource):
 
 class NostrStats(BaseResource):
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
-        resp.media = await self.storage.get_stats()
+        try:
+            resp.media = await self.storage.get_stats()
+        except:
+            self.log.exception('stats')
 
 
 class ViewEventResource(BaseResource):

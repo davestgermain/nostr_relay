@@ -356,12 +356,26 @@ class DBStorage(BaseStorage):
             result = await conn.execute(sa.text('SELECT COUNT(*) FROM verification'))
             row = result.first()
             stats['num_verified'] = row[0]
-            try:
-                result = await conn.execute(sa.text('SELECT SUM("pgsize") FROM "dbstat" WHERE name in ("event", "tag")'))
+            if self.is_postgres:
+                result = await conn.execute(sa.text("""
+                        SELECT
+                            SUM(pg_total_relation_size(table_name ::text))
+                        FROM (
+                            -- tables from 'public'
+                            SELECT table_name
+                            FROM information_schema.tables
+                            where table_schema = 'public' and table_type = 'BASE TABLE'
+                        ) AS all_tables
+                """))
                 row = result.first()
-                stats['db_size'] = row[0]
-            except sa.exc.OperationalError:
-                pass
+                stats['db_size'] = int(row[0])
+            else:
+                try:
+                    result = await conn.execute(sa.text('SELECT SUM("pgsize") FROM "dbstat" WHERE name in ("events", "tags")'))
+                    row = result.first()
+                    stats['db_size'] = row[0]
+                except (sa.exc.OperationalError, sa.exc.ProgrammingError):
+                    pass
         subs = await self.num_subscriptions(True)
         num_subs = 0
         num_clients = 0
