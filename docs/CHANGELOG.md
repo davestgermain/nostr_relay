@@ -1,5 +1,13 @@
 # CHANGES
 
+## 1.4.6
+
+* use a better challenge for NIP-42 auth
+
+## 1.4.1 - 1.4.5
+
+* bugfixes for postgres compatibility
+
 ## 1.4.0
 
 * See [140upgrade.md](140upgrade.md) for upgrade instructions
