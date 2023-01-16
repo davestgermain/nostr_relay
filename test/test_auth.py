@@ -26,7 +26,7 @@ class AuthTests(BaseTestsWithStorage):
                 'roles': set((Role.writer.value, Role.reader.value))
             }
 
-            assert await auth.can_do(token, 'save', {'foo': 1})
+            assert await auth.can_do(token, 'save', self.make_event('f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753', as_dict=False))
 
             token = {
                 'roles': set((Role.anonymous.value))

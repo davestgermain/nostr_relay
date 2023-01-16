@@ -1,5 +1,6 @@
 import enum
 import logging
+import secrets
 from time import time
 from datetime import datetime
 
@@ -30,6 +31,7 @@ class Role(enum.Enum):
 class Action(enum.Enum):
     query = 'query'
     save = 'save'
+    read_dm = 'read_dm'
 
 
 
@@ -56,6 +58,13 @@ class Authenticator:
             actions[action] = set(roles)
         enabled = options.get('enabled', False)
         return actions, valid_urls, enabled
+
+    def get_challenge(self, remote_addr):
+        """
+        Return a suitably random challenge
+        caller is responsible for remembering the challenge and passing it on to authenticate()
+        """
+        return secrets.token_hex(16)
 
     def check_auth_event(self, auth_event, challenge):
         """
@@ -84,6 +93,12 @@ class Authenticator:
             raise AuthenticationError("invalid: Missing required tags")
 
     async def evaluate_target(self, auth_token, action, target):
+        if action == Action.read_dm.value:
+            if auth_token.get('pubkey') != target.pubkey:
+                return False
+        elif action == Action.save.value:
+            if auth_token.get('pubkey') == target.pubkey:
+                return True
         # TODO: implement per-object permissions here
         return True
 
@@ -108,7 +123,7 @@ class Authenticator:
             async for pubkey, role in result:
                 yield pubkey, set((role or '').lower())
 
-    async def set_roles(self, pubkey, roles):
+    async def set_roles(self, pubkey: str, roles: str):
         """
         Assign roles to the given public key
         """

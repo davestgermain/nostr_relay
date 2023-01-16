@@ -27,6 +27,7 @@ class Client:
         self.send_task = None
         self.sent = 0
         self.rate_limiter = rate_limiter
+        self.auth_token = {}
 
     def validate_message(self, message):
         if not isinstance(message, list):
@@ -66,10 +67,9 @@ class Client:
         client_id = self.id
         remote_addr = self.remote_addr
 
-        auth_token = {}
-
         if storage.authenticator.is_enabled:
-            await ws.send_media(["AUTH", client_id])
+            challenge = storage.authenticator.get_challenge(remote_addr)
+            await ws.send_media(["AUTH", challenge])
 
         while ws.ready:
             try:
@@ -92,13 +92,13 @@ class Client:
                     if self.send_task is None:
                         self.send_task = asyncio.create_task(self.send_subscriptions())
                         await asyncio.sleep(0)
-                    await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue, auth_token=auth_token)
+                    await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue, auth_token=self.auth_token)
                 elif command == 'CLOSE':
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
                 elif command == 'EVENT':
                     try:
-                        event, result = await storage.add_event(message[1], auth_token=auth_token)
+                        event, result = await storage.add_event(message[1], auth_token=self.auth_token)
                     except Exception as e:
                         self.log.error(str(e))
                         result = False
@@ -109,10 +109,10 @@ class Client:
                         reason = '' if result else 'duplicate: exists'
                         self.log.info("%s added %s from %s", client_id, event.id, event.pubkey)
                     await ws.send_media(['OK', eventid, result, reason])
-                elif command == 'AUTH':
-                    auth_token = await storage.authenticator.authenticate(message[1], challenge=client_id)
+                elif command == 'AUTH' and storage.authenticator.is_enabled:
+                    self.auth_token = await storage.authenticator.authenticate(message[1], challenge=challenge)
             except AuthenticationError as e:
-                self.log.warning("Auth error. %s token:%s", str(e), auth_token)
+                self.log.warning("Auth error. %s token:%s", str(e), self.auth_token)
                 await ws.send_media(["NOTICE", str(e)])
             except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
