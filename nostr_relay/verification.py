@@ -118,7 +118,7 @@ class Verifier:
         else:
             vid, identifier, verified_at, failed_at, created_at = row
             self.log.debug("Checking verification for %s verified:%s created:%s", identifier, verified_at, created_at)
-            now = datetime.now()
+            now = datetime.utcnow()
             if (now - timedelta(seconds=self.options['expiration'])) > verified_at:
                 # verification has expired
                 if self.is_enabled:
@@ -151,7 +151,7 @@ class Verifier:
                     query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, EventTable.c.pubkey, Verification.c.metadata_id).select_from(
                         sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
                     ).where(
-                        (EventTable.c.pubkey != None) & (Verification.c.verified_at > (int(time.time() - self.options['expiration'])))
+                        (EventTable.c.pubkey != None) & (Verification.c.verified_at > (datetime.utcnow() - timedelta(seconds=self.options['expiration'])))
                     )
 
                     async with db.begin() as cursor:
@@ -178,15 +178,15 @@ class Verifier:
                         for vid, identifier, metadata_id in success:
                             if vid is None:
                                 # first time verifying
-                                await conn.execute(sa.insert(Verification).values({'identifier': identifier, 'metadata_id': metadata_id, 'verified_at': datetime.now()}))
+                                await conn.execute(sa.insert(Verification).values({'identifier': identifier, 'metadata_id': metadata_id, 'verified_at': datetime.utcnow()}))
                             else:
-                                await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'verified_at': datetime.now()}))
+                                await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'verified_at': datetime.utcnow()}))
                         for vid, identifier, metadata_id in failure:
                             if vid is None:
                                 # don't persist first time candidates
                                 continue
                             else:
-                                await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'failed_at': datetime.now()}))
+                                await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'failed_at': datetime.utcnow()}))
                     self.log.info("Saved success:%d failure:%d", len(success), len(failure))
             last_run = time.time()
 
