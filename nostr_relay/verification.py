@@ -140,14 +140,18 @@ class Verifier:
         self.log.info("Starting verification task. Interval %s", self.options['update_frequency'])
         last_run = 0
         while self.running:
-            candidate = await self.queue.get()
-            if candidate is None:
-                break
-            self.log.debug("Got candidate %s", candidate)
+            try:
+                async with asyncio.timeout(self.options['update_frequency']):
+                    candidate = await self.queue.get()
+                if candidate is None:
+                    break
+                self.log.debug("Got candidate %s", candidate)
+            except asyncio.TimeoutError:
+                self.log.debug("timed out waiting for queue")
             candidates = []
             try:
                 if (time.time() - last_run) > self.options['update_frequency']:
-                    self.log.debug("running batch query")
+                    self.log.debug("running batch query %s", last_run)
                     query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, EventTable.c.pubkey, Verification.c.metadata_id).select_from(
                         sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
                     ).where(
@@ -166,7 +170,8 @@ class Verifier:
             except Exception:
                 self.log.exception("batch_query")
                 continue
-            candidates.append(candidate)
+            if candidate:
+                candidates.append(candidate)
 
             try:
                 success, failure = await self.process_verifications(candidates)

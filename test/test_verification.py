@@ -145,3 +145,25 @@ class VerificationTests(BaseTestsWithStorage):
 
             assert await verifier.verify(conn, self.make_event(PK1, as_dict=False, kind=1, content='yes'))
 
+    @patch('nostr_relay.verification.Verifier.get_aiohttp_session')
+    async def test_batch_query_expiration(self, mock):
+        """
+        Test that the batch query reverifies accounts
+        """
+        response = self.mock_session(mock)
+        response.return_value = {'names': {'test': '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'}}
+
+        verifier = Verifier(self.storage, {'nip05_verification': 'enabled', 'expiration': 2, 'update_frequency': 1})
+
+        profile_event = self.make_profile(PK1, identifier='test@localhost')
+        await self.storage.add_event(profile_event.to_json_object())
+        await self.storage.add_event(self.make_profile(PK2, identifier='foo@localhost').to_json_object())
+        async with self.storage.db.begin() as conn:
+            assert await verifier.verify(conn, profile_event)
+            asyncio.create_task(verifier.start(self.storage.db))
+            await asyncio.sleep(1)
+
+            assert await verifier.verify(conn, self.make_event(PK1, as_dict=False, kind=1, content='yes'))
+            await asyncio.sleep(1)
+            assert await verifier.verify(conn, self.make_event(PK1, as_dict=False, kind=1, content='yes'))
+            await verifier.stop()

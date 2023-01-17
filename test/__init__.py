@@ -1,4 +1,4 @@
-import logging
+import logging, logging.config
 import unittest
 import os.path
 import time
@@ -14,7 +14,7 @@ class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'), reload=True)
-        logging.basicConfig()
+        logging.config.dictConfig(Config.logging)
 
     def setUp(self):
         pass
