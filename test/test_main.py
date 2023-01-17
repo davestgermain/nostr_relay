@@ -408,6 +408,19 @@ class MainTests(APITests):
             data = await self.send_event(ws, EVENTS[1], True)
             assert data[3] == 'rate-limited: slow down'
 
+    async def test_timeout(self):
+        """
+        Test time out waiting for next message
+        """
+        Config.message_timeout = 1.5
+        async with self.conductor.simulate_ws("/") as ws:
+            await self.send_event(ws, EVENTS[1], True)
+            await asyncio.sleep(1.6)
+            with self.assertRaises(errors.WebSocketDisconnected):
+                data = await ws.send_json(["REQ", "test", {"kinds": 0}])
+
+        Config.message_timeout = None
+
 
 class AuthTests(APITests):
     async def asyncSetUp(self):

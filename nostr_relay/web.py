@@ -16,7 +16,7 @@ from .errors import AuthenticationError
 
 
 class Client:
-    def __init__(self, ws, req, rate_limiter=None, log=None):
+    def __init__(self, ws, req, rate_limiter=None, log=None, timeout=1800):
         self.ws = ws
         self.remote_addr = req.remote_addr
         self.id = f'{req.remote_addr}-{secrets.token_hex(2)}'
@@ -27,6 +27,7 @@ class Client:
         self.send_task = None
         self.sent = 0
         self.rate_limiter = rate_limiter
+        self.timeout = timeout
         self.auth_token = {}
 
     def validate_message(self, message):
@@ -73,7 +74,9 @@ class Client:
 
         while ws.ready:
             try:
-                message = await ws.receive_media()
+                async with asyncio.timeout(self.timeout):
+                    message = await ws.receive_media()
+
                 if not self.validate_message(message):
                     continue
 
@@ -119,6 +122,10 @@ class Client:
             except rapidjson.JSONDecodeError:
                 self.log.debug("json decoding")
                 continue
+            except asyncio.TimeoutError:
+                self.log.info("%s timed out", client_id)
+                await ws.close(code=1013)
+                break
 
     async def stop(self):
         self.running = False
@@ -134,9 +141,10 @@ class Client:
 
 
 class BaseResource:
+    log = logging.getLogger(__name__)
+
     def __init__(self, storage):
         self.storage = storage
-        self.log = logging.getLogger(__name__)
 
 
 class NostrAPI(BaseResource):
@@ -145,7 +153,6 @@ class NostrAPI(BaseResource):
     """
     def __init__(self, storage, rate_limiter=None):
         super().__init__(storage)
-        self.connections = 0
         self.rate_limiter = rate_limiter
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
@@ -181,22 +188,27 @@ class NostrAPI(BaseResource):
 
         try:
             await ws.accept()
-            self.connections += 1
             start = time()
 
         except falcon.WebSocketDisconnected:
             return
 
-        client = Client(ws, req, rate_limiter=self.rate_limiter, log=self.log)
+        client = Client(
+            ws,
+            req,
+            rate_limiter=self.rate_limiter,
+            log=self.log,
+            timeout=Config.get('message_timeout', 1800)
+        )
 
         try:
             await client.start(self.storage)
         except Exception:
+            await ws.close(code=1013)
             self.log.exception("client loop")
         finally:
             await client.stop()
             await self.storage.unsubscribe(client.id)
-            self.connections -= 1
             self.rate_limiter.cleanup()
             duration = time() - start
             self.log.info('Done {}. Sent: {:,} Bytes. Duration: {:.0f} Seconds'.format(client, client.sent, duration))

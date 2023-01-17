@@ -106,7 +106,7 @@ class DBStorage(BaseStorage):
                 await conn.execute(sa.text("PRAGMA optimize"))
 
     async def setup(self):
-        self.log.info("Database URL: '%s'", self.db_url)
+        # self.log.info("Database URL: '%s'", self.db_url)
         from sqlalchemy.ext.asyncio import create_async_engine
 
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))

@@ -35,3 +35,6 @@ authentication:
   actions:
     save: a
     query: a
+
+# number of seconds to allow between client messages
+message_timeout: 1800
