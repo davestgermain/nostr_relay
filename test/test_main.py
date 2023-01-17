@@ -145,7 +145,7 @@ class DBTests(BaseTestsWithStorage):
         assert changed
         import json
         async for event in self.storage.run_single_query([{"authors": ["86f0689bd48dcd19c67a19d994f938ee34f251d8c39976290955ff585f2db42e"]}]):
-            assert json.loads(event)['id'] == DELEGATION_EVENT['id']
+            assert event.id == DELEGATION_EVENT['id']
 
     async def test_get_stats(self):
         for evt in EVENTS:

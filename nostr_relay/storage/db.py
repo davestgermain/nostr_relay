@@ -397,7 +397,7 @@ class DBStorage(BaseStorage):
             'names': {},
             'relays': {}
         }
-        self.log.debug("Getting identity for ? ?", identifier, domain)
+        self.log.debug("Getting identity for %s %s", identifier, domain)
         async with self.db.begin() as conn:
             result = await conn.stream(query)
             async for pubkey, identifier, relays in result:
@@ -521,7 +521,7 @@ class Subscription:
                 if not isinstance(value, list):
                     value = [value]
                 ids = set(value)
-                if ids:
+                if ids and len(ids) < 40: # pathological queries?
                     exact = []
                     for eid in ids:
                         eid = validate_id(eid)
@@ -535,7 +535,7 @@ class Subscription:
                                 if self.is_postgres:
                                     subwhere.append(f"encode(id, 'hex') LIKE '{eid}%'")
                                 else:
-                                    subwhere.append(f"lower(hex(id) LIKE '{eid}%')")
+                                    subwhere.append(f"lower(hex(id)) LIKE '{eid}%'")
                     if exact:
                         idstr = ','.join(exact)
                         subwhere.append(f'events.id IN ({idstr})')
@@ -543,13 +543,22 @@ class Subscription:
                     # invalid query
                     raise ValueError("ids")
             elif key == 'authors' and isinstance(value, list):
-                if value:
-                    if self.is_postgres:
-                        astr = ','.join("'\\x%s'" % validate_id(a) for a in set(value))
-                    else:
-                        astr = ','.join("x'%s'" % validate_id(a) for a in set(value))
-                    if astr:
-                        subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tags WHERE name = 'delegation' AND value IN ({astr})))")
+                if value and len(value) < 40:
+                    exact = set()
+                    hexexact = set()
+                    for pubkey in value:
+                        pubkey = validate_id(pubkey)
+                        if pubkey:
+                            if len(pubkey) == 64:
+                                if self.is_postgres:
+                                    exact.add(f"'\\x{pubkey}'")
+                                else:
+                                    exact.add(f"x'{pubkey}'")
+                                hexexact.add(f"'{pubkey}'")
+                            # no prefix searches, for now
+                    if exact:
+                        astr = ','.join(exact)
+                        subwhere.append(f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tags WHERE name = 'delegation' AND value IN ({','.join(hexexact)})))")
                     else:
                         raise ValueError("authors")
                 else:
