@@ -305,6 +305,9 @@ class DBStorage(BaseStorage):
         self.log.debug('%s/%s filters: %s', client_id, sub_id, filters)
         if sub_id in self.clients[client_id]:
             await self.unsubscribe(client_id, sub_id)
+
+        if Config.subscription_limit and len(self.clients[client_id]) == Config.subscription_limit:
+            raise StorageError("rejected: too many subscriptions")
         sub = Subscription(
                 self.db,
                 sub_id,

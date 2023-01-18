@@ -12,7 +12,7 @@ import falcon.asgi
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
-from .errors import AuthenticationError
+from .errors import AuthenticationError, StorageError
 
 
 class Client:
@@ -114,6 +114,9 @@ class Client:
                     await ws.send_media(['OK', eventid, result, reason])
                 elif command == 'AUTH' and storage.authenticator.is_enabled:
                     self.auth_token = await storage.authenticator.authenticate(message[1], challenge=challenge)
+            except StorageError as e:
+                self.log.warning("storage error: %s for %s", e, client_id)
+                await ws.send_media(["NOTICE", str(e)])
             except AuthenticationError as e:
                 self.log.warning("Auth error. %s token:%s", str(e), self.auth_token)
                 await ws.send_media(["NOTICE", str(e)])

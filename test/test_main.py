@@ -421,6 +421,23 @@ class MainTests(APITests):
 
         Config.message_timeout = None
 
+    async def test_too_many_subscriptions(self):
+        """
+        Test subscription limit
+        """
+        Config.subscription_limit = 2
+        async with self.conductor.simulate_ws("/") as ws:
+            await ws.send_json(["REQ", "t1", {"kinds": [1,2]}])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 't1']
+            await ws.send_json(["REQ", "t2", {"kinds": [3,4]}])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 't2']
+            await ws.send_json(["REQ", "t3", {"kinds": [5,6]}])
+            data = await ws.receive_json()
+            assert data == ['NOTICE', 'rejected: too many subscriptions']
+        Config.subscription_limit = None
+
 
 class AuthTests(APITests):
     async def asyncSetUp(self):

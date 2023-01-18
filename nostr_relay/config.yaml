@@ -38,3 +38,6 @@ authentication:
 
 # number of seconds to allow between client messages
 message_timeout: 1800
+
+# number of open subscriptions per connection
+subscription_limit: 32

@@ -2,8 +2,9 @@
 
 ## 1.4.7
 
+* Added configurable limit for subscriptions per connection: `subscription_limit` (default 32)
 * Added configurable timeout for idle connections: `message_timeout` (default 30minutes)
-* fixed verification task not running
+* Fixed verification task not running
 * bugfixes for crazy queries
 
 ## 1.4.6
