@@ -6,6 +6,8 @@ class ConfigClass:
     max_event_size = 4096
     oldest_event = 31536000
     redirect_homepage = ''
+    subscription_limit = 32
+
 
     def __init__(self):
         self.authentication = {}
