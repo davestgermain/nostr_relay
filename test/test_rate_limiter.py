@@ -85,10 +85,11 @@ class RateLimiterTests(unittest.TestCase):
     def test_cleanup(self):
         limiter = self.test_ip_limits()
         limiter.cleanup()
-        assert limiter.recent_commands['127.0.0.1']
+
+        assert limiter.recent_commands[b'\x7f\x00\x00\x01']
         time.sleep(1)
         limiter.cleanup()
-        assert not limiter.recent_commands['127.0.0.1']
+        assert not limiter.recent_commands[b'\x7f\x00\x00\x01']
 
         limiter = rate_limiter.get_rate_limiter({"rate_limits": {"global": {"EVENT": "1/s"}}})
         limiter.cleanup()

@@ -1,5 +1,6 @@
 import logging
 import collections
+from ipaddress import ip_address
 from time import perf_counter
 from .util import call_from_path
 
@@ -81,17 +82,17 @@ class RateLimiter(BaseRateLimiter):
                             return True
         return False
 
-    def is_limited(self, ip_address, message):
+    def is_limited(self, client_address, message):
         command = message[0]
-        self.log.debug("Checking limits for %s %s", command, ip_address)
+        self.log.debug("Checking limits for %s %s", command, client_address)
         if not self.rules:
             return False
         matches = []
-        for key in (ip_address, 'global', 'ip'):
+        for key in (client_address, 'global', 'ip'):
             rules = self.rules.get(key, {})
             if rules:
                 if command in rules:
-                    recent_timestamps = self.recent_commands[key if key == 'global' else ip_address][command]
+                    recent_timestamps = self.recent_commands[key if key == 'global' else ip_address(client_address).packed][command]
                     if self.evaluate_rules(rules[command], recent_timestamps):
                         self.log.warning("Rate limiting for %s %s", command, rules[command])
                         return True
@@ -134,7 +135,7 @@ class NullRateLimiter(BaseRateLimiter):
     """
     A rate limiter that does nothing
     """
-    def is_limited(self, ip_address, message):
+    def is_limited(self, client_address, message):
         return False
 
 
