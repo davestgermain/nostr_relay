@@ -19,7 +19,7 @@ from ..config import Config
 from ..verification import Verifier
 from ..auth import get_authenticator, Action
 from ..errors import StorageError, AuthenticationError
-from ..util import call_from_path, catchtime
+from ..util import call_from_path, catchtime, Periodic
 from . import get_metadata
 
 
@@ -627,38 +627,35 @@ class Subscription:
         return select, new_filters
 
 
-class BaseGarbageCollector:
+class BaseGarbageCollector(Periodic):
     def __init__(self, db, **kwargs):
         self.log = logging.getLogger("nostr_relay.db:gc")
         self.db = db
         self.running = True
         self.collect_interval = kwargs.get('collect_interval', 300)
+        super().__init__(self.collect_interval)
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    def collect(self, db):
+    async def collect(self, db):
         pass
 
     async def start(self):
         self.log.info("Starting garbage collector %s. Interval %s", self.__class__.__name__, self.collect_interval)
-        while self.running:
-            await asyncio.sleep(self.collect_interval)
-            collected = 0
-            try:
-                async with self.db.begin() as conn:
-                    collected = await self.collect(conn)
-                if collected:
-                    self.log.info("Collected garbage (%d events)", collected)
-            except sqlite3.OperationalError as e:
-                self.log.exception("collect")
-                break
-            except Exception:
-                self.log.exception("collect")
-                continue
-        self.log.info("Stopped")
+        await super().start()
 
-    def stop(self):
-        self.running = False
+    async def run_once(self):
+        collected = 0
+        try:
+            async with self.db.begin() as conn:
+                collected = await self.collect(conn)
+            if collected:
+                self.log.info("Collected garbage (%d events)", collected)
+        except sqlite3.OperationalError as e:
+            self.log.exception("collect")
+            self.running = False
+        except Exception:
+            self.log.exception("collect")
 
 
 class QueryGarbageCollector(BaseGarbageCollector):

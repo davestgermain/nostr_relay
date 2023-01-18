@@ -1,5 +1,6 @@
+import asyncio
 import importlib
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from time import perf_counter
 
 
@@ -19,3 +20,34 @@ def call_from_path(path, *args, **kwargs):
     func = getattr(module, callable_name)
     return func(*args, **kwargs)
 
+
+class Periodic:
+    """
+    A periodic async task
+    """
+    def __init__(self, interval):
+        self.interval = interval
+        self.running = False
+        self._task = None
+
+    async def start(self):
+        if not self.running:
+            self.running = True
+            # Start task to call func periodically:
+            self._task = asyncio.ensure_future(self._run())
+
+    async def stop(self):
+        if self.running:
+            self.running = False
+            # Stop task and await it stopped:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+
+    async def wait_function(self):
+        await asyncio.sleep(self.interval)
+
+    async def _run(self):
+        while self.running:
+            await self.wait_function()
+            await self.run_once()

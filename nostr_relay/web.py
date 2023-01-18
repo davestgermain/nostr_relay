@@ -141,10 +141,9 @@ class Client:
 
 
 class BaseResource:
-    log = logging.getLogger(__name__)
-
     def __init__(self, storage):
         self.storage = storage
+        self.log = logging.getLogger(__name__)
 
 
 class NostrAPI(BaseResource):
@@ -189,6 +188,7 @@ class NostrAPI(BaseResource):
         try:
             if self.rate_limiter and self.rate_limiter.is_limited(req.remote_addr, 'ACCEPT'):
                 await ws.close(code=1013)
+                self.log.warning("rate-limited ACCEPT %s", req.remote_addr)
                 return
             await ws.accept()
             start = time()

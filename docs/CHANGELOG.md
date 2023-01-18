@@ -1,5 +1,11 @@
 # CHANGES
 
+## 1.4.7
+
+* Added configurable timeout for idle connections: `message_timeout` (default 30minutes)
+* fixed verification task not running
+* bugfixes for crazy queries
+
 ## 1.4.6
 
 * use a better challenge for NIP-42 auth
