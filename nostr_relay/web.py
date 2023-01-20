@@ -70,6 +70,7 @@ class Client:
 
         if storage.authenticator.is_enabled:
             challenge = storage.authenticator.get_challenge(remote_addr)
+            self.log.debug("Sent challenge %s to %s", challenge, client_id)
             await ws.send_media(["AUTH", challenge])
 
         while ws.ready:

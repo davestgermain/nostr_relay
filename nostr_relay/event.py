@@ -1,15 +1,20 @@
 """
 forked from https://github.com/jeffthibault/python-nostr.git
 """
+import functools
 import time
 from enum import IntEnum
 from secp256k1 import PrivateKey, PublicKey
 from hashlib import sha256
 
 try:
-    import rapidjson as json
+    import rapidjson
+    loads = rapidjson.loads
+    dumps = functools.partial(rapidjson.dumps, ensure_ascii=False)
 except ImportError:
     import json
+    loads = json.loads
+    dumps = functools.partial(json.dumps, separators=(',', ':'), ensure_ascii=False)
 
 
 class EventKind(IntEnum):
@@ -58,7 +63,7 @@ class Event:
     @staticmethod
     def serialize(public_key: str, created_at: int, kind: int, tags: "list[list[str]]", content: str) -> bytes:
         data = [0, public_key, created_at, kind, tags, content]
-        data_str = json.dumps(data, ensure_ascii=False)
+        data_str = dumps(data)
         return data_str.encode()
 
     @staticmethod
@@ -69,7 +74,7 @@ class Event:
     def from_tuple(row):
         tags = row[4]
         if isinstance(tags, str):
-            tags = json.loads(tags)
+            tags = loads(tags)
         return Event(
             id=row[0].hex(),
             created_at=row[1],
@@ -116,13 +121,13 @@ class Event:
             self.pubkey,
             self.created_at,
             self.kind,
-            json.dumps(self.tags),
+            dumps(self.tags),
             self.content,
             self.sig
         )
 
     def __str__(self):
-        return json.dumps(self.to_json_object())
+        return dumps(self.to_json_object())
 
     def to_json_object(self) -> dict:
         return {
