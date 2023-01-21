@@ -582,8 +582,8 @@ class Subscription:
                     subwhere.append('created_at < %d' % int(value))
                 else:
                     raise ValueError("until")
-            elif key == 'limit' and value:
-                filter_obj['limit'] = max(min(int(value or 0), self.default_limit), 0)
+            elif key == 'limit' and isinstance(value, int):
+                filter_obj['limit'] = min(max(value, 0), self.default_limit)
             elif key[0] == '#' and len(key) == 2 and value:
                 pstr = []
                 for val in set(value):

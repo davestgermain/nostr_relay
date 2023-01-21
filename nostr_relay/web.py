@@ -190,7 +190,7 @@ class NostrAPI(BaseResource):
                 return
 
         try:
-            if self.rate_limiter and self.rate_limiter.is_limited(req.remote_addr, 'ACCEPT'):
+            if self.rate_limiter and self.rate_limiter.is_limited(req.remote_addr, ['ACCEPT']):
                 await ws.close(code=1013)
                 self.log.warning("rate-limited ACCEPT %s", req.remote_addr)
                 return
