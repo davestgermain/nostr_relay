@@ -160,7 +160,7 @@ class NostrAPI(BaseResource):
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == 'application/nostr+json':
-            supported_nips = [1, 2, 5, 9, 11, 12, 15, 20, 26, 40]
+            supported_nips = [1, 2, 5, 9, 11, 12, 15, 20, 26, 33, 40]
             if Config.authentication.get('enabled'):
                 supported_nips.append(42)
             metadata = {

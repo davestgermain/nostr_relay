@@ -222,23 +222,49 @@ class DBStorage(BaseStorage):
         # check NIP05 verification, if enabled
         await self.verifier.verify(conn, event)
 
-        if event.is_replaceable:
+        if event.is_replaceable or event.is_paramaterized_replaceable:
             # check for older event from same pubkey
-            result = await conn.execute(
-                    sa.select(
-                        self.EventTable.c.id, self.EventTable.c.created_at
+            query = sa.select(
+                        self.EventTable.c.id, self.EventTable.c.created_at, self.EventTable.c.tags
                     ).where(
                         (self.EventTable.c.pubkey == bytes.fromhex(event.pubkey)) & 
                         (self.EventTable.c.kind == event.kind) & 
                         (self.EventTable.c.created_at < event.created_at)
                     )
-            )
-            row = result.first()
-            if row:
-                old_id = row[0]
-                old_ts = row[1]
-                self.log.info("Replacing event %s from %s@%s with %s", old_id, event.pubkey, old_ts, event.id)
-                await conn.execute(self.EventTable.delete().where(self.EventTable.c.id == old_id))
+            result = await conn.execute(query)
+
+            delete_id = None
+            if event.is_paramaterized_replaceable:
+                # according to nip-33, an event with a matching "d" tag will be replaced
+                # empty tags include [], [["d"]], and [["d", ""]]
+                d_tag = ''
+                for tag in event.tags:
+                    if tag[0] == 'd':
+                        if len(tag) > 1:
+                            d_tag = tag[1]
+                        break
+                for old_id, created_at, tags in result:
+                    found_tag = [tag for tag in tags if tag[0] == 'd']
+                    if not d_tag:
+                        if not found_tag or len(found_tag[0]) == 1 or found_tag[0][1] == '':
+                            delete_id = old_id
+                            old_ts = created_at
+                            break
+                    else:
+                        tag = found_tag[0]
+                        if len(tag) > 1 and tag[1] == d_tag:
+                            delete_id = old_id
+                            old_ts = created_at
+                            break
+
+            else:
+                row = result.first()
+                if row:
+                    delete_id = row[0]
+                    old_ts = row[1]
+            if delete_id:
+                self.log.info("Replacing event %s from %s@%s with %s", delete_id, event.pubkey, old_ts, event.id)
+                await conn.execute(self.EventTable.delete().where(self.EventTable.c.id == delete_id))
         return True
 
     async def process_tags(self, conn, event):
@@ -252,7 +278,7 @@ class DBStorage(BaseStorage):
                 if tag[0] in ('delegation', 'expiration'):
                     tags.add((tag[0], tag[1]))
                 elif len(tag[0]) == 1:
-                    tags.add((tag[0], tag[1]))
+                    tags.add((tag[0], tag[1] if len(tag) > 1 else ''))
             if tags:
                 result = await conn.execute(self.tag_insert_query,
                     [{'id': event.id_bytes, 'name': tag[0], 'value': tag[1]} for tag in tags]

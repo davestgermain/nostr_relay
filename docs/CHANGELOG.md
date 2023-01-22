@@ -2,6 +2,7 @@
 
 ## 1.4.8
 
+* Support NIP-33 - parameterized replaceable events
 * Fixed verification batch query to not reverify every time
 * Allow for limit=0 queries
 * Fixed json dump

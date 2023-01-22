@@ -181,6 +181,42 @@ class DBTests(BaseTestsWithStorage):
         data = await self.storage.get_identified_pubkey('test@localhost')
         assert data['names'] == {}
 
+    async def test_nip33(self):
+        """
+        Test that parameterized replaceable events work
+        """
+        replace_event = self.make_event(PK1, kind=31000, tags=[["d", "replace1"]], content="first")
+        await self.storage.add_event(replace_event)
+        # similar event won't replace
+        await self.storage.add_event(self.make_event(PK1, kind=31000, tags=[["d", "replace2"]]))
+        assert await self.storage.get_event(replace_event['id'])
+
+        # event with same tag will replace
+        replaced = self.make_event(PK1, kind=31000, tags=[["d", "replace1"]])
+        await self.storage.add_event(replaced)
+        assert not await self.storage.get_event(replace_event['id'])
+        assert await self.storage.get_event(replaced['id'])
+
+        # empty d-tag
+        empty_dtag = self.make_event(PK1, kind=31000, tags=[["d"]], content="empty")
+        await self.storage.add_event(empty_dtag)
+        assert await self.storage.get_event(replaced['id'])
+
+        empty_2 = self.make_event(PK1, kind=31000, tags=[], content="empty 2")
+        await self.storage.add_event(empty_2)
+        assert not await self.storage.get_event(empty_dtag['id'])
+
+        # no tag
+        no_tag = self.make_event(PK1, kind=32000, tags=[], content="empty")
+        await self.storage.add_event(no_tag)
+        d_tag = self.make_event(PK1, kind=32000, tags=[['d']], content="dtag")
+        await self.storage.add_event(d_tag)
+
+        assert not await self.storage.get_event(no_tag['id'])
+        replaced = self.make_event(PK1, kind=32000, tags=[["d", "replace again"]])
+        await self.storage.add_event(replaced)
+        assert await self.storage.get_event(d_tag['id'])
+
 
 class APITests(BaseTestsWithStorage):
     async def asyncSetUp(self):
@@ -233,6 +269,7 @@ class MainTests(APITests):
                 15,
                 20,
                 26,
+                33,
                 40,
                 # 42,
             ],
