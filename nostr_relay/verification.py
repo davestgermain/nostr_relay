@@ -144,10 +144,11 @@ class Verifier(Periodic):
         try:
             if (time.time() - self._last_run) > self.options['update_frequency']:
                 self.log.debug("running batch query %s", self._last_run)
+                last_verified_date = (datetime.utcnow() - timedelta(seconds=self.options['expiration']))
                 query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, EventTable.c.pubkey, Verification.c.metadata_id).select_from(
                     sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
                 ).where(
-                    (EventTable.c.pubkey != None) & (Verification.c.verified_at > (datetime.utcnow() - timedelta(seconds=self.options['expiration'])))
+                    (EventTable.c.pubkey != None) & (Verification.c.verified_at <= last_verified_date)
                 )
 
                 async with self.db.begin() as cursor:

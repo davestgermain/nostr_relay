@@ -164,6 +164,6 @@ class VerificationTests(BaseTestsWithStorage):
             await asyncio.sleep(1)
 
             assert await verifier.verify(conn, self.make_event(PK1, as_dict=False, kind=1, content='yes'))
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.2)
             assert await verifier.verify(conn, self.make_event(PK1, as_dict=False, kind=1, content='yes'))
             await verifier.stop()

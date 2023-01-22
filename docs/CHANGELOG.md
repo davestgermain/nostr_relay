@@ -1,5 +1,11 @@
 # CHANGES
 
+## 1.4.8
+
+* Fixed verification batch query to not reverify every time
+* Allow for limit=0 queries
+* Fixed json dump
+
 ## 1.4.7
 
 * Added configurable limit for subscriptions per connection: `subscription_limit` (default 32)
