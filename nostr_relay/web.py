@@ -5,7 +5,7 @@ import falcon
 import rapidjson
 from time import time
 from falcon import media
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 import falcon.asgi
 
@@ -56,7 +56,7 @@ class Client:
                 await ws.send_text(message)
                 self.log.debug("SENT: %s", message)
                 self.sent += len(message)
-            except (falcon.WebSocketDisconnected, ConnectionClosedError):
+            except (falcon.WebSocketDisconnected, ConnectionClosedError, ConnectionClosedOK):
                 break
             except asyncio.CancelledError:
                 break
