@@ -32,6 +32,8 @@ class RateLimiter(BaseRateLimiter):
         self.log = logging.getLogger('nostr_relay.limiter')
         self.rules = self.parse_options(options or {})
         self.recent_commands = collections.defaultdict(lambda: collections.defaultdict(collections.deque))
+        self._starttime = 0
+        self._starttime = self._timestamp()
 
     def parse_options(self, options):
         rules = {}
@@ -67,7 +69,7 @@ class RateLimiter(BaseRateLimiter):
         return rules
 
     def evaluate_rules(self, rules, timestamps):
-        now = perf_counter()
+        now = self._timestamp()
         if timestamps:
             if (now - timestamps[0]) > max(rules)[0]:
                 timestamps.clear()
@@ -81,6 +83,9 @@ class RateLimiter(BaseRateLimiter):
                             self.log.debug("%d/%d", freq, interval)
                             return True
         return False
+
+    def _timestamp(self):
+        return perf_counter() - self._starttime
 
     def is_limited(self, client_address, message):
         command = message[0]
@@ -96,7 +101,7 @@ class RateLimiter(BaseRateLimiter):
                     if self.evaluate_rules(rules[command], recent_timestamps):
                         self.log.warning("Rate limiting for %s %s", command, rules[command])
                         return True
-                    recent_timestamps.insert(0, perf_counter())
+                    recent_timestamps.insert(0, self._timestamp())
                     if '.' in key:
                         # specific ip address rules take precedence
                         # stop evaluating global and ip rules
@@ -111,7 +116,7 @@ class RateLimiter(BaseRateLimiter):
             rule_res = max(rules)[0]
             max_interval = max(rule_res, max_interval)
 
-        now = perf_counter()
+        now = self._timestamp()
         to_del = []
         for ip, commands in self.recent_commands.items():
             if ip == 'global':
