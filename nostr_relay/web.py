@@ -12,6 +12,7 @@ import falcon.asgi
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
+from .util import timeout
 from .errors import AuthenticationError, StorageError
 
 
@@ -75,7 +76,7 @@ class Client:
 
         while ws.ready:
             try:
-                async with asyncio.timeout(self.timeout):
+                async with timeout(self.timeout):
                     message = await ws.receive_media()
 
                 if not self.validate_message(message):

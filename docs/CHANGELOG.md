@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.4.9
+
+* Ensure that code is compatible with python 3.9+
+
 ## 1.4.8
 
 * Support NIP-33 - parameterized replaceable events

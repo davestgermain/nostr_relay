@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 import sqlalchemy as sa
 
 from .errors import VerificationError
-from .util import Periodic
+from .util import Periodic, timeout
 from nostr_relay.storage import get_metadata
 
 
@@ -231,7 +231,7 @@ class Verifier(Periodic):
     async def wait_function(self):
         self._candidate = None
         try:
-            async with asyncio.timeout(self.options['update_frequency']):
+            async with timeout(self.options['update_frequency']):
                 self._candidate = await self.queue.get()
             if self._candidate is None:
                 self.running = False

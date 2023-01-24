@@ -1,7 +1,16 @@
 import asyncio
 import importlib
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, asynccontextmanager, suppress
 from time import perf_counter
+
+if hasattr(asyncio, 'timeout'):
+    timeout = asyncio.timeout
+else:
+    # python < 3.11 does not have asyncio.timeout
+    # rather than re-implement it, we'll just do nothing
+    @asynccontextmanager
+    async def timeout(duration):
+        yield
 
 
 @contextmanager
