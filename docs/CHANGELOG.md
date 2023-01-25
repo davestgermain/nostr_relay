@@ -3,6 +3,8 @@
 ## 1.4.10
 
 * Fixed event broadcasting code, which was inadvertently broadcasting when there was an invalid query
+* Added facility for logging long queries
+* Removed limit on long queries
  
 ## 1.4.9
 

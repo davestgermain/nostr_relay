@@ -375,9 +375,9 @@ class MainTests(APITests):
 
             # now add a new event
             data = await self.send_event(ws, EVENTS[2], True)
-            if data[0] == 'OK':
-                await asyncio.sleep(1)
-                data = await ws.receive_json()
+            assert data[0] == 'OK'
+            await asyncio.sleep(1)
+            data = await ws.receive_json()
             assert data == ['EVENT', 'test', EVENTS[2]]
 
     async def test_req_after_add_bad(self):

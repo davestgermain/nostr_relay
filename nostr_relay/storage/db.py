@@ -468,6 +468,7 @@ class Subscription:
         self.default_limit = default_limit
         self.is_postgres = is_postgres
         self.log = log
+        self.long_query_threshold = 500
 
     def prepare(self):
         try:
@@ -501,8 +502,9 @@ class Subscription:
 
             duration = t()
             self.log.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
-            if duration > 500:
-                self.log.warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
+            if duration > self.long_query_threshold:
+                logging.getLogger("nostr_relay.long-queries").warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
+
         except Exception:
             self.log.exception("subscription")
 
@@ -542,6 +544,9 @@ class Subscription:
                     for tag in event.tags:
                         if tag[0] == key[1]:
                             matched.add(tag[1] in value)
+                elif key == 'limit':
+                    # limit is irrelevant for broadcasts
+                    continue
                 else:
                     matched.add(False)
             if all(matched):
@@ -554,7 +559,7 @@ class Subscription:
                 if not isinstance(value, list):
                     value = [value]
                 ids = set(value)
-                if ids and len(ids) < 40: # pathological queries?
+                if ids:
                     exact = []
                     for eid in ids:
                         eid = validate_id(eid)
@@ -576,7 +581,7 @@ class Subscription:
                     # invalid query
                     raise ValueError("ids")
             elif key == 'authors' and isinstance(value, list):
-                if value and len(value) < 40:
+                if value:
                     exact = set()
                     hexexact = set()
                     for pubkey in value:
