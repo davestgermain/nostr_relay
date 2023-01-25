@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.4.10
+
+* Fixed event broadcasting code, which was inadvertently broadcasting when there was an invalid query
+ 
 ## 1.4.9
 
 * Ensure that code is compatible with python 3.9+

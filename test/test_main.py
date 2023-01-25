@@ -379,7 +379,26 @@ class MainTests(APITests):
                 await asyncio.sleep(1)
                 data = await ws.receive_json()
             assert data == ['EVENT', 'test', EVENTS[2]]
-    
+
+    async def test_req_after_add_bad(self):
+        """
+        test subscribing then receiving new additions, with a bad query
+        """
+        async with self.conductor.simulate_ws('/') as ws:
+            await self.send_event(ws, EVENTS[0], True)
+            await ws.send_json(["REQ", "test", {
+                    "authors": []
+                }
+            ])
+            data = await ws.receive_json()
+            assert data == ['EOSE', 'test']
+            data = await self.send_event(ws, EVENTS[1], True)
+            assert data[0] == 'OK'
+            await asyncio.sleep(.5)
+            with self.assertRaises(asyncio.TimeoutError):
+                async with asyncio.timeout(1.2):
+                    data = await ws.receive_json()
+
     async def test_prefix_search(self):
         async with self.conductor.simulate_ws('/') as ws:
             await self.send_event(ws, EVENTS[1], True)

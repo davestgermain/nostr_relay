@@ -45,7 +45,7 @@ class Authenticator:
         self.actions, self.valid_urls, self.is_enabled = self.parse_options(options)
         self.log = logging.getLogger('nostr_relay.auth')
         if self.is_enabled:
-            self.log.info("Authentication enabled.")
+            self.log.info("Authentication enabled for %s", self.valid_urls)
 
     def parse_options(self, options):
         actions = {Action.save.value: self.default_roles, Action.query.value: self.default_roles}

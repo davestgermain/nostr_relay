@@ -521,6 +521,8 @@ class Subscription:
 
     def check_event(self, event, filters):
         for filter_obj in filters:
+            if not filter_obj:
+                continue
             matched = set()
             for key, value in filter_obj.items():
                 if key == 'ids':
@@ -540,6 +542,8 @@ class Subscription:
                     for tag in event.tags:
                         if tag[0] == key[1]:
                             matched.add(tag[1] in value)
+                else:
+                    matched.add(False)
             if all(matched):
                 return True
         return False
