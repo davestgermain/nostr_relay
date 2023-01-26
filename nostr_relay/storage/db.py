@@ -1,7 +1,6 @@
 import os
 import os.path
 import asyncio
-import sqlite3
 import collections
 import logging
 import secrets
@@ -9,7 +8,6 @@ import threading
 
 from time import time
 
-import aiosqlite
 import rapidjson
 import sqlalchemy as sa
 from sqlalchemy.engine.base import Engine
@@ -541,9 +539,13 @@ class Subscription:
                 elif key == 'until':
                     matched.add(event.created_at < value)
                 elif key[0] == '#' and len(key) == 2:
+                    found = False
                     for tag in event.tags:
                         if tag[0] == key[1]:
                             matched.add(tag[1] in value)
+                            found = True
+                    if not found:
+                        matched.add(False)
                 elif key == 'limit':
                     # limit is irrelevant for broadcasts
                     continue
@@ -660,6 +662,7 @@ class Subscription:
         if limit is None:
             limit = self.default_limit
         select += f'''
+            ORDER BY created_at DESC
             LIMIT {limit}
         '''
         return select, new_filters
@@ -689,9 +692,6 @@ class BaseGarbageCollector(Periodic):
                 collected = await self.collect(conn)
             if collected:
                 self.log.info("Collected garbage (%d events)", collected)
-        except sqlite3.OperationalError as e:
-            self.log.exception("collect")
-            self.running = False
         except Exception:
             self.log.exception("collect")
 

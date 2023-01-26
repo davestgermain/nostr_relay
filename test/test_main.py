@@ -388,6 +388,9 @@ class MainTests(APITests):
             await self.send_event(ws, EVENTS[0], True)
             await ws.send_json(["REQ", "test", {
                     "authors": []
+                },
+                {
+                    '#p': ['44c7a871ce6224d8d274b494f8f68827cb966e3aaba723a14db8dd22e0542e7d']
                 }
             ])
             data = await ws.receive_json()
