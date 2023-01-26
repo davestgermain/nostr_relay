@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.4.11
+
+* Really, actually fixed the broadcasting bug
+* Order events by created_at (may revert this change if it affects performance)
+
 ## 1.4.10
 
 * Fixed event broadcasting code, which was inadvertently broadcasting when there was an invalid query
