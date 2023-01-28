@@ -37,7 +37,7 @@ class AuthTests(BaseTestsWithStorage):
         Config.authentication = {'actions': {Action.save: Role.writer, Action.query: Role.reader}}
         auth = self.storage.authenticator
 
-        from nostr_relay.event import Event, PrivateKey
+        from aionostr.event import Event, PrivateKey
 
         privkey1 = 'f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753'
         pubkey1 = '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d'

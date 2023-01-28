@@ -6,7 +6,7 @@ import time
 from nostr_relay.config import Config
 Config.load(os.path.join(os.path.dirname(__file__), './test_config.yaml'), reload=True)
 
-from nostr_relay.event import Event, PrivateKey
+from aionostr.event import Event, PrivateKey
 
 
 

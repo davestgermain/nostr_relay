@@ -6,7 +6,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 
-from .event import Event
+from aionostr.event import Event
 from .errors import StorageError, AuthenticationError
 from .util import call_from_path
 from .storage import get_metadata

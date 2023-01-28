@@ -12,7 +12,7 @@ import rapidjson
 import sqlalchemy as sa
 from sqlalchemy.engine.base import Engine
 
-from ..event import Event, EventKind
+from aionostr.event import Event, EventKind
 from ..config import Config
 from ..verification import Verifier
 from ..auth import get_authenticator, Action

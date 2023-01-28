@@ -13,7 +13,7 @@ from nostr_relay.config import Config
 from nostr_relay.web import create_app
 from nostr_relay.storage import get_storage
 from nostr_relay.auth import Authenticator
-from nostr_relay.event import Event, PrivateKey
+from aionostr.event import Event, PrivateKey
 from nostr_relay.errors import StorageError
 
 
