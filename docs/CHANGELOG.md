@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.5
+
+* Add dependency on aionostr, for future flexibility
+* Clarify that we support python 3.9+
+
 ## 1.4.11
 
 * Really, actually fixed the broadcasting bug
