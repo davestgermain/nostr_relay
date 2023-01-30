@@ -93,7 +93,7 @@ class DBTests(BaseTestsWithStorage):
         event, changed = await self.storage.add_event(evt2)
         assert event.id == evt2['id']
         evt = await self.storage.get_event(evt2['id'])
-        assert evt['content'] == 'event 2'
+        assert evt.content == 'event 2'
 
     async def test_expiration_tag(self):
         expiring_event = {"id": "075040fbf395db975fccf36948908474994f70c871be0d1755459851438577d1", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 1, "tags": [["expiration", 1672329427]], "content": "this will expire", "sig": "77509c595b5e4e86a74dc1fa0b4a484a8bca6acc89e2e32b9794c9e0c59a0313521295e8c4b6b844be5ce83bab2cb7230bc0d9761fbf3845a2cd04dab2d70cda"}
@@ -101,8 +101,8 @@ class DBTests(BaseTestsWithStorage):
 
         await self.storage.add_event(expiring_event)
         await self.storage.add_event(distant_future_event)
-        assert (await self.storage.get_event(expiring_event["id"]))['id'] == expiring_event['id']
-        assert (await self.storage.get_event(distant_future_event["id"]))['id'] == distant_future_event['id']
+        assert (await self.storage.get_event(expiring_event["id"])).id == expiring_event['id']
+        assert (await self.storage.get_event(distant_future_event["id"])).id == distant_future_event['id']
 
         # stop and restart garbage collector to have it run immediately
         from nostr_relay.storage.db import start_garbage_collector
@@ -112,7 +112,7 @@ class DBTests(BaseTestsWithStorage):
         await asyncio.sleep(2.5)
         assert (await self.storage.get_event(expiring_event["id"])) is None
         self.storage.garbage_collector.cancel()
-        assert (await self.storage.get_event(distant_future_event["id"]))['id'] == distant_future_event['id']
+        assert (await self.storage.get_event(distant_future_event["id"])).id == distant_future_event['id']
 
     async def test_ephemeral_event(self):
         from nostr_relay.storage.db import start_garbage_collector
@@ -120,7 +120,7 @@ class DBTests(BaseTestsWithStorage):
         ephemeral_event = {"id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7", "pubkey": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "created_at": 1672325827, "kind": 22222, "tags": [], "content": "ephemeral", "sig": "66f8a055bb3c3fc3fe0ca0ead4d5558d69627dc4f40c7320228d9e4c266509f6ac8a2ff085abbd1a9d3b0c733529bf3fcd87d43f731990467181ed1995aad5bc"}
 
         assert (await self.storage.add_event(ephemeral_event))[1]
-        assert (await self.storage.get_event(ephemeral_event['id']))['id'] == '2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7'
+        assert (await self.storage.get_event(ephemeral_event['id'])).id == '2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7'
         await asyncio.sleep(2.2)
         assert (await self.storage.get_event(ephemeral_event['id'])) is None
 

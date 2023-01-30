@@ -239,7 +239,7 @@ class ViewEventResource(BaseResource):
         except Exception:
             self.log.exception('get-event')
         if event:
-            resp.media = event
+            resp.media = event.to_json_object()
         else:
             raise falcon.HTTPNotFound
 
@@ -270,9 +270,12 @@ class SetupMiddleware:
         self.storage = storage
 
     async def process_startup(self, scope, event):
-        import random
         if Config.DEBUG:
             asyncio.get_running_loop().set_debug(True)
+        if Config.should_run_notifier:
+            from .notifier import NotifyServer
+            notify_server = NotifyServer()
+            notify_server.start()
         await self.storage.setup()
 
     async def process_shutdown(self, scope, event):

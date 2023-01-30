@@ -61,10 +61,8 @@ class DBStorage(BaseStorage):
         # limit the amount of concurrent inserts/selects
         self.add_slot = asyncio.Semaphore(int(self.options.pop('num_concurrent_adds', 4)))
         self.query_slot = asyncio.Semaphore(int(self.options.pop('num_concurrent_reqs', 10)))
-        if self.is_postgres:
-            # sa.event.listen(Engine, "connect", self._subscribe_to_channel)
-            pass
-        else:
+
+        if not self.is_postgres:
             # add event listener to set appropriate PRAGMA items
             sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
 
@@ -83,17 +81,6 @@ class DBStorage(BaseStorage):
             if stmt:
                 cursor.execute(stmt)
         cursor.close()
-
-    def _subscribe_to_channel(self, dbapi_connection, connection_record):
-        def add_listener():
-            asyncio.create_task(dbapi_connection.driver_connection.add_listener('addevent', self._event_listener))
-        asyncio.get_event_loop().call_later(2.0, add_listener)
-
-    async def _event_listener(self, connection, serverpid, channel, payload):
-        token, event_id = payload.split(':')
-        if token != self._my_token:
-            event_json = await self.get_event(event_id)
-            self._notify_all(Event(**event_json))
 
     async def close(self):
         if self.garbage_collector_task:
@@ -137,17 +124,24 @@ class DBStorage(BaseStorage):
             self.tag_insert_query = sa.insert(TagTable).prefix_with('OR IGNORE')
             self.event_insert_query = sa.insert(self.EventTable).prefix_with('OR IGNORE')
 
+        if Config.should_run_notifier:
+            from nostr_relay.notifier import NotifyClient
+
+            self.notifier = NotifyClient(self)
+            self.notifier.start()
+        else:
+            self.notifier = None
         self.log.debug("done setting up")
 
     async def get_event(self, event_id):
         """
         Shortcut for retrieving an event by id
         """
-        async with self.db.begin() as conn:
+        async with self.db.connect() as conn:
             result = await conn.execute(sa.select(self.EventTable).where(self.EventTable.c.id == bytes.fromhex(event_id)))
             row = result.first()
             if row:
-                return Event.from_tuple(row).to_json_object()
+                return Event.from_tuple(row)
 
     async def add_event(self, event_json, auth_token=None):
         """
@@ -182,10 +176,16 @@ class DBStorage(BaseStorage):
                     changed = result.rowcount == 1
                     await self.post_save(conn, event, changed)
         if changed:
-            self._notify_all(event)
+            self.notify_all_connected(event)
+            # notify other processes
+            await self.notify_other_processes(event)
         return event, changed
 
-    def _notify_all(self, event):
+    async def notify_other_processes(self, event):
+        if self.notifier:
+            await self.notifier.notify(event)
+
+    def notify_all_connected(self, event):
         # notify all subscriptions
         count = 0
         with catchtime() as t:

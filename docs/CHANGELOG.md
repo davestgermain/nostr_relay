@@ -1,5 +1,11 @@
 # CHANGES
 
+## 1.6
+
+* Improved scalability by controlling the number of concurrent requests. Default configuration should easily handle 1,000 clients
+* Added notifier client/server to allow for multi-process event broadcasts. Enabled automatically if gunicorn workers > 1
+* Required SQLAlchemy >= 2.0
+
 ## 1.5
 
 * Add dependency on aionostr, for future flexibility

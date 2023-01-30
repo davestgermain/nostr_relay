@@ -91,5 +91,9 @@ class ConfigClass:
     def get(self, key, default=None):
         return self.__dict__.get(key, default)
 
+    @property
+    def should_run_notifier(self):
+        return (self.gunicorn.get('workers', 1) > 1) or self.get('run_notifier', False)
+
 
 Config = ConfigClass()

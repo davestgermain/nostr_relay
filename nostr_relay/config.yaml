@@ -10,7 +10,7 @@ storage:
   # the number of concurrent REQ queries sent to the db
   num_concurrent_reqs: 10
   # the number of concurrent event saves. (sqlite can only support 1 writer at a time)
-  num_concurrent_adds: 1
+  num_concurrent_adds: 2
 
 verification:
   # options are disabled, passive, enabled
