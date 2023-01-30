@@ -57,6 +57,10 @@ class DBStorage(BaseStorage):
         self.is_postgres = 'postgresql' in self.db_url
         self._my_token = secrets.token_hex(4)
         self.log = logging.getLogger(__name__)
+
+        # limit the amount of concurrent inserts/selects
+        self.add_slot = asyncio.Semaphore(int(self.options.pop('num_concurrent_adds', 4)))
+        self.query_slot = asyncio.Semaphore(int(self.options.pop('num_concurrent_reqs', 10)))
         if self.is_postgres:
             # sa.event.listen(Engine, "connect", self._subscribe_to_channel)
             pass
@@ -116,6 +120,7 @@ class DBStorage(BaseStorage):
             **self.options
         )
         self.log.info("Connected to %s", self.db.url)
+        self.loop = asyncio.get_running_loop()
 
         self.garbage_collector_task = start_garbage_collector(self.db)
         await self.verifier.start(self.db)
@@ -155,26 +160,27 @@ class DBStorage(BaseStorage):
             self.log.error("bad json")
             raise StorageError("invalid: Bad JSON")
 
-        await asyncio.get_running_loop().run_in_executor(None, self.validate_event, event)
+        await self.loop.run_in_executor(None, self.validate_event, event)
         # check authentication
         if not await self.authenticator.can_do(auth_token, Action.save.value, event):
             raise AuthenticationError("restricted: permission denied")
 
         changed = False
-        async with self.db.begin() as conn:
-            do_save = await self.pre_save(conn, event)
-            if do_save:
-                result = await conn.execute(self.event_insert_query.values(
-                    id=event.id_bytes,
-                    created_at=event.created_at,
-                    pubkey=bytes.fromhex(event.pubkey),
-                    sig=bytes.fromhex(event.sig),
-                    content=event.content,
-                    kind=event.kind,
-                    tags=event.tags,
-                ))
-                changed = result.rowcount == 1
-                await self.post_save(conn, event, changed)
+        async with self.add_slot:
+            async with self.db.begin() as conn:
+                do_save = await self.pre_save(conn, event)
+                if do_save:
+                    result = await conn.execute(self.event_insert_query.values(
+                        id=event.id_bytes,
+                        created_at=event.created_at,
+                        pubkey=bytes.fromhex(event.pubkey),
+                        sig=bytes.fromhex(event.sig),
+                        content=event.content,
+                        kind=event.kind,
+                        tags=event.tags,
+                    ))
+                    changed = result.rowcount == 1
+                    await self.post_save(conn, event, changed)
         if changed:
             self._notify_all(event)
         return event, changed
@@ -317,7 +323,7 @@ class DBStorage(BaseStorage):
         queue = asyncio.Queue()
         sub = Subscription(self.db, '', query_filters, queue=queue, default_limit=600000, log=self.log)
         sub.prepare()
-        await sub.run_query()
+        await sub.run_query(self.query_slot)
         while True:
             _, event = await queue.get()
             if event is None:
@@ -345,7 +351,7 @@ class DBStorage(BaseStorage):
             if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
                 raise AuthenticationError("restricted: permission denied")
 
-            asyncio.create_task(sub.run_query())
+            asyncio.create_task(sub.run_query(self.query_slot))
             self.clients[client_id][sub_id] = sub
             self.log.debug("%s/%s +", client_id, sub_id)
 
@@ -479,8 +485,7 @@ class Subscription:
         if self.query_task:
             self.query_task.cancel()
 
-    async def run_query(self):
-        self.query_task = asyncio.current_task()
+    async def run_query(self, query_slot: asyncio.Semaphore):
 
         query = self.query
         self.log.debug(query)
@@ -488,15 +493,16 @@ class Subscription:
         queue = self.queue
         try:
             count = 0
-            with catchtime() as t:
-                query = sa.text(query)
-                async with self.db.connect() as conn:
-                    async with conn.stream(query) as result:
-                        async for row in result:
-                            event = Event.from_tuple(row)
-                            await queue.put((sub_id, event))
-                            count += 1
-                await queue.put((sub_id, None))
+            async with query_slot:
+                with catchtime() as t:
+                    query = sa.text(query)
+                    async with self.db.connect() as conn:
+                        async with conn.stream(query) as result:
+                            async for row in result:
+                                event = Event.from_tuple(row)
+                                await queue.put((sub_id, event))
+                                count += 1
+                    await queue.put((sub_id, None))
 
             duration = t()
             self.log.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
