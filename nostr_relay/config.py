@@ -12,6 +12,7 @@ class ConfigClass:
     def __init__(self):
         self.authentication = {}
         self.gunicorn = {}
+        self.storage = {}
         self.verification = {
             'nip05_verification': 'disabled',
             'blacklist': None,

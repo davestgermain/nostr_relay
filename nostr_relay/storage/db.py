@@ -49,8 +49,8 @@ class BaseStorage:
 class DBStorage(BaseStorage):
 
     def __init__(self, options):
-        self.options = options
-        self.db_url = options.get('sqlalchemy.url', 'sqlite+aiosqlite:///nostr.sqlite3')
+        self.options = options.copy()
+        self.db_url = self.options.pop('sqlalchemy.url', 'sqlite+aiosqlite:///nostr.sqlite3')
         self.clients = collections.defaultdict(dict)
         self.db = None
         self.garbage_collector_task = None
@@ -104,19 +104,18 @@ class DBStorage(BaseStorage):
                 await conn.execute(sa.text("PRAGMA optimize"))
 
     async def setup(self):
-        # self.log.info("Database URL: '%s'", self.db_url)
         from sqlalchemy.ext.asyncio import create_async_engine
 
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
 
         self.verifier = Verifier(self, Config.get('verification', {}))
-
         self.db = create_async_engine(
             self.db_url,
-            future=True,
             json_deserializer=rapidjson.loads,
             pool_pre_ping=True,
+            **self.options
         )
+        self.log.info("Connected to %s", self.db.url)
 
         self.garbage_collector_task = start_garbage_collector(self.db)
         await self.verifier.start(self.db)
@@ -466,7 +465,7 @@ class Subscription:
         self.default_limit = default_limit
         self.is_postgres = is_postgres
         self.log = log
-        self.long_query_threshold = 500
+        self.long_query_threshold = 1000
 
     def prepare(self):
         try:
@@ -490,12 +489,13 @@ class Subscription:
         try:
             count = 0
             with catchtime() as t:
+                query = sa.text(query)
                 async with self.db.connect() as conn:
-                    result = await conn.stream(sa.text(query))
-                    async for row in result:
-                        event = Event.from_tuple(row)
-                        await queue.put((sub_id, event))
-                        count += 1
+                    async with conn.stream(query) as result:
+                        async for row in result:
+                            event = Event.from_tuple(row)
+                            await queue.put((sub_id, event))
+                            count += 1
                 await queue.put((sub_id, None))
 
             duration = t()
