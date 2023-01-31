@@ -12,6 +12,7 @@ Every Config.verification_update_frequency, the verifications will be reprocesse
 """
 import asyncio
 import logging
+import re
 import time
 import rapidjson
 from datetime import datetime, timedelta
@@ -64,11 +65,11 @@ class Verifier(Periodic):
         except Exception:
             self.log.exception("bad metadata")
         else:
-            identifier = meta.get('nip05', '')
+            identifier = meta.get('nip05', '').lower()
             self.log.debug("Found identifier %s in event %s", identifier, event)
             if '@' in identifier:
                 # queue this identifier as a candidate
-                domain = identifier.split('@', 1)[1].lower()
+                domain = identifier.split('@', 1)[1]
                 if self.check_allowed_domains(domain):
                     await self.queue.put([None, identifier, 0, event.pubkey, event.id_bytes])
                     return True
@@ -201,11 +202,13 @@ class Verifier(Periodic):
                     pubkey = pubkey.hex()
                 self.log.info("Checking verification for %s. Last verified %s", identifier, verified_at)
                 uname, domain = identifier.split('@', 1)
-                domain = domain.lower()
                 if not self.check_allowed_domains(domain):
                     # how did this record get here?
                     self.log.warning("skipping verification for disallowed domain %s", identifier)
                     continue
+                # names have a restricted charset
+                uname = re.sub("[^a-z0-9\\._-]", '', uname)
+
                 # request well-known url
                 url = f'https://{domain}/.well-known/nostr.json?name={uname}'
                 self.log.info("Requesting %s", url)
