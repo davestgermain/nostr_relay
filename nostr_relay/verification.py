@@ -69,12 +69,12 @@ class Verifier(Periodic):
             self.log.debug("Found identifier %s in event %s", identifier, event)
             if '@' in identifier:
                 # queue this identifier as a candidate
-                domain = identifier.split('@', 1)[1]
-                if self.check_allowed_domains(domain):
+                uname, domain = identifier.split('@', 1)
+                if self.check_allowed_domains(domain) and re.fullmatch("[a-z0-9\\._-]+", uname):
                     await self.queue.put([None, identifier, 0, event.pubkey, event.id_bytes])
                     return True
                 else:
-                    self.log.error("Illegal domain in identifier %s", identifier)
+                    self.log.error("Illegal identifier %s", identifier)
         return False
 
     def check_allowed_domains(self, domain):
@@ -171,8 +171,8 @@ class Verifier(Periodic):
             success, failure = await self.process_verifications(candidates)
         except Exception:
             self.log.exception("process_verifications")
-        else:
-            if success or failure:
+        if success or failure:
+            try:
                 async with self.db.begin() as conn:
                     for vid, identifier, metadata_id in success:
                         if vid is None:
@@ -186,7 +186,9 @@ class Verifier(Periodic):
                             continue
                         else:
                             await conn.execute(sa.update(Verification).where(Verification.c.id == vid).values({'failed_at': datetime.utcnow()}))
-                self.log.info("Saved success:%d failure:%d", len(success), len(failure))
+            except Exception:
+                self.log.exception("saving verifications")
+            self.log.info("Saved success:%d failure:%d", len(success), len(failure))
         self._last_run = time.time()
 
     def get_aiohttp_session(self):
@@ -206,8 +208,6 @@ class Verifier(Periodic):
                     # how did this record get here?
                     self.log.warning("skipping verification for disallowed domain %s", identifier)
                     continue
-                # names have a restricted charset
-                uname = re.sub("[^a-z0-9\\._-]", '', uname)
 
                 # request well-known url
                 url = f'https://{domain}/.well-known/nostr.json?name={uname}'
