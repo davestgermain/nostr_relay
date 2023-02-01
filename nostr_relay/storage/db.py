@@ -17,7 +17,7 @@ from ..config import Config
 from ..verification import Verifier
 from ..auth import get_authenticator, Action
 from ..errors import StorageError, AuthenticationError
-from ..util import call_from_path, catchtime, Periodic
+from ..util import object_from_path, call_from_path, catchtime, Periodic
 from . import get_metadata
 
 
@@ -55,8 +55,8 @@ class DBStorage(BaseStorage):
         self.db = None
         self.garbage_collector_task = None
         self.is_postgres = 'postgresql' in self.db_url
-        self._my_token = secrets.token_hex(4)
         self.log = logging.getLogger(__name__)
+        self.subscription_class = object_from_path(self.options.pop('subscription_class', 'nostr_relay.storage.db.Subscription'))
 
         # limit the amount of concurrent inserts/selects
         self.add_slot = asyncio.Semaphore(int(self.options.pop('num_concurrent_adds', 4)))
@@ -313,22 +313,27 @@ class DBStorage(BaseStorage):
                     )
                 )
             await self.process_tags(conn, event)
-            # if self.is_postgres:
-            #     await conn.execute(sa.text(f"NOTIFY addevent, '{self._my_token}:{event.id}'"))
 
     async def run_single_query(self, query_filters):
         """
         Run a single query, yielding json events
         """
         queue = asyncio.Queue()
-        sub = Subscription(self.db, '', query_filters, queue=queue, default_limit=600000, log=self.log)
+        sub = self.subscription_class(self, '', query_filters, queue=queue, default_limit=600000)
         sub.prepare()
-        await sub.run_query(self.query_slot)
-        while True:
-            _, event = await queue.get()
-            if event is None:
-                break
+        async for event in self.run_query(sub.query):
             yield event
+
+    async def run_query(self, query):
+        self.log.debug(query)
+        try:
+            async with self.query_slot:
+                async with self.db.connect() as conn:
+                    async with conn.stream(query) as result:
+                        async for row in result:
+                            yield Event.from_tuple(row)
+        except Exception:
+            self.log.exception("subscription")
 
     async def subscribe(self, client_id, sub_id, filters, queue, auth_token=None, **kwargs):
         self.log.debug('%s/%s filters: %s', client_id, sub_id, filters)
@@ -337,21 +342,19 @@ class DBStorage(BaseStorage):
 
         if Config.subscription_limit and len(self.clients[client_id]) == Config.subscription_limit:
             raise StorageError("rejected: too many subscriptions")
-        sub = Subscription(
-                self.db,
+        sub = self.subscription_class(
+                self,
                 sub_id,
                 filters,
                 queue=queue,
                 client_id=client_id,
-                is_postgres=self.is_postgres,
-                log=self.log,
                 **kwargs
         )
         if sub.prepare():
             if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
                 raise AuthenticationError("restricted: permission denied")
 
-            asyncio.create_task(sub.run_query(self.query_slot))
+            asyncio.create_task(sub.run_query())
             self.clients[client_id][sub_id] = sub
             self.log.debug("%s/%s +", client_id, sub_id)
 
@@ -461,16 +464,16 @@ class DBStorage(BaseStorage):
 
 
 class Subscription:
-    def __init__(self, db, sub_id, filters:list, queue=None, client_id=None, default_limit=6000, is_postgres=False, log=None):
-        self.db  = db
+    def __init__(self, storage, sub_id, filters:list, queue=None, client_id=None, default_limit=6000, log=None, **kwargs):
+        self.storage  = storage
         self.sub_id = sub_id
         self.client_id = client_id
         self.filters = filters
         self.queue = queue
         self.query_task = None
         self.default_limit = default_limit
-        self.is_postgres = is_postgres
-        self.log = log
+        self.is_postgres = storage.is_postgres
+        self.log = log or storage.log
         self.long_query_threshold = 1000
 
     def prepare(self):
@@ -485,38 +488,25 @@ class Subscription:
         if self.query_task:
             self.query_task.cancel()
 
-    async def run_query(self, query_slot: asyncio.Semaphore):
+    async def run_query(self):
 
-        query = self.query
-        self.log.debug(query)
         sub_id = self.sub_id
         queue = self.queue
-        try:
-            count = 0
-            async with query_slot:
-                with catchtime() as t:
-                    query = sa.text(query)
-                    async with self.db.connect() as conn:
-                        async with conn.stream(query) as result:
-                            async for row in result:
-                                event = Event.from_tuple(row)
-                                await queue.put((sub_id, event))
-                                count += 1
-                    await queue.put((sub_id, None))
+        count = 0
+        with catchtime() as t:
+            async for event in self.storage.run_query(self.query):
+                await queue.put((sub_id, event))
+                count += 1
+            await queue.put((sub_id, None))
 
-            duration = t()
-            self.log.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
-            if duration > self.long_query_threshold:
-                logging.getLogger("nostr_relay.long-queries").warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
+        duration = t()
+        self.log.info('%s/%s query – events:%s duration:%dms', self.client_id, self.sub_id, count, duration)
+        if duration > self.long_query_threshold:
+            logging.getLogger("nostr_relay.long-queries").warning("%s/%s Long query: '%s' took %dms", self.client_id, self.sub_id, rapidjson.dumps(self.filters), duration)
 
-        except Exception:
-            self.log.exception("subscription")
 
     async def notify(self, event):
         # every time an event is added, all subscribers are notified.
-        # this could have a performance penalty since everyone will retry their queries
-        # at the same time. but overall, this may be a worthwhile optimization to reduce
-        # idle load
 
         with catchtime() as t:
             matched = self.check_event(event, self.filters)
@@ -525,7 +515,7 @@ class Subscription:
         if matched:
             await self.queue.put((self.sub_id, event))
 
-    def check_event(self, event, filters):
+    def check_event(self, event: Event, filters: list):
         for filter_obj in filters:
             if not filter_obj:
                 continue
@@ -618,8 +608,6 @@ class Subscription:
             elif key == 'since':
                 if value:
                     subwhere.append('created_at >= %d' % int(value))
-                else:
-                    raise ValueError("since")
             elif key == 'until':
                 if value:
                     subwhere.append('created_at < %d' % int(value))
@@ -671,7 +659,7 @@ class Subscription:
             ORDER BY created_at DESC
             LIMIT {limit}
         '''
-        return select, new_filters
+        return sa.text(select), new_filters
 
 
 class BaseGarbageCollector(Periodic):
