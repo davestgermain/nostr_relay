@@ -76,7 +76,7 @@ async def query(ctx, query, results):
     query = rapidjson.loads(query)
     queue = asyncio.Queue()
     async with get_storage() as storage:
-        sub = Subscription(storage.db, 'cli', query, queue=queue, default_limit=60000, log=storage.log, is_postgres=storage.is_postgres)
+        sub = Subscription(storage, 'cli', query, queue=queue, default_limit=60000)
         sub.prepare()
         click.echo(click.style('Query:', bold=True))
         click.echo(click.style(sub.query, fg="green"))
