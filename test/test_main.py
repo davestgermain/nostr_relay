@@ -152,7 +152,7 @@ class DBTests(BaseTestsWithStorage):
             await self.storage.add_event(evt)
 
         queue = asyncio.Queue()
-        sub = await self.storage.subscribe('test', 'test', [{'kinds': [1]}], queue)
+        sub = await self.storage.subscribe('test', 'test', [{'kinds': [1], "limit": 100}], queue)
         stats = await self.storage.get_stats()
         assert stats['total'] == 3
         assert stats['active_subscriptions'] == 1
@@ -252,6 +252,11 @@ class MainTests(APITests):
         data = result.json
         assert data == EVENTS[0]
 
+        result = await self.conductor.simulate_get(f'/e/{EVENTS[1]["id"]}')
+        assert result.status_code == 404
+        result = await self.conductor.simulate_get('/e/{}')
+        assert result.status_code == 404
+
     async def test_get_meta(self):
         doc = {
             'contact': 5678,
@@ -278,6 +283,32 @@ class MainTests(APITests):
         result = await self.conductor.simulate_get('/', headers={'Accept': 'application/nostr+json'})
 
         assert result.json == doc
+
+    async def test_get_idp(self):
+        """
+        Test the /.well-known/nostr.json endpoint
+        """
+        result = await self.conductor.simulate_get('/.well-known/nostr.json')
+        data = result.json
+        assert data == {'names': {}, 'relays': {}}
+        await self.storage.set_identified_pubkey('test@falconframework.org', '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d', relays='ws://localhost:6969')
+        await self.storage.set_identified_pubkey('foo@falconframework.org', '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d')
+
+        result = await self.conductor.simulate_get('/.well-known/nostr.json')
+        assert result.json == {
+            'names': {
+                'test': '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d',
+                'foo': '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d'
+            },
+            'relays': {
+                '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d': 'ws://localhost:6969'
+            }
+        }
+        result = await self.conductor.simulate_get('/.well-known/nostr.json?name=foo')
+        assert result.json == {'names': {'foo': '8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d'}, 'relays': {}}
+
+        result = await self.conductor.simulate_get('/.well-known/nostr.json?name=bar')
+        assert result.json == {'names': {}, 'relays': {}}
 
     async def test_get_index(self):
         result = await self.conductor.simulate_get('/')
