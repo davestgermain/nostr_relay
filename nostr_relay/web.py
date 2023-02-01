@@ -73,6 +73,9 @@ class Client:
             challenge = storage.authenticator.get_challenge(remote_addr)
             self.log.debug("Sent challenge %s to %s", challenge, client_id)
             await ws.send_media(["AUTH", challenge])
+            throttle = storage.authenticator.throttle_unauthenticated
+        else:
+            throttle = 0
 
         while ws.ready:
             try:
@@ -92,7 +95,11 @@ class Client:
                         response = ["NOTICE", "rate-limited"]
                     await ws.send_media(response)
                     continue
+
                 if command == 'REQ':
+                    if throttle:
+                        await asyncio.sleep(throttle)
+
                     sub_id = str(message[1])
                     if self.send_task is None:
                         self.send_task = asyncio.create_task(self.send_subscriptions())
@@ -102,6 +109,9 @@ class Client:
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
                 elif command == 'EVENT':
+                    if throttle:
+                        await asyncio.sleep(throttle)
+
                     try:
                         event, result = await storage.add_event(message[1], auth_token=self.auth_token)
                     except Exception as e:
@@ -116,6 +126,7 @@ class Client:
                     await ws.send_media(['OK', eventid, result, reason])
                 elif command == 'AUTH' and storage.authenticator.is_enabled:
                     self.auth_token = await storage.authenticator.authenticate(message[1], challenge=challenge)
+                    throttle = 0
             except StorageError as e:
                 self.log.warning("storage error: %s for %s", e, client_id)
                 await ws.send_media(["NOTICE", str(e)])
@@ -142,7 +153,7 @@ class Client:
                 pass
 
     def __str__(self):
-        return self.id
+        return f"{self.auth_token.get('pubkey', 'anon')}@{self.id}"
 
 
 class BaseResource:
@@ -219,7 +230,7 @@ class NostrAPI(BaseResource):
             await self.storage.unsubscribe(client.id)
             self.rate_limiter.cleanup()
             duration = time() - start
-            self.log.info('Done {}. Sent: {:,} Bytes. Duration: {:.0f} Seconds'.format(client, client.sent, duration))
+            self.log.info('Done %s. Sent: %d Bytes. Duration: %d Seconds', client, client.sent, duration)
 
 
 class NostrStats(BaseResource):

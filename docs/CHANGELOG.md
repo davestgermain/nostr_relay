@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.7
+
+* Add option to throttle unauthenticated connections `throttle_unauthenticated`
+
 ## 1.6
 
 * Improved scalability by controlling the number of concurrent requests. Default configuration should easily handle 1,000 clients

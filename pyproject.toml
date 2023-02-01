@@ -4,4 +4,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--cov=nostr_relay --cov-report html"
+addopts = "--cov=nostr_relay --cov-report html -n auto"
