@@ -42,7 +42,7 @@ class Authenticator:
     def __init__(self, storage, options):
         self.default_roles = set(Role.anonymous.value)
         self.storage = storage
-        self.actions, self.valid_urls, self.is_enabled = self.parse_options(options)
+        self.actions, self.valid_urls, self.is_enabled, self.throttle_unauthenticated = self.parse_options(options)
         self.log = logging.getLogger('nostr_relay.auth')
         if self.is_enabled:
             self.log.info("Authentication enabled for %s", self.valid_urls)
@@ -57,7 +57,8 @@ class Authenticator:
                 roles = roles.value
             actions[action] = set(roles)
         enabled = options.get('enabled', False)
-        return actions, valid_urls, enabled
+        throttle_unauthenticated = float(options.get('throttle_unauthenticated', 0.0))
+        return actions, valid_urls, enabled, throttle_unauthenticated
 
     def get_challenge(self, remote_addr):
         """
@@ -128,7 +129,10 @@ class Authenticator:
         Assign roles to the given public key
         """
         async with self.storage.db.begin() as conn:
-            await conn.execute(sa.insert(AuthTable).values(pubkey=pubkey, roles=roles, created=datetime.now()))
+            try:
+                await conn.execute(sa.insert(AuthTable).values(pubkey=pubkey, roles=roles, created=datetime.now()))
+            except sa.exc.IntegrityError:
+                await conn.execute(sa.update(AuthTable).where(AuthTable.c.pubkey == pubkey).values(roles=roles))
 
     async def authenticate(self, auth_event_json: dict, challenge: str=''):
         """
