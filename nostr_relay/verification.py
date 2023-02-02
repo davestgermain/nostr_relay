@@ -65,7 +65,7 @@ class Verifier(Periodic):
         except Exception:
             self.log.exception("bad metadata")
         else:
-            identifier = meta.get('nip05', '').lower()
+            identifier = meta.get('nip05', '').lower().strip()
             self.log.debug("Found identifier %s in event %s", identifier, event)
             if '@' in identifier:
                 # queue this identifier as a candidate

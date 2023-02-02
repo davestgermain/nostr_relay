@@ -3,6 +3,9 @@
 ## 1.7
 
 * Add option to throttle unauthenticated connections `throttle_unauthenticated`
+* Storage refactoring
+* Enforce charset for NIP-05 ids
+* Improve test coverage
 
 ## 1.6
 

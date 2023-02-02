@@ -154,7 +154,11 @@ async def reverify(ctx):
             async for event in storage.run_single_query([{'kinds': [0]}]):
                 meta = loads(event.content)
                 if 'nip05' in meta:
-                    await storage.verifier.verify(cursor, event)
+                    try:
+                        await storage.verifier.verify(cursor, event)
+                    except Exception as e:
+                        print(e)
+                        continue
                     count += 1
 
         click.echo("Found %d events" % count)
