@@ -215,7 +215,9 @@ class Verifier(Periodic):
 
                 try:
                     async with session.get(url) as response:
-                        data = await response.json(loads=rapidjson.loads)
+                        # content_type=None will not check for the correct content-type
+                        # lots of nostr.json files seem to be served with wrong types
+                        data = await response.json(loads=rapidjson.loads, content_type=None)
                     names = data['names']
                     assert isinstance(names, dict)
                 except Exception:
