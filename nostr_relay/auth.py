@@ -42,7 +42,7 @@ class Authenticator:
     def __init__(self, storage, options):
         self.default_roles = set(Role.anonymous.value)
         self.storage = storage
-        self.actions, self.valid_urls, self.is_enabled, self.throttle_unauthenticated = self.parse_options(options)
+        self.actions, self.valid_urls, self.is_enabled, self.throttle_roles = self.parse_options(options)
         self.log = logging.getLogger('nostr_relay.auth')
         if self.is_enabled:
             self.log.info("Authentication enabled for %s", self.valid_urls)
@@ -56,9 +56,9 @@ class Authenticator:
             if isinstance(roles, Role):
                 roles = roles.value
             actions[action] = set(roles)
+        throttle_roles = options.get('throttle', {})
         enabled = options.get('enabled', False)
-        throttle_unauthenticated = float(options.get('throttle_unauthenticated', 0.0))
-        return actions, valid_urls, enabled, throttle_unauthenticated
+        return actions, valid_urls, enabled, throttle_roles
 
     def get_challenge(self, remote_addr):
         """
@@ -165,6 +165,16 @@ class Authenticator:
                 if can_do and target:
                     can_do = await self.evaluate_target(auth_token, action, target)
         return can_do
+
+    async def should_throttle(self, auth_token: dict):
+        """
+        Return whether the client should be throttled, based on the configuration in `throttle`
+        """
+        if not auth_token:
+            throttle_amount = self.throttle_roles.get('unauthenticated', 0)
+        else:
+            throttle_amount = max(self.throttle_roles.get(role, 0) for role in auth_token.get('roles', []))
+        return throttle_amount
 
 
 def get_authenticator(storage, configuration: dict):

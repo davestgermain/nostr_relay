@@ -531,14 +531,15 @@ class MainTests(APITests):
 
 class AuthTests(APITests):
     async def asyncSetUp(self):
-        Config.authentication = {"enabled": True, "actions": {"save": "w", "query": "r"}}
+        Config.authentication = {"enabled": True, "actions": {"save": "w", "query": "r"}, "throttle": {"unauthenticated": 1, "t": 5.0}}
         await super().asyncSetUp()
         self.readonly = ('f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753', '5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d', 'r')
         self.writeonly = ('e93505f081570221255f05341f4fbaeaf682d59d2e2472d7dd02d566f6372178', '647bf6e686fde33dfbfd4f3d987bc13b1c202f952b70dc3539d8d85172b40561', 'w')
         self.readwrite = ('9679a595bdb5fe4330a263c96201eac204dfe24b2e2dc36ac12698faf9275130', '1bd80e4430c40a6fa9f59582124b5a6fbc1815e26455801e6b1edf113554de03', 'rw')
         self.unknown = ('94cdca784fd5a951cc1a4672e86847f957f29b35b7ac9476bc891d68e5b68b34', 'a0f1e845b43508847d10cb7ac7928cd9dafc9b82d0b3c4c08b264e177b4355de', 's')
+        self.throttled = ('79612c2c2eae6f89d4884b6a518ca386c87f94e0ec9f417148afc201ddee6d38', 'eb669db891c0a506ec3d5314c724d1684f36332533643c83f79f8ea22c059d99', 'tw')
 
-        for _, pubkey, role in (self.readonly, self.writeonly, self.readwrite, self.unknown):
+        for _, pubkey, role in (self.readonly, self.writeonly, self.readwrite, self.unknown, self.throttled):
             await self.storage.authenticator.set_roles(pubkey, role)
 
     async def asyncTearDown(self):
@@ -639,6 +640,32 @@ class AuthTests(APITests):
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
             data = await ws.receive_json()
             assert data == ['NOTICE', 'restricted: permission denied']
+
+    async def test_user_throttling(self):
+        """
+        Test the user throttling code
+        """
+        async with self.conductor.simulate_ws("/") as ws:
+            challenge = await self.get_challenge(ws)
+
+            # unauthenticated throttled 1 second
+            with self.assertRaises(asyncio.TimeoutError):
+                async with asyncio.timeout(0.5):
+                    response = await self.send_event(ws, EVENTS[2], True)
+            await ws.receive_json()
+    
+            # throttled user set to 10 seconds
+            await ws.send_json(["AUTH", self.make_auth_event(self.throttled[0], self.throttled[1], challenge=challenge)])
+            with self.assertRaises(asyncio.TimeoutError):
+                async with asyncio.timeout(2.0):
+                    response = await self.send_event(ws, EVENTS[2], True)
+            await ws.receive_json()
+
+            # ordinary user is not throttled
+            await ws.send_json(["AUTH", self.make_auth_event(self.readwrite[0], self.readwrite[1], challenge=challenge)])
+            async with asyncio.timeout(0.5):
+                response = await self.send_event(ws, EVENTS[2], True)
+
 
 
 if __name__ == "__main__":

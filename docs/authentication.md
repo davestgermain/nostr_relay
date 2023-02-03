@@ -47,6 +47,35 @@ To get roles:
 
 `nostr-relay -c /your/config/file.yaml role get -p <public_key>`
 
+## User Throttling
+
+You can slow down certain classes of users, based on their role. For instance, to slow down all unauthenticated users for 10 seconds every time they issue an EVENT or REQ:
+
+```
+authentication:
+  valid_urls: 
+    - wss://my.relay.url
+  enabled: true
+  throttle:
+    unauthenticated: 10.0
+```
+
+
+Here's a more complete example, with different roles:
+
+```
+authentication:
+  valid_urls: 
+    - wss://my.relay.url
+  enabled: true
+  throttle:
+    unauthenticated: 10.0
+    a: 1.5
+    t: 5.0
+```
+
+Anyone with the "t" role will be throttled for 5 seconds, while authenticated (but unknown) users will be throttled for 1.5 seconds.
+
 ## Extending Authentication
 
 To implement custom authentication or roles, create your own class somewhere with these methods:
@@ -62,6 +91,13 @@ and
 This should return True/False if the auth token can perform the action.
 
 Currently, `target` can be an event or a subscription object.
+
+and 
+
+`async def should_throttle(auth_token)`
+
+This should return a float number of seconds.
+
 
 Then, in your configuration:
 

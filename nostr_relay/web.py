@@ -73,7 +73,7 @@ class Client:
             challenge = storage.authenticator.get_challenge(remote_addr)
             self.log.debug("Sent challenge %s to %s", challenge, client_id)
             await ws.send_media(["AUTH", challenge])
-            throttle = storage.authenticator.throttle_unauthenticated
+            throttle = await storage.authenticator.should_throttle(self.auth_token)
         else:
             throttle = 0
 
@@ -83,6 +83,8 @@ class Client:
                     message = await ws.receive_media()
 
                 if not self.validate_message(message):
+                    if throttle:
+                        await asyncio.sleep(throttle)
                     continue
 
                 self.log.debug("RECEIVED: %s", message)
@@ -126,7 +128,7 @@ class Client:
                     await ws.send_media(['OK', eventid, result, reason])
                 elif command == 'AUTH' and storage.authenticator.is_enabled:
                     self.auth_token = await storage.authenticator.authenticate(message[1], challenge=challenge)
-                    throttle = 0
+                    throttle = await storage.authenticator.should_throttle(self.auth_token)
             except StorageError as e:
                 self.log.warning("storage error: %s for %s", e, client_id)
                 await ws.send_media(["NOTICE", str(e)])

@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.7.1
+
+* Add ability to throttle users based on role. See [Authentication](authentication.md)
+* Made some optimizations which increase event add throughput 15%
+
 ## 1.7
 
 * Add option to throttle unauthenticated connections `throttle_unauthenticated`
