@@ -1,8 +1,10 @@
 import asyncio
 import click
 from functools import wraps
-from .web import run_with_gunicorn
 from .config import Config
+
+import uvloop
+uvloop.install()
 
 
 def async_cmd(func):
@@ -29,6 +31,7 @@ def serve(ctx):
     """
     import os.path
     from alembic import config
+    from .web import run_with_gunicorn
     alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
     config.main([f'-c{alembic_config_file}', 'upgrade', 'head'])
 

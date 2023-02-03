@@ -339,7 +339,6 @@ def run_with_gunicorn(conf_file=None):
     Run the app using gunicorn's ASGIApplication
     """
     app = create_app(conf_file)
-    
     from gunicorn.app.base import Application
 
     class ASGIApplication(Application):
@@ -354,6 +353,9 @@ def run_with_gunicorn(conf_file=None):
                 self.cfg.set(k.lower(), v)
 
         def load(self):
+            # this ensures that the unnecessary MessageLoggerMiddleware isn't added
+            from uvicorn.config import logger
+            logger.setLevel(logging.WARNING)
             return app
 
     ASGIApplication().run()

@@ -64,3 +64,20 @@ class Periodic:
         while self.running:
             await self.wait_function()
             await self.run_once()
+
+
+@contextmanager
+def easy_profiler():
+    import cProfile, pstats, io
+    from pstats import SortKey
+    pr = cProfile.Profile()
+    pr.enable()
+    yield
+    pr.disable()
+    s = io.StringIO()
+    sortby = SortKey.CUMULATIVE
+    ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+    # ps.print_stats("nostr_relay")
+    ps.print_stats()
+    print(s.getvalue())
+

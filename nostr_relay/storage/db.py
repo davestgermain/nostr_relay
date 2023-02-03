@@ -183,7 +183,7 @@ class DBStorage(BaseStorage):
 
     async def notify_other_processes(self, event):
         if self.notifier:
-            await self.notifier.notify(event)
+            asyncio.create_task(self.notifier.notify(event))
 
     def notify_all_connected(self, event):
         # notify all subscriptions
@@ -217,11 +217,6 @@ class DBStorage(BaseStorage):
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
-        result = await conn.execute(sa.select(self.EventTable.c.id).where(self.EventTable.c.id == event.id_bytes))
-        row = result.first()
-        if row:
-            # duplicate
-            return False
         # check NIP05 verification, if enabled
         await self.verifier.verify(conn, event)
 

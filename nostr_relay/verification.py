@@ -57,6 +57,11 @@ class Verifier(Periodic):
         self.should_verify = options.get('nip05_verification', '') in ('enabled', 'passive')
         if self.should_verify:
             self.log = logging.getLogger(__name__)
+            self.verification_query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, Verification.c.failed_at, EventTable.c.created_at).select_from(
+                sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
+            ).where(
+                sa.text('events.pubkey = :pubkey')
+            )
 
     async def update_metadata(self, cursor, event):
         # metadata events are evaluated as candidates
@@ -105,13 +110,7 @@ class Verifier(Periodic):
             else:
                 return True
 
-        query = sa.select(Verification.c.id, Verification.c.identifier, Verification.c.verified_at, Verification.c.failed_at, EventTable.c.created_at).select_from(
-                sa.join(Verification, self.storage.EventTable, Verification.c.metadata_id == self.storage.EventTable.c.id, isouter=True)
-            ).where(
-                (self.storage.EventTable.c.pubkey == bytes.fromhex(event.pubkey))
-            )
-
-        result = await conn.execute(query)
+        result = await conn.execute(self.verification_query, parameters={'pubkey': bytes.fromhex(event.pubkey)})
         row = result.fetchone()
 
         if not row:
