@@ -99,7 +99,6 @@ class DBStorage(BaseStorage):
 
         self.authenticator = get_authenticator(self, Config.get('authentication', {}))
 
-        self.verifier = Verifier(self, Config.get('verification', {}))
         self.db = create_async_engine(
             self.db_url,
             json_deserializer=rapidjson.loads,
@@ -109,8 +108,6 @@ class DBStorage(BaseStorage):
         self.log.info("Connected to %s", self.db.url)
         self.loop = asyncio.get_running_loop()
 
-        self.garbage_collector_task = start_garbage_collector(self.db)
-        await self.verifier.start(self.db)
 
         metadata = get_metadata()
         self.EventTable = metadata.tables['events']
@@ -131,6 +128,10 @@ class DBStorage(BaseStorage):
             self.notifier.start()
         else:
             self.notifier = None
+
+        self.garbage_collector_task = start_garbage_collector(self.db)
+        self.verifier = Verifier(self, Config.get('verification', {}))
+        await self.verifier.start(self.db)
         self.log.debug("done setting up")
 
     async def get_event(self, event_id):
