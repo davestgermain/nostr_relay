@@ -3,7 +3,7 @@ import importlib
 from contextlib import contextmanager, asynccontextmanager, suppress
 from time import perf_counter
 
-if hasattr(asyncio, 'timeout'):
+if hasattr(asyncio, "timeout"):
     timeout = asyncio.timeout
 else:
     # python < 3.11 does not have asyncio.timeout
@@ -20,7 +20,7 @@ def catchtime() -> float:
 
 
 def object_from_path(path):
-    module_name, callable_name = path.rsplit('.', 1)
+    module_name, callable_name = path.rsplit(".", 1)
     module = importlib.import_module(module_name)
     func = getattr(module, callable_name)
     return func
@@ -38,6 +38,7 @@ class Periodic:
     """
     A periodic async task
     """
+
     def __init__(self, interval):
         self.interval = interval
         self.running = False
@@ -70,6 +71,7 @@ class Periodic:
 def easy_profiler():
     import cProfile, pstats, io
     from pstats import SortKey
+
     pr = cProfile.Profile()
     pr.enable()
     yield
@@ -80,4 +82,3 @@ def easy_profiler():
     # ps.print_stats("nostr_relay")
     ps.print_stats()
     print(s.getvalue())
-

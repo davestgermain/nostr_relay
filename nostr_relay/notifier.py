@@ -13,7 +13,7 @@ class NotifyServer:
         self.log = logging.getLogger("nostr_relay.notify:server")
 
     async def handle_notify(self, reader, writer):
-        addr = writer.get_extra_info('peername')
+        addr = writer.get_extra_info("peername")
         self.log.debug(addr)
         self.connections[addr] = writer
 
@@ -21,7 +21,11 @@ class NotifyServer:
             data = await reader.read(32)
             if not data:
                 break
-            self.log.debug("Broadcasting %s to %s connections", data.hex(), len(self.connections) - 1)
+            self.log.debug(
+                "Broadcasting %s to %s connections",
+                data.hex(),
+                len(self.connections) - 1,
+            )
 
             for peer in self.connections.values():
                 if peer != writer:
@@ -31,7 +35,9 @@ class NotifyServer:
 
     async def run(self):
         try:
-            server = await asyncio.start_server(self.handle_notify, '127.0.0.1', self.port)
+            server = await asyncio.start_server(
+                self.handle_notify, "127.0.0.1", self.port
+            )
         except OSError:
             self.log.debug("could not start")
             return
@@ -44,7 +50,7 @@ class NotifyServer:
 
 
 class NotifyClient:
-    def __init__(self, storage, port=6000, address='127.0.0.1'):
+    def __init__(self, storage, port=6000, address="127.0.0.1"):
         self.storage = storage
         self.writer = None
         self.port = port
@@ -73,4 +79,3 @@ class NotifyClient:
 
     def start(self):
         return asyncio.create_task(self.connect())
-

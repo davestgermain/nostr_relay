@@ -20,7 +20,7 @@ class Client:
     def __init__(self, ws, req, rate_limiter=None, log=None, timeout=1800):
         self.ws = ws
         self.remote_addr = req.remote_addr
-        self.id = f'{req.remote_addr}-{secrets.token_hex(2)}'
+        self.id = f"{req.remote_addr}-{secrets.token_hex(2)}"
         self.log = log
         self.log.info(f'Accepted {self.id} from Origin: {req.get_header("origin")}')
         self.running = True
@@ -36,7 +36,7 @@ class Client:
             return False
         if len(message) < 2:
             return False
-        if message[0] not in ('EVENT', 'REQ', 'CLOSE', 'AUTH'):
+        if message[0] not in ("EVENT", "REQ", "CLOSE", "AUTH"):
             return False
         return True
 
@@ -57,7 +57,11 @@ class Client:
                 await ws.send_text(message)
                 self.log.debug("SENT: %s", message)
                 self.sent += len(message)
-            except (falcon.WebSocketDisconnected, ConnectionClosedError, ConnectionClosedOK):
+            except (
+                falcon.WebSocketDisconnected,
+                ConnectionClosedError,
+                ConnectionClosedOK,
+            ):
                 break
             except asyncio.CancelledError:
                 break
@@ -90,15 +94,22 @@ class Client:
                 self.log.debug("RECEIVED: %s", message)
                 command = message[0]
 
-                if self.rate_limiter and self.rate_limiter.is_limited(remote_addr, message):
-                    if command == 'EVENT':
-                        response = ["OK", message[1]["id"], False, 'rate-limited: slow down']
+                if self.rate_limiter and self.rate_limiter.is_limited(
+                    remote_addr, message
+                ):
+                    if command == "EVENT":
+                        response = [
+                            "OK",
+                            message[1]["id"],
+                            False,
+                            "rate-limited: slow down",
+                        ]
                     else:
                         response = ["NOTICE", "rate-limited"]
                     await ws.send_media(response)
                     continue
 
-                if command == 'REQ':
+                if command == "REQ":
                     if throttle:
                         await asyncio.sleep(throttle)
 
@@ -106,29 +117,43 @@ class Client:
                     if self.send_task is None:
                         self.send_task = asyncio.create_task(self.send_subscriptions())
                         await asyncio.sleep(0)
-                    await storage.subscribe(client_id, sub_id, message[2:], self.subscription_queue, auth_token=self.auth_token)
-                elif command == 'CLOSE':
+                    await storage.subscribe(
+                        client_id,
+                        sub_id,
+                        message[2:],
+                        self.subscription_queue,
+                        auth_token=self.auth_token,
+                    )
+                elif command == "CLOSE":
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
-                elif command == 'EVENT':
+                elif command == "EVENT":
                     if throttle:
                         await asyncio.sleep(throttle)
 
                     try:
-                        event, result = await storage.add_event(message[1], auth_token=self.auth_token)
+                        event, result = await storage.add_event(
+                            message[1], auth_token=self.auth_token
+                        )
                     except Exception as e:
                         self.log.error(str(e))
                         result = False
                         reason = str(e)
-                        eventid = ''
+                        eventid = ""
                     else:
                         eventid = event.id
-                        reason = '' if result else 'duplicate: exists'
-                        self.log.info("%s added %s from %s", client_id, event.id, event.pubkey)
-                    await ws.send_media(['OK', eventid, result, reason])
-                elif command == 'AUTH' and storage.authenticator.is_enabled:
-                    self.auth_token = await storage.authenticator.authenticate(message[1], challenge=challenge)
-                    throttle = await storage.authenticator.should_throttle(self.auth_token)
+                        reason = "" if result else "duplicate: exists"
+                        self.log.info(
+                            "%s added %s from %s", client_id, event.id, event.pubkey
+                        )
+                    await ws.send_media(["OK", eventid, result, reason])
+                elif command == "AUTH" and storage.authenticator.is_enabled:
+                    self.auth_token = await storage.authenticator.authenticate(
+                        message[1], challenge=challenge
+                    )
+                    throttle = await storage.authenticator.should_throttle(
+                        self.auth_token
+                    )
             except StorageError as e:
                 self.log.warning("storage error: %s for %s", e, client_id)
                 await ws.send_media(["NOTICE", str(e)])
@@ -168,43 +193,46 @@ class NostrAPI(BaseResource):
     """
     Handles nostr websocket interface
     """
+
     def __init__(self, storage, rate_limiter=None):
         super().__init__(storage)
         self.rate_limiter = rate_limiter
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
-        if req.accept == 'application/nostr+json':
+        if req.accept == "application/nostr+json":
             supported_nips = [1, 2, 5, 9, 11, 12, 15, 20, 26, 33, 40]
-            if Config.authentication.get('enabled'):
+            if Config.authentication.get("enabled"):
                 supported_nips.append(42)
             metadata = {
-                'name': Config.relay_name,
-                'description': Config.relay_description,
-                'pubkey': Config.sysop_pubkey,
-                'contact': Config.sysop_contact,
-                'supported_nips': supported_nips,
-                'software': 'https://code.pobblelabs.org/fossil/nostr_relay',
-                'version': __version__,
+                "name": Config.relay_name,
+                "description": Config.relay_description,
+                "pubkey": Config.sysop_pubkey,
+                "contact": Config.sysop_contact,
+                "supported_nips": supported_nips,
+                "software": "https://code.pobblelabs.org/fossil/nostr_relay",
+                "version": __version__,
             }
             resp.media = metadata
         elif Config.redirect_homepage:
             raise falcon.HTTPFound(Config.redirect_homepage)
         else:
-            resp.text = 'try using a nostr client :-)'
-        resp.append_header('Access-Control-Allow-Origin', '*')
-        resp.append_header('Access-Control-Allow-Headers', '*')
-        resp.append_header('Access-Control-Allow-Methods', '*')
+            resp.text = "try using a nostr client :-)"
+        resp.append_header("Access-Control-Allow-Origin", "*")
+        resp.append_header("Access-Control-Allow-Headers", "*")
+        resp.append_header("Access-Control-Allow-Methods", "*")
 
     async def on_websocket(self, req: falcon.Request, ws: falcon.asgi.WebSocket):
         if Config.origin_blacklist:
-            origin = str(req.get_header('origin')).lower()
+            origin = str(req.get_header("origin")).lower()
             if origin in Config.origin_blacklist:
                 self.log.warning("Blocked origin %s from connecting", origin)
                 await ws.close(code=1008)
                 return
 
         try:
-            if self.rate_limiter and self.rate_limiter.is_limited(req.remote_addr, ['ACCEPT']):
+            if self.rate_limiter and self.rate_limiter.is_limited(
+                req.remote_addr, ["ACCEPT"]
+            ):
                 await ws.close(code=1013)
                 self.log.warning("rate-limited ACCEPT %s", req.remote_addr)
                 return
@@ -219,7 +247,7 @@ class NostrAPI(BaseResource):
             req,
             rate_limiter=self.rate_limiter,
             log=self.log,
-            timeout=Config.get('message_timeout', 1800)
+            timeout=Config.get("message_timeout", 1800),
         )
 
         try:
@@ -232,7 +260,12 @@ class NostrAPI(BaseResource):
             await self.storage.unsubscribe(client.id)
             self.rate_limiter.cleanup()
             duration = time() - start
-            self.log.info('Done %s. Sent: %d Bytes. Duration: %d Seconds', client, client.sent, duration)
+            self.log.info(
+                "Done %s. Sent: %d Bytes. Duration: %d Seconds",
+                client,
+                client.sent,
+                duration,
+            )
 
 
 class NostrStats(BaseResource):
@@ -240,7 +273,7 @@ class NostrStats(BaseResource):
         try:
             resp.media = await self.storage.get_stats()
         except:
-            self.log.exception('stats')
+            self.log.exception("stats")
 
 
 class ViewEventResource(BaseResource):
@@ -250,7 +283,7 @@ class ViewEventResource(BaseResource):
         except ValueError:
             raise falcon.HTTPNotFound
         except Exception:
-            self.log.exception('get-event')
+            self.log.exception("get-event")
         if event:
             resp.media = event.to_json_object()
         else:
@@ -261,21 +294,24 @@ class NostrIDP(BaseResource):
     """
     Serve /.well-known/nostr.json
     """
+
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
-        name = req.params.get('name', '')
+        name = req.params.get("name", "")
         domain = req.host
         if name:
-            identifier = f'{name}@{domain}'
+            identifier = f"{name}@{domain}"
         else:
-            identifier = ''
+            identifier = ""
         try:
-            resp.media = await self.storage.get_identified_pubkey(identifier, domain=domain)
+            resp.media = await self.storage.get_identified_pubkey(
+                identifier, domain=domain
+            )
         except Exception:
-            self.log.exception('idp')
+            self.log.exception("idp")
         # needed for web clients
-        resp.append_header('Access-Control-Allow-Origin', '*')
-        resp.append_header('Access-Control-Allow-Headers', '*')
-        resp.append_header('Access-Control-Allow-Methods', '*')
+        resp.append_header("Access-Control-Allow-Origin", "*")
+        resp.append_header("Access-Control-Allow-Headers", "*")
+        resp.append_header("Access-Control-Allow-Methods", "*")
 
 
 class SetupMiddleware:
@@ -287,6 +323,7 @@ class SetupMiddleware:
             asyncio.get_running_loop().set_debug(True)
         if Config.should_run_notifier:
             from .notifier import NotifyServer
+
             notify_server = NotifyServer()
             notify_server.start()
         await self.storage.setup()
@@ -294,7 +331,6 @@ class SetupMiddleware:
     async def process_shutdown(self, scope, event):
         await self.storage.optimize()
         await self.storage.close()
-
 
 
 def create_app(conf_file=None, storage=None):
@@ -310,29 +346,30 @@ def create_app(conf_file=None, storage=None):
     if Config.logging:
         logging.config.dictConfig(Config.logging)
     else:
-        logging.basicConfig(format='%(asctime)s %(name)s %(levelname)s %(message)s', level=logging.DEBUG if Config.DEBUG else logging.INFO)
+        logging.basicConfig(
+            format="%(asctime)s %(name)s %(levelname)s %(message)s",
+            level=logging.DEBUG if Config.DEBUG else logging.INFO,
+        )
 
     from .storage import get_storage
+
     store = storage or get_storage()
 
     rate_limiter = get_rate_limiter(Config)
 
     json_handler = media.JSONHandlerWS(
-        dumps=partial(
-            rapidjson.dumps,
-            ensure_ascii=False
-        ),
+        dumps=partial(rapidjson.dumps, ensure_ascii=False),
         loads=rapidjson.loads,
     )
 
     logging.info("Starting version %s", __version__)
     app = falcon.asgi.App(middleware=SetupMiddleware(store))
-    app.add_route('/', NostrAPI(store, rate_limiter=rate_limiter))
-    app.add_route('/stats/', NostrStats(store))
-    app.add_route('/e/{event_id}', ViewEventResource(store))
-    app.add_route('/.well-known/nostr.json', NostrIDP(store))
+    app.add_route("/", NostrAPI(store, rate_limiter=rate_limiter))
+    app.add_route("/stats/", NostrStats(store))
+    app.add_route("/e/{event_id}", ViewEventResource(store))
+    app.add_route("/.well-known/nostr.json", NostrIDP(store))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
-    
+
     return app
 
 
@@ -346,17 +383,19 @@ def run_with_gunicorn(conf_file=None):
     class ASGIApplication(Application):
         def load_config(self):
             import sys
-            if sys.implementation.name == 'pypy':
-                worker_class = 'uvicorn.workers.UvicornH11Worker'
+
+            if sys.implementation.name == "pypy":
+                worker_class = "uvicorn.workers.UvicornH11Worker"
             else:
-                worker_class = 'uvicorn.workers.UvicornWorker'
-            self.cfg.set('worker_class', worker_class)
+                worker_class = "uvicorn.workers.UvicornWorker"
+            self.cfg.set("worker_class", worker_class)
             for k, v in Config.gunicorn.items():
                 self.cfg.set(k.lower(), v)
 
         def load(self):
             # this ensures that the unnecessary MessageLoggerMiddleware isn't added
             from uvicorn.config import logger
+
             logger.setLevel(logging.WARNING)
             return app
 
@@ -373,11 +412,11 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
     app = create_app(conf_file)
 
     options = dict(Config.gunicorn)
-    if 'bind' in options:
-        bind = options.pop('bind')
-        options['port'] = int(bind.split(':')[1])
-    if 'loglevel' in options:
-        options['log_level'] = options.pop('loglevel')
+    if "bind" in options:
+        bind = options.pop("bind")
+        options["port"] = int(bind.split(":")[1])
+    if "loglevel" in options:
+        options["log_level"] = options.pop("loglevel")
 
     uv_config = uvicorn.Config(app, **options)
     server = uvicorn.Server(uv_config)
@@ -389,6 +428,3 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
         thr.start()
     else:
         server.run()
-
-
-

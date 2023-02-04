@@ -25,6 +25,7 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 from nostr_relay.storage import get_metadata
 from nostr_relay import auth, verification
+
 target_metadata = get_metadata()
 
 # other values from the config, defined by the needs of env.py,
@@ -73,7 +74,7 @@ async def run_migrations_online() -> None:
     """
     connectable = AsyncEngine(
         engine_from_config(
-            Config.get('storage', {}),
+            Config.get("storage", {}),
             prefix="sqlalchemy.",
             poolclass=pool.NullPool,
             future=True,
