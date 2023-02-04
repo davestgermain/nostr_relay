@@ -76,7 +76,7 @@ async def run_migrations_online() -> None:
         engine_from_config(
             Config.get("storage", {}),
             prefix="sqlalchemy.",
-            poolclass=pool.NullPool,
+            poolclass=pool.QueuePool,
             future=True,
         )
     )
