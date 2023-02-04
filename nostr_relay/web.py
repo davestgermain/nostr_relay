@@ -17,6 +17,20 @@ from .errors import AuthenticationError, StorageError
 
 
 class Client:
+    __slots__ = (
+        "ws",
+        "remote_addr",
+        "log",
+        "id",
+        "running",
+        "subscription_queue",
+        "send_task",
+        "rate_limiter",
+        "timeout",
+        "auth_token",
+        "sent",
+    )
+
     def __init__(self, ws, req, rate_limiter=None, log=None, timeout=1800):
         self.ws = ws
         self.remote_addr = req.remote_addr
@@ -414,7 +428,7 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
     options = dict(Config.gunicorn)
     if "bind" in options:
         bind = options.pop("bind")
-        options["port"] = int(bind.split(":")[1])
+        options["port"] = int(bind.rsplit(":", 1)[1])
     if "loglevel" in options:
         options["log_level"] = options.pop("loglevel")
 

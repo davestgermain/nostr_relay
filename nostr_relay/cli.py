@@ -3,9 +3,12 @@ import click
 from functools import wraps
 from .config import Config
 
-import uvloop
+try:
+    import uvloop
 
-uvloop.install()
+    uvloop.install()
+except ImportError:
+    pass
 
 
 def async_cmd(func):

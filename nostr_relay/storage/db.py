@@ -69,14 +69,6 @@ class DBStorage(BaseStorage):
             )
         )
 
-        # limit the amount of concurrent inserts/selects
-        self.add_slot = asyncio.Semaphore(
-            int(self.options.pop("num_concurrent_adds", 4))
-        )
-        self.query_slot = asyncio.Semaphore(
-            int(self.options.pop("num_concurrent_reqs", 10))
-        )
-
         if not self.is_postgres:
             # add event listener to set appropriate PRAGMA items
             sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
@@ -111,6 +103,14 @@ class DBStorage(BaseStorage):
 
     async def setup(self):
         from sqlalchemy.ext.asyncio import create_async_engine
+
+        # limit the amount of concurrent inserts/selects
+        self.add_slot = asyncio.Semaphore(
+            int(self.options.pop("num_concurrent_adds", 4))
+        )
+        self.query_slot = asyncio.Semaphore(
+            int(self.options.pop("num_concurrent_reqs", 10))
+        )
 
         self.authenticator = get_authenticator(self, Config.get("authentication", {}))
 
@@ -405,7 +405,7 @@ class DBStorage(BaseStorage):
             if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
                 raise AuthenticationError("restricted: permission denied")
 
-            asyncio.create_task(sub.run_query())
+            sub.start()
             self.clients[client_id][sub_id] = sub
             self.log.debug("%s/%s +", client_id, sub_id)
 
@@ -537,6 +537,20 @@ class DBStorage(BaseStorage):
 
 
 class Subscription:
+    __slots__ = (
+        "storage",
+        "sub_id",
+        "client_id",
+        "filters",
+        "query",
+        "queue",
+        "query_task",
+        "default_limit",
+        "is_postgres",
+        "log",
+        "long_query_threshold",
+    )
+
     def __init__(
         self,
         storage,
@@ -570,6 +584,9 @@ class Subscription:
     def cancel(self):
         if self.query_task:
             self.query_task.cancel()
+
+    def start(self):
+        self.query_task = asyncio.create_task(self.run_query())
 
     async def run_query(self):
         sub_id = self.sub_id
