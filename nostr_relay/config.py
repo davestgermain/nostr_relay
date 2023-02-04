@@ -12,7 +12,9 @@ class ConfigClass:
     def __init__(self):
         self.authentication = {}
         self.gunicorn = {}
-        self.storage = {"sqlalchemy.url": "sqlite+aiosqlite:///:memory:"}
+        self.storage = {
+            "sqlalchemy.url": "sqlite+aiosqlite:///:memory:",
+        }
         self.verification = {
             "nip05_verification": "disabled",
             "blacklist": None,

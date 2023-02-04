@@ -55,7 +55,7 @@ class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
         evt = Event(
             kind=kind,
             pubkey=pubkey,
-            created_at=created_at or time.time(),
+            created_at=int(created_at or time.time()),
             tags=tags or [],
             **kwargs
         )

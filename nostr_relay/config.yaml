@@ -11,6 +11,10 @@ storage:
   num_concurrent_reqs: 10
   # the number of concurrent event saves. (sqlite can only support 1 writer at a time)
   num_concurrent_adds: 2
+  validators:
+    - nostr_relay.validators.is_not_too_large
+    - nostr_relay.validators.is_signed
+    - nostr_relay.validators.is_recent
 
 verification:
   # options are disabled, passive, enabled

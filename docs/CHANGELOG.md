@@ -1,10 +1,11 @@
 # CHANGES
 
-## 1.7.1
+## 1.8
 
-* Add ability to throttle users based on role. See [Authentication](authentication.md)
+* Added configurable validators. See [Storage](storage.md)
+* Added ability to throttle users based on role. See [Authentication](authentication.md)
 * Made some optimizations which increase event add throughput 15%
-* Improve memory usage by using `__slots__`
+* Improved memory usage by using `__slots__`
 
 ## 1.7
 

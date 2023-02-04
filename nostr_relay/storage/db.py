@@ -54,24 +54,42 @@ class BaseStorage:
 
 class DBStorage(BaseStorage):
     def __init__(self, options):
-        self.options = options.copy()
-        self.db_url = self.options.pop(
-            "sqlalchemy.url", "sqlite+aiosqlite:///nostr.sqlite3"
+        self.options, self.sqlalchemy_options = self.parse_options(options)
+        self.subscription_class = self.options["subscription_class"]
+        self.validate_event = self.options["validator_function"]
+        self.db_url = self.sqlalchemy_options.pop(
+            "url", "sqlite+aiosqlite:///nostr.sqlite3"
         )
+        self.is_postgres = "postgresql" in self.db_url
+
         self.clients = collections.defaultdict(dict)
         self.db = None
         self.garbage_collector_task = None
-        self.is_postgres = "postgresql" in self.db_url
         self.log = logging.getLogger(__name__)
-        self.subscription_class = object_from_path(
-            self.options.pop(
-                "subscription_class", "nostr_relay.storage.db.Subscription"
-            )
-        )
 
         if not self.is_postgres:
             # add event listener to set appropriate PRAGMA items
             sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
+
+    def parse_options(self, options):
+        from nostr_relay.validators import get_validator
+
+        sqlalchemy_options = {}
+        storage_options = {
+            "validators": ["nostr_relay.validators.is_signed"],
+            "subscription_class": Subscription,
+        }
+        for key, value in options.items():
+            if key.startswith("sqlalchemy."):
+                sqlalchemy_options[key.replace("sqlalchemy.", "")] = value
+            elif key == "subscription_class":
+                storage_options["subscription_class"] = object_from_path(value)
+            else:
+                storage_options[key] = value
+        storage_options["validator_function"] = get_validator(
+            storage_options.pop("validators")
+        )
+        return storage_options, sqlalchemy_options
 
     def _set_sqlite_pragma(self, dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
@@ -119,7 +137,7 @@ class DBStorage(BaseStorage):
             json_deserializer=rapidjson.loads,
             json_serializer=rapidjson.dumps,
             pool_pre_ping=True,
-            **self.options,
+            **self.sqlalchemy_options,
         )
         self.log.info("Connected to %s", self.db.url)
         self.loop = asyncio.get_running_loop()
@@ -182,7 +200,7 @@ class DBStorage(BaseStorage):
             self.log.error("bad json")
             raise StorageError("invalid: Bad JSON")
 
-        await self.loop.run_in_executor(None, self.validate_event, event)
+        await self.validate_event(event, Config)
         # check authentication
         if not await self.authenticator.can_do(auth_token, Action.save.value, event):
             raise AuthenticationError("restricted: permission denied")
@@ -228,26 +246,6 @@ class DBStorage(BaseStorage):
                 t.duration * 1000,
                 t.count,
             )
-
-    def validate_event(self, event):
-        """
-        Validate basic format and signature
-        """
-        if Config.max_event_size and len(event.content) > Config.max_event_size:
-            self.log.error(
-                "Received large event %s from %s size:%d max_size:%d",
-                event.id,
-                event.pubkey,
-                len(event.content),
-                Config.max_event_size,
-            )
-            raise StorageError("invalid: 280 characters should be enough for anybody")
-        if not event.verify():
-            raise StorageError("invalid: Bad signature")
-        if (time() - event.created_at) > Config.oldest_event:
-            raise StorageError(f"invalid: {event.created_at} is too old")
-        elif (time() - event.created_at) < -3600:
-            raise StorageError(f"invalid: {event.created_at} is in the future")
 
     async def pre_save(self, conn, event):
         """
@@ -687,9 +685,9 @@ class Subscription:
                     matched.add(event.id in value)
                 elif key == "authors":
                     matched.add(event.pubkey in value)
-                    for tag in event.tags:
-                        if tag[0] == "delegation" and tag[1] in value:
-                            matched.add(True)
+                    has_delegation, match = event.has_tag("delegation", value)
+                    if match:
+                        matched.add(True)
                 elif key == "kinds":
                     matched.add(event.kind in value)
                 elif key == "since":
@@ -697,13 +695,7 @@ class Subscription:
                 elif key == "until":
                     matched.add(event.created_at < value)
                 elif key[0] == "#" and len(key) == 2:
-                    found = False
-                    for tag in event.tags:
-                        if tag[0] == key[1]:
-                            matched.add(tag[1] in value)
-                            found = True
-                    if not found:
-                        matched.add(False)
+                    matched.add(all(event.has_tag(key[1], value)))
                 elif key == "limit":
                     # limit is irrelevant for broadcasts
                     continue

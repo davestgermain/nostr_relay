@@ -137,7 +137,11 @@ class DBTests(BaseTestsWithStorage):
 
     async def test_replaceable_event(self):
         evt1 = self.make_event(
-            PK1, kind=11111, content="event 1", tags=[["e", "1234"], ["foo", "bar"]]
+            PK1,
+            kind=11111,
+            content="event 1",
+            tags=[["e", "1234"], ["foo", "bar"]],
+            created_at=time.time() - 100,
         )
         event, changed = await self.storage.add_event(evt1)
         assert event.id == evt1["id"]
@@ -301,7 +305,11 @@ class DBTests(BaseTestsWithStorage):
         Test that parameterized replaceable events work
         """
         replace_event = self.make_event(
-            PK1, kind=31000, tags=[["d", "replace1"]], content="first"
+            PK1,
+            kind=31000,
+            tags=[["d", "replace1"]],
+            content="first",
+            created_at=time.time() - 10,
         )
         await self.storage.add_event(replace_event)
         # similar event won't replace
@@ -317,18 +325,26 @@ class DBTests(BaseTestsWithStorage):
         assert await self.storage.get_event(replaced["id"])
 
         # empty d-tag
-        empty_dtag = self.make_event(PK1, kind=31000, tags=[["d"]], content="empty")
+        empty_dtag = self.make_event(
+            PK1, kind=31000, tags=[["d"]], content="empty", created_at=time.time() - 5
+        )
         await self.storage.add_event(empty_dtag)
         assert await self.storage.get_event(replaced["id"])
 
-        empty_2 = self.make_event(PK1, kind=31000, tags=[], content="empty 2")
+        empty_2 = self.make_event(
+            PK1, kind=31000, tags=[], content="empty 2", created_at=time.time() - 4
+        )
         await self.storage.add_event(empty_2)
         assert not await self.storage.get_event(empty_dtag["id"])
 
         # no tag
-        no_tag = self.make_event(PK1, kind=32000, tags=[], content="empty")
+        no_tag = self.make_event(
+            PK1, kind=32000, tags=[], content="empty", created_at=time.time() - 3
+        )
         await self.storage.add_event(no_tag)
-        d_tag = self.make_event(PK1, kind=32000, tags=[["d"]], content="dtag")
+        d_tag = self.make_event(
+            PK1, kind=32000, tags=[["d"]], content="dtag", created_at=time.time() - 2
+        )
         await self.storage.add_event(d_tag)
 
         assert not await self.storage.get_event(no_tag["id"])

@@ -2,6 +2,10 @@ DEBUG: false
 
 storage:
   sqlalchemy.url: 'sqlite+aiosqlite:///:memory:'
+  validators:
+    - nostr_relay.validators.is_not_too_large
+    - nostr_relay.validators.is_signed
+    - nostr_relay.validators.is_recent
 
 relay_name: test relay
 relay_description: test relay description
