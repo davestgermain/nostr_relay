@@ -208,7 +208,7 @@ class Verifier(Periodic):
                     )
                 )
 
-                async with self.db.begin() as cursor:
+                async with self.db.connect() as cursor:
                     try:
                         results = await cursor.stream(query)
                         async for row in results:

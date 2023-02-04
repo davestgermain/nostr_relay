@@ -13,10 +13,23 @@ else:
         yield
 
 
-@contextmanager
-def catchtime() -> float:
-    start = perf_counter()
-    yield lambda: (perf_counter() - start) * 1000
+class catchtime:
+    __slots__ = ("start", "count", "duration")
+
+    def __enter__(self):
+        self.start = perf_counter()
+        self.count = 0
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.duration = perf_counter() - self.start
+
+    def __add__(self, value):
+        self.count += value
+        return self
+
+    def throughput(self):
+        return self.count / self.duration
 
 
 def object_from_path(path):

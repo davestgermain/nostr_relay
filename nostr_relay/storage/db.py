@@ -117,6 +117,7 @@ class DBStorage(BaseStorage):
         self.db = create_async_engine(
             self.db_url,
             json_deserializer=rapidjson.loads,
+            json_serializer=rapidjson.dumps,
             pool_pre_ping=True,
             **self.options,
         )
@@ -159,15 +160,16 @@ class DBStorage(BaseStorage):
         """
         Shortcut for retrieving an event by id
         """
-        async with self.db.connect() as conn:
-            result = await conn.execute(
-                sa.select(self.EventTable).where(
-                    self.EventTable.c.id == bytes.fromhex(event_id)
+        async with self.query_slot:
+            async with self.db.connect() as conn:
+                result = await conn.execute(
+                    sa.select(self.EventTable).where(
+                        self.EventTable.c.id == bytes.fromhex(event_id)
+                    )
                 )
-            )
-            row = result.first()
-            if row:
-                return Event.from_tuple(row)
+                row = result.first()
+        if row:
+            return Event.from_tuple(row)
 
     async def add_event(self, event_json, auth_token=None):
         """
@@ -215,14 +217,17 @@ class DBStorage(BaseStorage):
 
     def notify_all_connected(self, event):
         # notify all subscriptions
-        count = 0
         with catchtime() as t:
             for client in self.clients.values():
                 for sub in client.values():
                     asyncio.create_task(sub.notify(event))
-                    count += 1
-        if count:
-            self.log.debug("notify-all took %.2fms for %d subscriptions", t(), count)
+                    t += 1
+        if t.count:
+            self.log.debug(
+                "notify-all took %.2fms for %d subscriptions",
+                t.duration * 1000,
+                t.count,
+            )
 
     def validate_event(self, event):
         """
@@ -431,7 +436,7 @@ class DBStorage(BaseStorage):
 
     async def get_stats(self):
         stats = {"total": 0}
-        async with self.db.begin() as conn:
+        async with self.db.connect() as conn:
             result = await conn.stream(
                 sa.text(
                     "SELECT kind, COUNT(*) FROM events GROUP BY kind order by 2 DESC"
@@ -497,12 +502,13 @@ class DBStorage(BaseStorage):
             query = query.where(self.IdentTable.c.identifier == identifier)
         data = {"names": {}, "relays": {}}
         self.log.debug("Getting identity for %s %s", identifier, domain)
-        async with self.db.begin() as conn:
-            result = await conn.stream(query)
-            async for pubkey, identifier, relays in result:
-                data["names"][identifier.split("@")[0]] = pubkey
-                if relays:
-                    data["relays"][pubkey] = relays
+        async with self.query_slot:
+            async with self.db.connect() as conn:
+                result = await conn.stream(query)
+                async for pubkey, identifier, relays in result:
+                    data["names"][identifier.split("@")[0]] = pubkey
+                    if relays:
+                        data["relays"][pubkey] = relays
 
         return data
 
@@ -549,6 +555,7 @@ class Subscription:
         "is_postgres",
         "log",
         "long_query_threshold",
+        "filter_code",
     )
 
     def __init__(
@@ -591,19 +598,18 @@ class Subscription:
     async def run_query(self):
         sub_id = self.sub_id
         queue = self.queue
-        count = 0
         with catchtime() as t:
             async for event in self.storage.run_query(self.query):
                 await queue.put((sub_id, event))
-                count += 1
+                t += 1
             await queue.put((sub_id, None))
 
-        duration = t()
+        duration = t.duration * 1000
         self.log.info(
-            "%s/%s query – events:%s duration:%dms",
+            "%s/%s query – throughput:%.2f/sec duration:%dms",
             self.client_id,
             self.sub_id,
-            count,
+            t.throughput(),
             duration,
         )
         if duration > self.long_query_threshold:
@@ -620,17 +626,56 @@ class Subscription:
 
         with catchtime() as t:
             matched = self.check_event(event, self.filters)
-        duration = t()
+
         self.log.debug(
             "%s/%s notify match %s %s duration:%.2fms",
             self.client_id,
             self.sub_id,
             event.id,
             matched,
-            duration,
+            t.duration * 1000,
         )
         if matched:
             await self.queue.put((self.sub_id, event))
+
+    def compile_filters(self, filters):
+        filter_string = []
+        for filter_obj in filters:
+            if not filter_obj:
+                continue
+            filter_clauses = set()
+            for key, value in filter_obj.items():
+                if key == "ids":
+                    filter_clauses.add("(event.id in %r)" % value)
+                elif key == "authors":
+                    filter_clauses.add(
+                        "(event.pubkey in %r or has_tag('delegation', %r))"
+                        % (value, value)
+                    )
+                elif key == "kinds":
+                    filter_clauses.add("(event.kind in %r)" % value)
+                elif key == "since":
+                    filter_clauses.add("(event.created_at >= %r)" % value)
+                elif key == "until":
+                    filter_clauses.add("(event.created_at < %r)" % value)
+                elif key[0] == "#" and len(key) == 2:
+                    filter_clauses.add("has_tag(%r, %r)" % (key[1], value))
+            filter_string.append(" and ".join(filter_clauses))
+        full_string = "(" + ") or (".join(filter_string) + ")"
+        self.log.info("compiled %s", full_string)
+        return compile(full_string, "<none>", "eval")
+
+    def check_event_eval(self, event):
+        def has_tag(key, value):
+            found = False
+            for tag in event.tags:
+                if tag[0] == key:
+                    found = tag[1] in value
+                    if found:
+                        break
+            return found
+
+        return eval(self.filter_code, {"event": event, "has_tag": has_tag})
 
     def check_event(self, event: Event, filters: list):
         for filter_obj in filters:

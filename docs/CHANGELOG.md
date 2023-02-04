@@ -4,6 +4,7 @@
 
 * Add ability to throttle users based on role. See [Authentication](authentication.md)
 * Made some optimizations which increase event add throughput 15%
+* Improve memory usage by using `__slots__`
 
 ## 1.7
 
