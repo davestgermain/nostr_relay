@@ -1,5 +1,9 @@
 import asyncio
 import importlib
+import statistics
+import collections
+import logging
+
 from contextlib import contextmanager, asynccontextmanager, suppress
 from time import perf_counter
 
@@ -78,6 +82,46 @@ class Periodic:
         while self.running:
             await self.wait_function()
             await self.run_once()
+
+
+class StatsCollector(Periodic):
+    def __init__(self, interval):
+        super().__init__(interval)
+        self.stats = collections.defaultdict(lambda: collections.deque(maxlen=1000))
+        self.counts = collections.defaultdict(int)
+        self.log = logging.getLogger("nostr_relay.stats")
+        self.iteration = 0
+
+    @contextmanager
+    def timeit(self, statname):
+        start = perf_counter()
+        counter = {"count": 0}
+        yield counter
+        duration = perf_counter() - start
+        counter["duration"] = duration
+        if counter["count"]:
+            self.add(statname, duration)
+
+    def add(self, stat, timing):
+        self.stats[stat].append(timing)
+        self.counts[stat] += 1
+
+    async def run_once(self):
+        self.iteration += 1
+
+        try:
+            for stat, values in self.stats.items():
+                if values:
+                    median = statistics.median(values) * 1000
+                    # avg = statistics.fmean(values) * 1000
+                    p90 = statistics.quantiles(values, n=10)[-1] * 1000
+                    count = self.counts[stat]
+                    self.log.info(
+                        "Stats for %(stat)-8s median: %(median)6.2fms  p90: %(p90)6.2fms  count:%(count)8d",
+                        locals(),
+                    )
+        except:
+            self.log.exception("stats")
 
 
 @contextmanager

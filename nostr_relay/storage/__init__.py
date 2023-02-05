@@ -71,7 +71,12 @@ def get_metadata():
         sa.Index("createdidx", EventTable.c.created_at)
         sa.Index("kindidx", EventTable.c.kind),
         sa.Index("pubkeyidx", EventTable.c.pubkey)
-        sa.Index("kindcreatedpubkeyidx", EventTable.c.created_at, EventTable.c.kind, EventTable.c.pubkey)
+        sa.Index(
+            "kindcreatedpubkeyidx",
+            EventTable.c.created_at,
+            EventTable.c.kind,
+            EventTable.c.pubkey,
+        )
 
         TagTable = sa.Table(
             "tags",

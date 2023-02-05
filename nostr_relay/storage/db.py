@@ -17,7 +17,7 @@ from ..config import Config
 from ..verification import Verifier
 from ..auth import get_authenticator, Action
 from ..errors import StorageError, AuthenticationError
-from ..util import object_from_path, call_from_path, catchtime, Periodic
+from ..util import object_from_path, call_from_path, catchtime, Periodic, StatsCollector
 from . import get_metadata
 
 
@@ -169,6 +169,8 @@ class DBStorage(BaseStorage):
         else:
             self.notifier = None
 
+        self.stat_collector = StatsCollector(self.options.get('stats_interval', 60.0))
+        await self.stat_collector.start()
         self.garbage_collector_task = start_garbage_collector(self.db)
         self.verifier = Verifier(self, Config.get("verification", {}))
         await self.verifier.start(self.db)
@@ -206,23 +208,25 @@ class DBStorage(BaseStorage):
             raise AuthenticationError("restricted: permission denied")
 
         changed = False
-        async with self.add_slot:
-            async with self.db.begin() as conn:
-                do_save = await self.pre_save(conn, event)
-                if do_save:
-                    result = await conn.execute(
-                        self.event_insert_query.values(
-                            id=event.id_bytes,
-                            created_at=event.created_at,
-                            pubkey=bytes.fromhex(event.pubkey),
-                            sig=bytes.fromhex(event.sig),
-                            content=event.content,
-                            kind=event.kind,
-                            tags=event.tags,
+        with self.stat_collector.timeit("insert") as counter:
+            async with self.add_slot:
+                async with self.db.begin() as conn:
+                    do_save = await self.pre_save(conn, event)
+                    if do_save:
+                        result = await conn.execute(
+                            self.event_insert_query.values(
+                                id=event.id_bytes,
+                                created_at=event.created_at,
+                                pubkey=bytes.fromhex(event.pubkey),
+                                sig=bytes.fromhex(event.sig),
+                                content=event.content,
+                                kind=event.kind,
+                                tags=event.tags,
+                            )
                         )
-                    )
-                    changed = result.rowcount == 1
-                    await self.post_save(conn, event, changed)
+                        changed = result.rowcount == 1
+                        await self.post_save(conn, event, changed)
+            counter["count"] += 1
         if changed:
             self.notify_all_connected(event)
             # notify other processes
@@ -235,17 +239,11 @@ class DBStorage(BaseStorage):
 
     def notify_all_connected(self, event):
         # notify all subscriptions
-        with catchtime() as t:
+        with self.stat_collector.timeit("notify") as counter:
             for client in self.clients.values():
                 for sub in client.values():
                     asyncio.create_task(sub.notify(event))
-                    t += 1
-        if t.count:
-            self.log.debug(
-                "notify-all took %.2fms for %d subscriptions",
-                t.duration * 1000,
-                t.count,
-            )
+                    counter["count"] += 1
 
     async def pre_save(self, conn, event):
         """
@@ -378,14 +376,19 @@ class DBStorage(BaseStorage):
         async for event in self.run_query(sub.query):
             yield event
 
-    async def run_query(self, query):
+    async def run_query(self, query, if_long=None):
         self.log.debug(query)
         try:
-            async with self.query_slot:
-                async with self.db.connect() as conn:
-                    async with conn.stream(query) as result:
-                        async for row in result:
-                            yield Event.from_tuple(row)
+            with self.stat_collector.timeit("query") as counter:
+                async with self.query_slot:
+                    async with self.db.connect() as conn:
+                        async with conn.stream(query) as result:
+                            async for row in result:
+                                yield Event.from_tuple(row)
+                                counter["count"] += 1
+            duration = counter["duration"]
+            if duration > 1.0 and if_long:
+                if_long(duration)
         except Exception:
             self.log.exception("subscription")
 
@@ -596,28 +599,17 @@ class Subscription:
     async def run_query(self):
         sub_id = self.sub_id
         queue = self.queue
-        with catchtime() as t:
-            async for event in self.storage.run_query(self.query):
-                await queue.put((sub_id, event))
-                t += 1
-            await queue.put((sub_id, None))
-
-        duration = t.duration * 1000
-        self.log.info(
-            "%s/%s query – throughput:%.2f/sec duration:%dms",
-            self.client_id,
-            self.sub_id,
-            t.throughput(),
-            duration,
-        )
-        if duration > self.long_query_threshold:
-            logging.getLogger("nostr_relay.long-queries").warning(
-                "%s/%s Long query: '%s' took %dms",
-                self.client_id,
-                self.sub_id,
-                rapidjson.dumps(self.filters),
+        async for event in self.storage.run_query(
+            self.query,
+            if_long=lambda duration: logging.getLogger(
+                "nostr_relay.long-queries"
+            ).warning(
+                f"{self.client_id}/{self.sub_id} Long query: '{self.filters}' took %dms",
                 duration,
-            )
+            ),
+        ):
+            await queue.put((sub_id, event))
+        await queue.put((sub_id, None))
 
     async def notify(self, event):
         # every time an event is added, all subscribers are notified.
