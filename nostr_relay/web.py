@@ -2,7 +2,7 @@ import asyncio
 import logging
 import secrets
 import falcon
-import rapidjson
+
 from time import time
 from falcon import media
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
@@ -12,7 +12,7 @@ import falcon.asgi
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
-from .util import timeout
+from .util import timeout, json
 from .errors import AuthenticationError, StorageError
 
 
@@ -176,7 +176,7 @@ class Client:
                 await ws.send_media(["NOTICE", str(e)])
             except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
-            except rapidjson.JSONDecodeError:
+            except json.JSONDecodeError:
                 self.log.debug("json decoding")
                 continue
             except asyncio.TimeoutError:
@@ -372,8 +372,8 @@ def create_app(conf_file=None, storage=None):
     rate_limiter = get_rate_limiter(Config)
 
     json_handler = media.JSONHandlerWS(
-        dumps=partial(rapidjson.dumps, ensure_ascii=False),
-        loads=rapidjson.loads,
+        dumps=partial(json.dumps, ensure_ascii=False),
+        loads=json.loads,
     )
 
     logging.info("Starting version %s", __version__)

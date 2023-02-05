@@ -1,5 +1,5 @@
 import time
-import rapidjson
+import json
 import os.path
 import asyncio
 from types import SimpleNamespace
@@ -35,7 +35,7 @@ class VerificationTests(BaseTestsWithStorage):
             meta["nip05"] = identifier
 
         event = self.make_event(
-            privkey, content=rapidjson.dumps(meta), kind=0, as_dict=False
+            privkey, content=json.dumps(meta), kind=0, as_dict=False
         )
         return event
 

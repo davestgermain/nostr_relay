@@ -38,8 +38,9 @@ def serve(ctx):
     from alembic import config
     from .web import run_with_gunicorn
 
-    alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
-    config.main([f"-c{alembic_config_file}", "upgrade", "head"])
+    if Config.storage.get('class', 'nostr_relay.storage.db.DBStorage') == 'nostr_relay.storage.db.DBStorage':
+        alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
+        config.main([f"-c{alembic_config_file}", "upgrade", "head"])
 
     run_with_gunicorn()
 
@@ -68,7 +69,7 @@ async def adduser(ctx, identifier="", pubkey="", relay=None):
 
 
 @main.command()
-@click.option("--query", "-q", help="Query", prompt="Enter REQ filters")
+@click.option("--query", "-q", help="Query")
 @click.option("--results/--no-results", default=True)
 @click.pass_context
 @async_cmd
@@ -76,7 +77,7 @@ async def query(ctx, query, results):
     """
     Run a REQ query and display results
     """
-    import rapidjson
+    import json
     from .storage import get_storage
     from .storage.db import Subscription
 
@@ -86,10 +87,12 @@ async def query(ctx, query, results):
     query = query.strip()
     if not query.startswith("["):
         query = f"[{query}]"
-    query = rapidjson.loads(query)
+    query = json.loads(query)
     queue = asyncio.Queue()
     async with get_storage() as storage:
-        sub = Subscription(storage, "cli", query, queue=queue, default_limit=60000)
+        sub = storage.subscription_class(
+            storage, "cli", query, queue=queue, default_limit=60000
+        )
         sub.prepare()
         click.echo(click.style("Query:", bold=True))
         click.echo(click.style(sub.query, fg="green"))
@@ -102,9 +105,7 @@ async def query(ctx, query, results):
             sub, event = await queue.get()
             if event:
                 click.echo(
-                    click.style(
-                        rapidjson.dumps(event.to_json_object(), indent=4), fg="red"
-                    )
+                    click.style(json.dumps(event.to_json_object(), indent=4), fg="red")
                 )
                 click.echo("")
             else:
@@ -144,11 +145,12 @@ async def update_tags(ctx, query):
     Update the tags in the tag table, from a REQ query
     """
     from .storage import get_storage
+    from .util import json
 
     if not query:
         query = '[{"since": 1}]'
 
-    query = rapidjson.loads(query)
+    query = json.loads(query)
 
     async with get_storage() as storage:
         count = 0
@@ -168,13 +170,13 @@ async def reverify(ctx):
     Reverify all NIP-05 metadata events
     """
     from .storage import get_storage
-    from rapidjson import loads
+    from .util import json
 
     async with get_storage() as storage:
         count = 0
         async with storage.db.begin() as cursor:
             async for event in storage.run_single_query([{"kinds": [0]}]):
-                meta = loads(event.content)
+                meta = json.loads(event.content)
                 if "nip05" in meta:
                     try:
                         await storage.verifier.verify(cursor, event)
@@ -226,7 +228,9 @@ async def load(ctx, filename):
     else:
         fileobj = sys.stdin
     import collections
-    from rapidjson import loads
+    from .util import json
+
+    loads = json.loads
 
     Config.authentication["enabled"] = False
     # this will reverify profiles but not reject unverified events
@@ -241,7 +245,8 @@ async def load(ctx, filename):
     kinds = collections.defaultdict(int)
     count = 0
     async with get_storage() as storage:
-        await storage.verifier.stop()
+        if hasattr(storage, "verifier"):
+            await storage.verifier.stop()
         while fileobj:
             line = fileobj.readline()
             if not line:

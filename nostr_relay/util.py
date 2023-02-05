@@ -7,6 +7,12 @@ import logging
 from contextlib import contextmanager, asynccontextmanager, suppress
 from time import perf_counter
 
+try:
+    import rapidjson as json
+except ImportError:
+    import json
+
+
 if hasattr(asyncio, "timeout"):
     timeout = asyncio.timeout
 else:

@@ -1,6 +1,5 @@
 import unittest
 import time
-import rapidjson
 import os.path
 import asyncio
 

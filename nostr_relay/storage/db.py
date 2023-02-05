@@ -8,7 +8,6 @@ import threading
 
 from time import time
 
-import rapidjson
 import sqlalchemy as sa
 from sqlalchemy.engine.base import Engine
 
@@ -17,7 +16,14 @@ from ..config import Config
 from ..verification import Verifier
 from ..auth import get_authenticator, Action
 from ..errors import StorageError, AuthenticationError
-from ..util import object_from_path, call_from_path, catchtime, Periodic, StatsCollector
+from ..util import (
+    object_from_path,
+    call_from_path,
+    catchtime,
+    Periodic,
+    StatsCollector,
+    json,
+)
 from . import get_metadata
 
 
@@ -134,13 +140,12 @@ class DBStorage(BaseStorage):
 
         self.db = create_async_engine(
             self.db_url,
-            json_deserializer=rapidjson.loads,
-            json_serializer=rapidjson.dumps,
+            json_deserializer=json.loads,
+            json_serializer=json.dumps,
             pool_pre_ping=True,
             **self.sqlalchemy_options,
         )
         self.log.info("Connected to %s", self.db.url)
-        self.loop = asyncio.get_running_loop()
 
         metadata = get_metadata()
         self.EventTable = metadata.tables["events"]
@@ -169,7 +174,7 @@ class DBStorage(BaseStorage):
         else:
             self.notifier = None
 
-        self.stat_collector = StatsCollector(self.options.get('stats_interval', 60.0))
+        self.stat_collector = StatsCollector(self.options.get("stats_interval", 60.0))
         await self.stat_collector.start()
         self.garbage_collector_task = start_garbage_collector(self.db)
         self.verifier = Verifier(self, Config.get("verification", {}))
@@ -524,7 +529,7 @@ class DBStorage(BaseStorage):
             elif not (validate_id(pubkey) and len(pubkey) == 64):
                 raise StorageError("invalid public key")
             else:
-                pars = [identifier, pubkey, rapidjson.dumps(relays or [])]
+                pars = [identifier, pubkey, json.dumps(relays or [])]
                 await conn.execute(
                     sa.delete(self.IdentTable).where(
                         self.IdentTable.c.identifier == identifier
@@ -627,45 +632,6 @@ class Subscription:
         )
         if matched:
             await self.queue.put((self.sub_id, event))
-
-    def compile_filters(self, filters):
-        filter_string = []
-        for filter_obj in filters:
-            if not filter_obj:
-                continue
-            filter_clauses = set()
-            for key, value in filter_obj.items():
-                if key == "ids":
-                    filter_clauses.add("(event.id in %r)" % value)
-                elif key == "authors":
-                    filter_clauses.add(
-                        "(event.pubkey in %r or has_tag('delegation', %r))"
-                        % (value, value)
-                    )
-                elif key == "kinds":
-                    filter_clauses.add("(event.kind in %r)" % value)
-                elif key == "since":
-                    filter_clauses.add("(event.created_at >= %r)" % value)
-                elif key == "until":
-                    filter_clauses.add("(event.created_at < %r)" % value)
-                elif key[0] == "#" and len(key) == 2:
-                    filter_clauses.add("has_tag(%r, %r)" % (key[1], value))
-            filter_string.append(" and ".join(filter_clauses))
-        full_string = "(" + ") or (".join(filter_string) + ")"
-        self.log.info("compiled %s", full_string)
-        return compile(full_string, "<none>", "eval")
-
-    def check_event_eval(self, event):
-        def has_tag(key, value):
-            found = False
-            for tag in event.tags:
-                if tag[0] == key:
-                    found = tag[1] in value
-                    if found:
-                        break
-            return found
-
-        return eval(self.filter_code, {"event": event, "has_tag": has_tag})
 
     def check_event(self, event: Event, filters: list):
         for filter_obj in filters:

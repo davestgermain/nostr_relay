@@ -9,7 +9,11 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from aionostr.event import Event
-from rapidjson import loads, dumps
+
+try:
+    from rapidjson import loads, dumps
+except ImportError:
+    from json import loads, dumps
 
 
 # revision identifiers, used by Alembic.
