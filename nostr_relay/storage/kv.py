@@ -20,6 +20,7 @@ from .base import BaseStorage, BaseSubscription, compile_filters
 from ..auth import get_authenticator
 from ..config import Config
 from ..util import catchtime, StatsCollector, json
+from ..validators import get_validator
 
 # ids: b'\x00<32 bytes of id>'
 # created: b'\x01<4 bytes time>\x00<32 bytes id>'
@@ -303,6 +304,7 @@ class LMDBStorage(BaseStorage):
 
     async def setup(self):
         await super().setup()
+        self.validate_event = get_validator(self.options.pop('validators', ["nostr_relay.validators.is_signed"]))
         self.env = lmdb.open(**self.options)
         self.writer_thread = WriterThread(self.env)
         self.writer_queue = self.writer_thread.queue
@@ -321,6 +323,8 @@ class LMDBStorage(BaseStorage):
         except Exception as e:
             self.log.error("bad json")
             raise StorageError("invalid: Bad JSON")
+
+        await self.validate_event(event, Config)
 
         self.writer_queue.put((event, "add"))
 
