@@ -79,7 +79,7 @@ class AuthTests(BaseTestsWithStorage):
         with self.assertRaises(AuthenticationError) as e:
             await auth.authenticate(wrong_domain.to_json_object(), challenge)
 
-        assert e.exception.args[0] == "invalid: Wrong domain"
+        assert e.exception.args[0] == "invalid: Wrong domain: ws://relay.foo.biz"
 
         wrong_challenge = Event(
             kind=22242,

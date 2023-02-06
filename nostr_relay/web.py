@@ -269,6 +269,8 @@ class NostrAPI(BaseResource):
 
             # with easy_profiler():
             await client.start(self.storage)
+        except (falcon.WebSocketDisconnected, ConnectionClosedError, ConnectionClosedOK):
+            pass
         except Exception:
             await ws.close(code=1013)
             self.log.exception("client loop")
