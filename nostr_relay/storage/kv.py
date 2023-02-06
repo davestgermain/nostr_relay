@@ -399,6 +399,9 @@ class Subscription(BaseSubscription):
             to_run = {
                 "index": INDEXES[idx],
                 "matches": matches,
+                "since": query.get("since"),
+                "until": query.get("until"),
+                "limit": query.get("limit", self.default_limit),
             }
 
             queries.append(to_run)
