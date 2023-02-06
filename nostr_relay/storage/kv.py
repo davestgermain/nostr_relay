@@ -351,13 +351,31 @@ class LMDBStorage(BaseStorage):
             event = await queue.get()
         yield None
 
+    async def get_identified_pubkey(self, identifier, domain=""):
+        data = {"names": {}, "relays": {}}
+        return data
+
+    async def get_stats(self):
+        stats = {}
+        subs = await self.num_subscriptions(True)
+        num_subs = 0
+        num_clients = 0
+        for k, v in subs.items():
+            num_clients += 1
+            num_subs += v
+        stats["active_subscriptions"] = num_subs
+        stats["active_clients"] = num_clients
+        return stats
+
 
 class Subscription(BaseSubscription):
     execution_pool = ThreadPoolExecutor(max_workers=20)
+    __slots__ = ("filter_json", "check_event")
 
     def prepare(self):
         with self.storage.stat_collector.timeit("prepare") as counter:
-            self.check_event = compile_filters(json.dumps(self.filters))
+            self.filter_json = json.dumps(self.filters)
+            self.check_event = compile_filters(self.filter_json)
             self.query = self.build_query(self.filters)
             counter["count"] += 1
         self.log.debug(f"Took {counter['duration']*1000:.2f}ms to prepare")
@@ -438,7 +456,7 @@ class Subscription(BaseSubscription):
             cancel_event.set()
             self.log.info("index stats: %d hits %d misses", hits, misses)
             if misses > hits:
-                self.log.info("query: %s", filters)
+                self.log.info("query: %s", self.filter_json)
         except:
             self.log.exception("collect_filters")
             raise
