@@ -117,7 +117,7 @@ class StatsCollector(Periodic):
 
         try:
             for stat, values in self.stats.items():
-                if values:
+                if len(values) > 2:
                     median = statistics.median(values) * 1000
                     # avg = statistics.fmean(values) * 1000
                     p90 = statistics.quantiles(values, n=10)[-1] * 1000

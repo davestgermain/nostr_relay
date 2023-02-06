@@ -385,43 +385,51 @@ class Subscription(BaseSubscription):
         queries = []
         for query in filters:
             matches = []
-            if "ids" in query:
-                idx = "ids"
-                matches = query["ids"]
-            elif "authors" in query and "kinds" in query:
+            to_run = {
+                "since": query.pop("since", None),
+                "until": query.pop("until", None),
+                "limit": query.pop("limit", self.default_limit),
+            }
+
+            tags = []
+            scores = []
+            has_kinds = has_authors = False
+
+            for key, value in query.items():
+                if key[0] == "#" and len(key) == 2:
+                    tag = key[1]
+                    tags.extend([(tag, val) for val in value])
+
+                    scores.append((len(tags), 'tags', tags))
+                elif key == 'kinds':
+                    scores.append((len(value), 'kinds', value))
+                    has_kinds = True
+                elif key == 'authors':
+                    scores.append((len(value), 'authors', value))
+                    has_authors = True
+                elif key == 'ids':
+                    scores.append((len(value), 'ids', value))
+
+            if has_kinds and has_authors:
                 idx = "authorkinds"
                 kinds = sorted(query["kinds"], reverse=True)
                 authorkinds = []
                 for author in sorted(query["authors"], reverse=True):
                     for k in kinds:
                         authorkinds.append((author, k))
-                matches = authorkinds
-            elif "authors" in query:
-                idx = "authors"
-                matches = query["authors"]
-            elif "kinds" in query:
-                idx = "kinds"
-                matches = query["kinds"]
+                scores.append((len(authorkinds), 'authorkinds', authorkinds))
+
+            scores.sort(reverse=True)
+
+            if scores:
+                topscore, idx, matches = scores[0]
             else:
-                tags = []
-                for k, v in query.items():
-                    if k[0] == "#" and len(k) == 2:
-                        tag = k[1]
-                        tags.extend([(tag, val) for val in v])
-                if tags:
-                    idx = "tags"
-                    matches = tags
-                else:
-                    idx = "created_at"
+                idx = "created_at"            
 
-            to_run = {
-                "index": INDEXES[idx],
-                "matches": matches,
-                "since": query.get("since"),
-                "until": query.get("until"),
-                "limit": query.get("limit", self.default_limit),
-            }
+            self.log.debug("Scored query %s", scores)
 
+            to_run["index"] = INDEXES[idx]
+            to_run["matches"] = matches
             queries.append(to_run)
         return queries
 
