@@ -1,10 +1,7 @@
 import os
 import os.path
 import asyncio
-import collections
 import logging
-import secrets
-import threading
 
 from time import time
 
@@ -21,10 +18,10 @@ from ..util import (
     call_from_path,
     catchtime,
     Periodic,
-    StatsCollector,
     json,
 )
 from . import get_metadata
+from .base import BaseStorage, BaseSubscription
 
 
 force_hex_translation = str.maketrans(
@@ -42,24 +39,9 @@ def validate_id(obj_id):
     return ""
 
 
-class BaseStorage:
-    async def add_event(self, event_json: dict, auth_token=None):
-        raise NotImplentedError()
-
-    async def subscribe(
-        self, client_id, sub_id, filters, queue, auth_token=None, **kwargs
-    ):
-        raise NotImplementedError()
-
-    async def unsubscribe(self, client_id, sub_id=None):
-        raise NotImplementedError()
-
-    async def close(self):
-        pass
-
-
 class DBStorage(BaseStorage):
     def __init__(self, options):
+        super().__init__(options)
         self.options, self.sqlalchemy_options = self.parse_options(options)
         self.subscription_class = self.options["subscription_class"]
         self.validate_event = self.options["validator_function"]
@@ -68,10 +50,8 @@ class DBStorage(BaseStorage):
         )
         self.is_postgres = "postgresql" in self.db_url
 
-        self.clients = collections.defaultdict(dict)
         self.db = None
         self.garbage_collector_task = None
-        self.log = logging.getLogger(__name__)
 
         if not self.is_postgres:
             # add event listener to set appropriate PRAGMA items
@@ -126,6 +106,7 @@ class DBStorage(BaseStorage):
                 await conn.execute(sa.text("PRAGMA optimize"))
 
     async def setup(self):
+        await super().setup()
         from sqlalchemy.ext.asyncio import create_async_engine
 
         # limit the amount of concurrent inserts/selects
@@ -135,8 +116,6 @@ class DBStorage(BaseStorage):
         self.query_slot = asyncio.Semaphore(
             int(self.options.pop("num_concurrent_reqs", 10))
         )
-
-        self.authenticator = get_authenticator(self, Config.get("authentication", {}))
 
         self.db = create_async_engine(
             self.db_url,
@@ -166,16 +145,6 @@ class DBStorage(BaseStorage):
                 "OR IGNORE"
             )
 
-        if Config.should_run_notifier:
-            from nostr_relay.notifier import NotifyClient
-
-            self.notifier = NotifyClient(self)
-            self.notifier.start()
-        else:
-            self.notifier = None
-
-        self.stat_collector = StatsCollector(self.options.get("stats_interval", 60.0))
-        await self.stat_collector.start()
         self.garbage_collector_task = start_garbage_collector(self.db)
         self.verifier = Verifier(self, Config.get("verification", {}))
         await self.verifier.start(self.db)
@@ -237,18 +206,6 @@ class DBStorage(BaseStorage):
             # notify other processes
             await self.notify_other_processes(event)
         return event, changed
-
-    async def notify_other_processes(self, event):
-        if self.notifier:
-            asyncio.create_task(self.notifier.notify(event))
-
-    def notify_all_connected(self, event):
-        # notify all subscriptions
-        with self.stat_collector.timeit("notify") as counter:
-            for client in self.clients.values():
-                for sub in client.values():
-                    asyncio.create_task(sub.notify(event))
-                    counter["count"] += 1
 
     async def pre_save(self, conn, event):
         """
@@ -397,49 +354,6 @@ class DBStorage(BaseStorage):
         except Exception:
             self.log.exception("subscription")
 
-    async def subscribe(
-        self, client_id, sub_id, filters, queue, auth_token=None, **kwargs
-    ):
-        self.log.debug("%s/%s filters: %s", client_id, sub_id, filters)
-        if sub_id in self.clients[client_id]:
-            await self.unsubscribe(client_id, sub_id)
-
-        if (
-            Config.subscription_limit
-            and len(self.clients[client_id]) == Config.subscription_limit
-        ):
-            raise StorageError("rejected: too many subscriptions")
-        sub = self.subscription_class(
-            self, sub_id, filters, queue=queue, client_id=client_id, **kwargs
-        )
-        if sub.prepare():
-            if not await self.authenticator.can_do(auth_token, Action.query.value, sub):
-                raise AuthenticationError("restricted: permission denied")
-
-            sub.start()
-            self.clients[client_id][sub_id] = sub
-            self.log.debug("%s/%s +", client_id, sub_id)
-
-    async def unsubscribe(self, client_id, sub_id=None):
-        if sub_id:
-            try:
-                self.clients[client_id][sub_id].cancel()
-                del self.clients[client_id][sub_id]
-                self.log.debug("%s/%s -", client_id, sub_id)
-            except KeyError:
-                pass
-        elif client_id in self.clients:
-            del self.clients[client_id]
-
-    async def num_subscriptions(self, byclient=False):
-        subs = {}
-        for client_id, client in self.clients.items():
-            subs[client_id] = len(client)
-        if byclient:
-            return subs
-        else:
-            return {"total": sum(subs.values())}
-
     async def get_stats(self):
         stats = {"total": 0}
         async with self.db.connect() as conn:
@@ -540,51 +454,17 @@ class DBStorage(BaseStorage):
                 )
                 await conn.execute(stmt)
 
-    async def __aenter__(self):
-        await self.setup()
-        return self
 
-    async def __aexit__(self, ex_type, ex, tb):
-        await self.close()
-
-
-class Subscription:
-    __slots__ = (
-        "storage",
-        "sub_id",
-        "client_id",
-        "filters",
-        "query",
-        "queue",
-        "query_task",
-        "default_limit",
-        "is_postgres",
-        "log",
-        "long_query_threshold",
-        "filter_code",
-    )
+class Subscription(BaseSubscription):
+    __slots__ = ("is_postgres",)
 
     def __init__(
         self,
-        storage,
-        sub_id,
-        filters: list,
-        queue=None,
-        client_id=None,
-        default_limit=6000,
-        log=None,
+        *args,
         **kwargs,
     ):
-        self.storage = storage
-        self.sub_id = sub_id
-        self.client_id = client_id
-        self.filters = filters
-        self.queue = queue
-        self.query_task = None
-        self.default_limit = default_limit
-        self.is_postgres = storage.is_postgres
-        self.log = log or storage.log
-        self.long_query_threshold = 1000
+        super().__init__(*args, **kwargs)
+        self.is_postgres = self.storage.is_postgres
 
     def prepare(self):
         try:
@@ -593,13 +473,6 @@ class Subscription:
             self.log.exception("build_query")
             return False
         return True
-
-    def cancel(self):
-        if self.query_task:
-            self.query_task.cancel()
-
-    def start(self):
-        self.query_task = asyncio.create_task(self.run_query())
 
     async def run_query(self):
         sub_id = self.sub_id
@@ -615,53 +488,6 @@ class Subscription:
         ):
             await queue.put((sub_id, event))
         await queue.put((sub_id, None))
-
-    async def notify(self, event):
-        # every time an event is added, all subscribers are notified.
-
-        with catchtime() as t:
-            matched = self.check_event(event, self.filters)
-
-        self.log.debug(
-            "%s/%s notify match %s %s duration:%.2fms",
-            self.client_id,
-            self.sub_id,
-            event.id,
-            matched,
-            t.duration * 1000,
-        )
-        if matched:
-            await self.queue.put((self.sub_id, event))
-
-    def check_event(self, event: Event, filters: list):
-        for filter_obj in filters:
-            if not filter_obj:
-                continue
-            matched = set()
-            for key, value in filter_obj.items():
-                if key == "ids":
-                    matched.add(event.id in value)
-                elif key == "authors":
-                    matched.add(event.pubkey in value)
-                    has_delegation, match = event.has_tag("delegation", value)
-                    if match:
-                        matched.add(True)
-                elif key == "kinds":
-                    matched.add(event.kind in value)
-                elif key == "since":
-                    matched.add(event.created_at >= value)
-                elif key == "until":
-                    matched.add(event.created_at < value)
-                elif key[0] == "#" and len(key) == 2:
-                    matched.add(all(event.has_tag(key[1], value)))
-                elif key == "limit":
-                    # limit is irrelevant for broadcasts
-                    continue
-                else:
-                    matched.add(False)
-            if all(matched):
-                return True
-        return False
 
     def evaluate_filter(self, filter_obj, subwhere):
         for key, value in filter_obj.items():

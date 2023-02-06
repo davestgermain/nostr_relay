@@ -38,7 +38,10 @@ def serve(ctx):
     from alembic import config
     from .web import run_with_gunicorn
 
-    if Config.storage.get('class', 'nostr_relay.storage.db.DBStorage') == 'nostr_relay.storage.db.DBStorage':
+    if (
+        Config.storage.get("class", "nostr_relay.storage.db.DBStorage")
+        == "nostr_relay.storage.db.DBStorage"
+    ):
         alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
         config.main([f"-c{alembic_config_file}", "upgrade", "head"])
 
