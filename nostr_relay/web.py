@@ -55,21 +55,21 @@ class Client:
         return True
 
     async def send_subscriptions(self):
-        subscription_queue = self.subscription_queue
         ws = self.ws
-
+        get_from_storage = self.subscription_queue.get
+        send_text = ws.send_text
         sent = 0
         self.log.debug("%s waiting for subs", self.id)
         while self.running and ws.ready:
             try:
-                sub_id, event = await subscription_queue.get()
+                sub_id, event = await get_from_storage()
                 if event is not None:
                     message = event.to_message(sub_id)
                 else:
                     # done with stored events
                     message = f'["EOSE", "{sub_id}"]'
-                await ws.send_text(message)
-                self.log.debug("SENT: %s", message)
+                await send_text(message)
+                # self.log.debug("SENT: %s", message)
                 self.sent += len(message)
             except (
                 falcon.WebSocketDisconnected,
@@ -265,6 +265,9 @@ class NostrAPI(BaseResource):
         )
 
         try:
+            # from .util import easy_profiler
+
+            # with easy_profiler():
             await client.start(self.storage)
         except Exception:
             await ws.close(code=1013)
@@ -407,6 +410,10 @@ def run_with_gunicorn(conf_file=None):
                 self.cfg.set(k.lower(), v)
 
         def load(self):
+            # this should fix a memory leak in websocket compression
+            from nostr_relay import monkeypatch
+
+            monkeypatch.monkey()
             # this ensures that the unnecessary MessageLoggerMiddleware isn't added
             from uvicorn.config import logger
 
