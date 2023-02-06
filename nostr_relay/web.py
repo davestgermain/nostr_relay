@@ -269,7 +269,11 @@ class NostrAPI(BaseResource):
 
             # with easy_profiler():
             await client.start(self.storage)
-        except (falcon.WebSocketDisconnected, ConnectionClosedError, ConnectionClosedOK):
+        except (
+            falcon.WebSocketDisconnected,
+            ConnectionClosedError,
+            ConnectionClosedOK,
+        ):
             pass
         except Exception:
             await ws.close(code=1013)
@@ -346,6 +350,9 @@ class SetupMiddleware:
             notify_server = NotifyServer()
             notify_server.start()
         await self.storage.setup()
+        from .util import Periodic
+
+        await Periodic.start_pending()
 
     async def process_shutdown(self, scope, event):
         await self.storage.optimize()

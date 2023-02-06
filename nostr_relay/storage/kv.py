@@ -395,23 +395,23 @@ class Subscription(BaseSubscription):
             scores = []
             has_kinds = has_authors = False
 
-            if 'ids' in query:
-                scores.append((100, 'ids', query['ids']))
+            if "ids" in query:
+                scores.append((100, "ids", query["ids"]))
             else:
                 for key, value in query.items():
                     if key[0] == "#" and len(key) == 2:
                         tag = key[1]
                         tags.extend([(tag, val) for val in value])
 
-                        scores.append((len(tags), 'tags', tags))
-                    elif key == 'kinds':
-                        scores.append((len(value) * 3, 'kinds', value))
+                        scores.append((len(tags), "tags", tags))
+                    elif key == "kinds":
+                        scores.append((len(value) * 3, "kinds", value))
                         has_kinds = True
-                    elif key == 'authors':
-                        scores.append((len(value) * 3, 'authors', value))
+                    elif key == "authors":
+                        scores.append((len(value) * 3, "authors", value))
                         has_authors = True
-                    elif key == 'ids':
-                        scores.append((len(value) * 3, 'ids', value))
+                    elif key == "ids":
+                        scores.append((len(value) * 3, "ids", value))
 
             if has_kinds and has_authors:
                 idx = "authorkinds"
@@ -420,14 +420,14 @@ class Subscription(BaseSubscription):
                 for author in sorted(query["authors"], reverse=True):
                     for k in kinds:
                         authorkinds.append((author, k))
-                scores.append((len(authorkinds) * 4, 'authorkinds', authorkinds))
+                scores.append((len(authorkinds) * 4, "authorkinds", authorkinds))
 
             scores.sort(reverse=True)
 
             if scores:
                 topscore, idx, matches = scores[0]
             else:
-                idx = "created_at"            
+                idx = "created_at"
 
             self.log.debug("Scored query %s", scores)
 

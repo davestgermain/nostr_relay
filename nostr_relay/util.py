@@ -62,10 +62,24 @@ class Periodic:
     A periodic async task
     """
 
-    def __init__(self, interval):
+    _pending_tasks = []
+
+    @staticmethod
+    def register(periodic_task):
+        Periodic._pending_tasks.append(periodic_task.start())
+
+    @staticmethod
+    async def start_pending():
+        while Periodic._pending_tasks:
+            task = Periodic._pending_tasks.pop()
+            await task
+
+    def __init__(self, interval, run_at_start=False, swallow_exceptions=False):
         self.interval = interval
         self.running = False
         self._task = None
+        self._run_at_start = run_at_start
+        self._swallow_exceptions = swallow_exceptions
 
     async def start(self):
         if not self.running:
@@ -85,14 +99,22 @@ class Periodic:
         await asyncio.sleep(self.interval)
 
     async def _run(self):
+        if self._run_at_start:
+            await self.run_once()
         while self.running:
             await self.wait_function()
-            await self.run_once()
+            try:
+                await self.run_once()
+            except Exception:
+                if not self._swallow_exceptions:
+                    raise
+                elif hasattr(self, "log"):
+                    self.log.exception("run_once")
 
 
 class StatsCollector(Periodic):
     def __init__(self, interval):
-        super().__init__(interval)
+        super().__init__(interval, swallow_exceptions=True)
         self.stats = collections.defaultdict(lambda: collections.deque(maxlen=1000))
         self.counts = collections.defaultdict(int)
         self.log = logging.getLogger("nostr_relay.stats")
@@ -113,21 +135,18 @@ class StatsCollector(Periodic):
         self.counts[stat] += 1
 
     async def run_once(self):
-        self.iteration += 1
+        # self.iteration += 1
 
-        try:
-            for stat, values in self.stats.items():
-                if len(values) > 2:
-                    median = statistics.median(values) * 1000
-                    # avg = statistics.fmean(values) * 1000
-                    p90 = statistics.quantiles(values, n=10)[-1] * 1000
-                    count = self.counts[stat]
-                    self.log.info(
-                        "Stats for %(stat)-8s median: %(median)6.2fms  p90: %(p90)6.2fms  count:%(count)8d",
-                        locals(),
-                    )
-        except:
-            self.log.exception("stats")
+        for stat, values in self.stats.items():
+            if len(values) > 2:
+                median = statistics.median(values) * 1000
+                # avg = statistics.fmean(values) * 1000
+                p90 = statistics.quantiles(values, n=10)[-1] * 1000
+                count = self.counts[stat]
+                self.log.info(
+                    "Stats for %(stat)-8s median: %(median)6.2fms  p90: %(p90)6.2fms  count:%(count)8d",
+                    locals(),
+                )
 
 
 @contextmanager

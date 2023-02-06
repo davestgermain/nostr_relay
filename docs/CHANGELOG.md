@@ -1,5 +1,12 @@
 # CHANGES
 
+## 1.9
+
+* Added a validator that checks your social network for allowed pubkeys [Documentation](foaf.md)
+* Added an experimental LMDB storage backend
+* pypy compatibility
+* Added a covering index
+
 ## 1.8
 
 * Added configurable validators. See [Storage](storage.md)
