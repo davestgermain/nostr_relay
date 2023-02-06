@@ -88,11 +88,15 @@ class Index:
             since = max(int(since), 1).to_bytes(4, "big")
         if until is not None:
             until = max(int(until), 1).to_bytes(4, "big")
+            add_time = b"\x00%s\x00" % until
+        else:
+            add_time = b""
 
         prev = cursor.prev
         get_key = cursor.key
 
         def skip(key):
+            # print(f'skipping to {key}')
             return cursor.set_range(key + b"\xff")
 
         if matches:
@@ -101,10 +105,7 @@ class Index:
             stop = compiled_matches[-1]
             if since:
                 stop += b"\x00%s" % since
-            if until:
-                skip(match + b"\x00%s\x00" % until)
-            else:
-                skip(match)
+            skip(match + add_time)
         else:
             match = None
             if until:
@@ -127,21 +128,22 @@ class Index:
                 # print(key, int.from_bytes(key[-37:-33]))
 
                 if match is not None:
-                    # time_miss = False
-                    # if since or until:
-                    #     ts = key[-37:-33]
-                    #     if since and ts < since:
-                    #         time_miss = True
-                    #     if until and ts > until:
-                    #         time_miss = True
-                    #     # print(f"miss? {int.from_bytes(ts, 'big')} {time_miss} {int.from_bytes(until)}")
-
-                    if key[: len(match)] != match:
+                    time_miss = False
+                    if since or until:
+                        ts = key[-37:-33]
+                        if since and ts < since:
+                            time_miss = True
+                        if until and ts > until:
+                            time_miss = True
+                        # print(f"miss? {int.from_bytes(ts, 'big')} {time_miss} {int.from_bytes(since)} -> {int.from_bytes(until)}")
+                        # if time_miss:
+                        #     continue
+                    if key[: len(match)] != match or time_miss:
                         try:
                             match = next_match()
                         except StopIteration:
                             break
-                        skipped = skip(match)
+                        skipped = skip(match + add_time)
                         if skipped:
                             # print(f"found {match} {skipped} {self.cursor.key()}")
                             # yield key[-32:]
@@ -304,7 +306,9 @@ class LMDBStorage(BaseStorage):
 
     async def setup(self):
         await super().setup()
-        self.validate_event = get_validator(self.options.pop('validators', ["nostr_relay.validators.is_signed"]))
+        self.validate_event = get_validator(
+            self.options.pop("validators", ["nostr_relay.validators.is_signed"])
+        )
         self.env = lmdb.open(**self.options)
         self.writer_thread = WriterThread(self.env)
         self.writer_queue = self.writer_thread.queue
@@ -362,8 +366,10 @@ class Subscription(BaseSubscription):
     def build_query(self, filters):
         queries = []
         for query in filters:
+            matches = []
             if "ids" in query:
                 idx = "ids"
+                matches = query["ids"]
             elif "authors" in query and "kinds" in query:
                 idx = "authorkinds"
                 kinds = sorted(query["kinds"], reverse=True)
@@ -371,11 +377,13 @@ class Subscription(BaseSubscription):
                 for author in sorted(query["authors"], reverse=True):
                     for k in kinds:
                         authorkinds.append((author, k))
-                query["authorkinds"] = authorkinds
+                matches = authorkinds
             elif "authors" in query:
                 idx = "authors"
+                matches = query["authors"]
             elif "kinds" in query:
                 idx = "kinds"
+                matches = query["kinds"]
             else:
                 tags = []
                 for k, v in query.items():
@@ -384,14 +392,16 @@ class Subscription(BaseSubscription):
                         tags.extend([(tag, val) for val in v])
                 if tags:
                     idx = "tags"
-                    query["tags"] = tags
+                    matches = tags
                 else:
                     idx = "created_at"
 
-            query["index"] = INDEXES[idx]
-            query["matches"] = query.get(idx, [])
+            to_run = {
+                "index": INDEXES[idx],
+                "matches": matches,
+            }
 
-            queries.append(query)
+            queries.append(to_run)
         return queries
 
     def collect_filters(self, filters, loop, queue, cancel_event):
@@ -424,6 +434,8 @@ class Subscription(BaseSubscription):
             call_soon(queue.put_nowait, None)
             cancel_event.set()
             self.log.info("index stats: %d hits %d misses", hits, misses)
+            if misses > hits:
+                self.log.info("query: %s", filters)
         except:
             self.log.exception("collect_filters")
             raise

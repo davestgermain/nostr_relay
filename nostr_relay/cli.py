@@ -81,6 +81,9 @@ async def query(ctx, query, results):
     Run a REQ query and display results
     """
     import json
+    import logging
+
+    logging.basicConfig(level=logging.DEBUG)
     from .storage import get_storage
     from .storage.db import Subscription
 
