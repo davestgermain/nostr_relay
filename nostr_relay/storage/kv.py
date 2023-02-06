@@ -417,7 +417,7 @@ class Subscription(BaseSubscription):
                 for author in sorted(query["authors"], reverse=True):
                     for k in kinds:
                         authorkinds.append((author, k))
-                scores.append((len(authorkinds), 'authorkinds', authorkinds))
+                scores.append((len(authorkinds) * 2, 'authorkinds', authorkinds))
 
             scores.sort(reverse=True)
 
