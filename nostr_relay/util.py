@@ -100,7 +100,14 @@ class Periodic:
 
     async def _run(self):
         if self._run_at_start:
-            await self.run_once()
+            try:
+                await self.run_once()
+            except Exception:
+                if not self._swallow_exceptions:
+                    raise
+                elif hasattr(self, "log"):
+                    self.log.exception("run_once")
+
         while self.running:
             await self.wait_function()
             try:
