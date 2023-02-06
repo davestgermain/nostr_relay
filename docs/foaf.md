@@ -27,7 +27,8 @@ foaf:
     levels: 2
 
     # file to save the network to, to avoid querying on relay start
-    save_to: /tmp/nostr-foaf.json
+    # (will be binary)
+    save_to: /tmp/nostr-foaf.pickle
 
     # relays to query. You can use your own relay address here...
     check_relays:

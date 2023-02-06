@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.9.2
+
+* Save network graph as a pickle file, for efficiency
+
 ## 1.9.1
 
 * Batch queries for social network
