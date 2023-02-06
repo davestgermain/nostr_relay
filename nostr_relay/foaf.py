@@ -33,7 +33,7 @@ def is_in_foaf(event, config):
     """
     if config.foaf:
         if ALLOWED_PUBKEYS:
-            if event.pubkey not in ALLOWED_PUBKEYS:
+            if bytes.fromhex(event.pubkey) not in ALLOWED_PUBKEYS:
                 raise StorageError(f"{event.pubkey} is not in my known network")
 
 
@@ -67,11 +67,14 @@ class FOAFBuilder(Periodic):
 
         if os.path.exists(self.save_file):
             with open(self.save_file, "r") as fp:
-                network = json.load(fp)
+                try:
+                    network = json.load(fp)
+                except json.JSONDecodeError:
+                    return False
             self.log.info(
                 "Loaded network of %d pubkeys from %s", len(network), self.save_file
             )
-            ALLOWED_PUBKEYS.update(set(network))
+            ALLOWED_PUBKEYS.update([bytes.fromhex(k) for k in network])
             return True
 
     async def run_once(self):
@@ -101,12 +104,12 @@ class FOAFBuilder(Periodic):
                 found += 1
 
         self.log.info("Found network of %d pubkeys", len(network))
-        ALLOWED_PUBKEYS.clear()
-        ALLOWED_PUBKEYS.update(network)
         if self.save_file:
             with open(self.save_file, "w") as fp:
-                json.dump(list(ALLOWED_PUBKEYS), fp)
+                json.dump(list(network), fp)
             self.log.info("Saved network to %s", self.save_file)
+        ALLOWED_PUBKEYS.clear()
+        ALLOWED_PUBKEYS.update([bytes.fromhex(k) for k in network])
 
 
 def batched(iterable, n):
