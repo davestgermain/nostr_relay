@@ -16,7 +16,7 @@ You can associate public keys with whichever (single-letter) roles you want. In 
 To enable, add this to your configuration file:
 ```
 authentication:
-  valid_urls: 
+  relay_urls: 
     - wss://my.relay.url
   enabled: true
   actions:
@@ -29,7 +29,7 @@ This would require the `w` role to add events, but anyone with the `r` role or a
 If there are no public keys assigned to roles, this configuration would allow access for anyone:
 ```
 authentication:
-  valid_urls: 
+  relay_urls: 
     - wss://my.relay.url
   enabled: true
   actions:
@@ -53,7 +53,7 @@ You can slow down certain classes of users, based on their role. For instance, t
 
 ```
 authentication:
-  valid_urls: 
+  relay_urls: 
     - wss://my.relay.url
   enabled: true
   throttle:
@@ -65,7 +65,7 @@ Here's a more complete example, with different roles:
 
 ```
 authentication:
-  valid_urls: 
+  relay_urls: 
     - wss://my.relay.url
   enabled: true
   throttle:

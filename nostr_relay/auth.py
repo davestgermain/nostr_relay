@@ -92,7 +92,7 @@ class Authenticator:
         for tag in auth_event.tags:
             if tag[0] == "relay":
                 if tag[1] not in self.valid_urls:
-                    raise AuthenticationError("invalid: Wrong domain")
+                    raise AuthenticationError(f"invalid: Wrong domain: {tag[1]}")
                 found_relay = True
             elif tag[0] == "challenge":
                 if tag[1] != challenge:
