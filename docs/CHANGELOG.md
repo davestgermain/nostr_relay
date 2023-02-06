@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.9.1
+
+* Batch queries for social network
+
 ## 1.9
 
 * Added a validator that checks your social network for allowed pubkeys [Documentation](foaf.md)

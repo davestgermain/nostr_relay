@@ -17,6 +17,7 @@ See https://code.pobblelabs.org/fossil/nostr_relay/doc/tip/docs/foaf.md for all 
 
 import logging
 
+from itertools import islice
 from aionostr import Manager
 from nostr_relay.errors import StorageError
 from nostr_relay.util import Periodic, json
@@ -90,11 +91,13 @@ class FOAFBuilder(Periodic):
             found = 1
             while found < self.network_levels:
                 self.log.info("Getting extended network. Level %d", found)
-                find_query["authors"] = list(network)
-                async for event in manager.get_events(find_query):
-                    for tag in event.tags:
-                        if tag[0] == "p":
-                            network.add(tag[1])
+                for batch in batched(list(network), 100):
+                    find_query["authors"] = batch
+                    async for event in manager.get_events(find_query):
+                        for tag in event.tags:
+                            if tag[0] == "p":
+                                network.add(tag[1])
+                    self.log.info("Got batch of 100...")
                 found += 1
 
         self.log.info("Found network of %d pubkeys", len(network))
@@ -104,6 +107,15 @@ class FOAFBuilder(Periodic):
             with open(self.save_file, "w") as fp:
                 json.dump(list(ALLOWED_PUBKEYS), fp)
             self.log.info("Saved network to %s", self.save_file)
+
+
+def batched(iterable, n):
+    it = iter(iterable)
+    while True:
+        batch = list(islice(it, n))
+        if not batch:
+            return
+        yield batch
 
 
 Periodic.register(FOAFBuilder())
