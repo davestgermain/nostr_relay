@@ -149,6 +149,12 @@ class Client:
                         event, result = await storage.add_event(
                             message[1], auth_token=self.auth_token
                         )
+                    except AuthenticationError as e:
+                        throttle = min(throttle, 1) * 2
+                        self.log.error("Auth error %s. Throttling %s", str(e), throttle)
+                        result = False
+                        reason = str(e)
+                        eventid = ""
                     except Exception as e:
                         self.log.error(str(e))
                         result = False
@@ -160,7 +166,8 @@ class Client:
                         self.log.info(
                             "%s added %s from %s", client_id, event.id, event.pubkey
                         )
-                    await ws.send_media(["OK", eventid, result, reason])
+                    finally:
+                        await ws.send_media(["OK", eventid, result, reason])
                 elif command == "AUTH" and storage.authenticator.is_enabled:
                     self.auth_token = await storage.authenticator.authenticate(
                         message[1], challenge=challenge

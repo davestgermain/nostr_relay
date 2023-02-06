@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.9.2
+
+* Throttle clients that continuously receive authentication errors
+
 ## 1.9.1
 
 * Batch queries for social network
