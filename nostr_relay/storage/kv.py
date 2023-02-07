@@ -479,7 +479,7 @@ class KVGarbageCollector(Periodic):
             self.log.info("Deleted %d events", len(to_del))
 
 
-def planner(filters, default_limit=6000):
+def planner(filters, default_limit=6000, log=None):
     """
     Create a list of QueryPlans for the the list of REQ filters
     """
@@ -488,25 +488,30 @@ def planner(filters, default_limit=6000):
         matches = []
         tags = []
         scores = []
-        has_kinds = has_authors = False
+        has_kinds = has_authors = has_ids = False
+        query_items = []
 
-        if "ids" in query:
-            # if there are ids in the query, always use the id index
-            scores.append((100, "ids", query["ids"]))
-        else:
-            # otherwise, try to choose an index based on cardinality
-            for key, value in query.items():
-                if key[0] == "#" and len(key) == 2:
-                    tag = key[1]
-                    tags.extend([(tag, val) for val in value])
+        for key, value in query.items():
+            if key == "ids":
+                # if there are ids in the query, always use the id index
+                scores.append((1000, "ids", list(query["ids"])))
+                has_ids = True
+            elif key[0] == "#" and len(key) == 2:
+                tag = key[1]
+                tags.extend([(tag, val) for val in value])
 
-                    scores.append((len(tags), "tags", tags))
-                elif key == "kinds":
-                    scores.append((len(value) * 3, "kinds", value))
-                    has_kinds = True
-                elif key == "authors":
-                    scores.append((len(value) * 3, "authors", value))
-                    has_authors = True
+                scores.append((len(tags), "tags", tags))
+            elif key == "kinds":
+                scores.append((len(value) * 3, "kinds", list(value)))
+                has_kinds = True
+            elif key == "authors":
+                scores.append((len(value) * 3, "authors", list(value)))
+                has_authors = True
+            query_items.append(
+                (key, tuple(value) if isinstance(value, list) else value)
+            )
+
+        query_items = tuple(query_items)
 
         if has_kinds and has_authors:
             idx = "authorkinds"
@@ -519,6 +524,8 @@ def planner(filters, default_limit=6000):
 
         scores.sort(reverse=True)
 
+        # simplest thing is to pick the highest score
+        # but this might need to be tuned, depending on real life performance
         if scores:
             topscore, idx, matches = scores[0]
         else:
@@ -529,30 +536,27 @@ def planner(filters, default_limit=6000):
         except KeyError:
             limit = default_limit
 
-        plans.append(
-            QueryPlan(
-                query,
-                INDEXES[idx],
-                matches,
-                limit,
-                query.get("since"),
-                query.get("until"),
-                {},
-            )
+        plan = QueryPlan(
+            query_items,
+            INDEXES[idx],
+            matches,
+            limit,
+            query.get("since"),
+            query.get("until"),
+            {},
         )
+        if log:
+            log.debug("Plan: %s. Scores: %s", plan, scores)
+        plans.append(plan)
     return plans
 
 
-def matcher(txn, event_id_iterator, query: dict, stats: dict):
+def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
     """
     Given an event_id (bytes) iterator, match the events according to the passed in query
     Yields Event objects
     """
-    query_items = []
-    for key, value in query.items():
-        query_items.append((key, tuple(value) if isinstance(value, list) else value))
-
-    match = compile_match_from_query(tuple(query_items))
+    match = compile_match_from_query(query_items)
 
     def get_event_data(event_id):
         try:
@@ -629,9 +633,10 @@ def executor(
     Returns (future, event_list)
     await the future before accessing the list
     """
-    plans = planner(filters, default_limit=default_limit)
-    loop = loop or asyncio.get_running_loop()
     log = log or logging.getLogger("nostr_relay.kvquery")
+
+    plans = planner(filters, default_limit=default_limit, log=log)
+    loop = loop or asyncio.get_running_loop()
 
     try:
         # collections.deque is threadsafe for appends and pops
@@ -656,7 +661,8 @@ def executor(
         else:
             return asyncio.gather(*tasks), events
     except:
-        traceback.print_exc()
+        if log:
+            log.exception("executor")
 
 
 def execute_one_plan(
