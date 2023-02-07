@@ -48,11 +48,14 @@ FIELDS_TO_COLUMNS = {
 }
 
 QueryPlan = collections.namedtuple(
-    "QueryPlan", ("query", "index", "matches", "limit", "since", "until")
+    "QueryPlan", ("query", "index", "matches", "limit", "since", "until", "stats")
 )
 
 
 class Index:
+    def __init__(self):
+        self.hits = self.misses = 0
+
     def write(self, event, txn, operation="put"):
         event_id = event.id_bytes
         ctime = event.created_at.to_bytes(4, "big")
@@ -240,6 +243,7 @@ class WriterThread(threading.Thread):
     def run(self):
         env = self.env
         qget = self.queue.get
+        qsize = self.queue.qsize
         stat_collector = self.stat_collector
         write_indexes = INDEXES.values()
         log = logging.getLogger("nostr_relay.writer")
@@ -279,6 +283,10 @@ class WriterThread(threading.Thread):
                         elif operation == "del":
                             delete_event(bytes.fromhex(event), txn)
                             counter["count"] += 1
+                if qsize() > 1000:
+                    # since we can do about 1,000 writes per second (end-to-end),
+                    # this would indicate very heavy load
+                    log.warning("Write queue size: %d", qsize())
             except Exception as e:
                 log.exception("writer")
 
@@ -426,6 +434,7 @@ class Subscription(BaseSubscription):
                 self.query,
                 loop=self.storage.loop,
                 default_limit=self.default_limit,
+                log=self.log,
             )
             await task
 
@@ -523,12 +532,13 @@ def planner(filters, default_limit=6000):
                 limit,
                 query.get("since"),
                 query.get("until"),
+                {},
             )
         )
     return plans
 
 
-def matcher(txn, event_id_iterator, query):
+def matcher(txn, event_id_iterator, query:dict, stats:dict):
     """
     Given an event_id (bytes) iterator, match the events according to the passed in query
     Yields Event objects
@@ -545,7 +555,7 @@ def matcher(txn, event_id_iterator, query):
         except TypeError:
             return None
 
-    hits = misses = 0
+    stats["index_hits"] = stats["index_misses"] = 0
     for event_id in event_id_iterator:
         event_tuple = get_event_data(event_id)
         if match(event_tuple):
@@ -559,9 +569,10 @@ def matcher(txn, event_id_iterator, query):
                 sig=event_tuple[7].hex(),
             )
             yield event
-            hits += 1
+            stats["index_hits"] += 1
         else:
-            misses += 1
+            stats["index_misses"] += 1
+
 
 
 @functools.lru_cache()
@@ -602,7 +613,7 @@ def check(et):
     return loc["check"]
 
 
-def executor(lmdb_environment, filters, loop=None, default_limit=6000):
+def executor(lmdb_environment: lmdb.Environment, filters:list, loop=None, default_limit=6000, log=None):
     """
     Execute one or several queries.
     Returns (future, event_list)
@@ -610,26 +621,27 @@ def executor(lmdb_environment, filters, loop=None, default_limit=6000):
     """
     plans = planner(filters, default_limit=default_limit)
     loop = loop or asyncio.get_running_loop()
+    log = log or logging.getLogger("nostr_relay.kvquery")
 
     try:
         # in the common case, when there's only one query,
         # we can avoid some complexity.
         # when there are multiple queries in the filter,
-        # we run them simultaneously and collect the results with collect_filters()
+        # we run them simultaneously and collect the results in execute_many_plans()
 
         events = collections.deque()
 
         if len(plans) == 1:
             return (
                 loop.run_in_executor(
-                    None, execute_one_plan, lmdb_environment, plans[0], events.append
+                    None, execute_one_plan, lmdb_environment, plans[0], events.append, log
                 ),
                 events,
             )
         else:
             return (
                 loop.run_in_executor(
-                    None, execute_many_plans, lmdb_environment, plans, events.append
+                    None, execute_many_plans, lmdb_environment, plans, events.append, log
                 ),
                 events,
             )
@@ -637,12 +649,13 @@ def executor(lmdb_environment, filters, loop=None, default_limit=6000):
         traceback.print_exc()
 
 
-def execute_one_plan(lmdb_environment: lmdb.Environment, plan: QueryPlan, on_event):
+def execute_one_plan(lmdb_environment: lmdb.Environment, plan: QueryPlan, on_event, log):
     """
     Run a single query plan, calling on_event for each event
     """
     try:
         limit = plan.limit
+        count = 0
         with lmdb_environment.begin(buffers=True) as txn:
             with plan.index.scanner(
                 txn,
@@ -650,19 +663,21 @@ def execute_one_plan(lmdb_environment: lmdb.Environment, plan: QueryPlan, on_eve
                 since=plan.since,
                 until=plan.until,
             ) as scanner:
-                for event in matcher(txn, scanner, plan.query):
-                    if limit < 1:
+                for event in matcher(txn, scanner, plan.query, plan.stats):
+                    if count == limit:
                         break
                     on_event(event)
-                    limit -= 1
+                    count += 1
+        plan.stats["count"] = count
     except:
-        traceback.print_exc()
+        log.exception("execute_one_plan")
 
     finally:
         on_event(None)
+        log.debug("Executed plan. Stats: %s", plan.stats)
 
 
-def execute_many_plans(lmdb_environment: lmdb.Environment, plans, on_event):
+def execute_many_plans(lmdb_environment: lmdb.Environment, plans: list, on_event, log):
     """
     Run multiple plans and coalesce the results
     """
@@ -673,7 +688,7 @@ def execute_many_plans(lmdb_environment: lmdb.Environment, plans, on_event):
         tasks = []
         for plan in plans:
             tasks.append(
-                QUERY_POOL.submit(execute_one_plan, lmdb_environment, plan, tqueue.put)
+                QUERY_POOL.submit(execute_one_plan, lmdb_environment, plan, tqueue.put, log)
             )
 
         event = getqueue()
@@ -689,9 +704,10 @@ def execute_many_plans(lmdb_environment: lmdb.Environment, plans, on_event):
             else:
                 break
     except:
-        traceback.print_exc()
+        log.exception("execute_many_plans")
     finally:
         on_event(None)
+        log.debug("Executed %d plans", len(plans))
 
 
 def encode_event(event):
