@@ -285,7 +285,7 @@ class WriterThread(threading.Thread):
 
 class LMDBStorage(BaseStorage):
     def __init__(self, options):
-        self.options = options
+        super().__init__(options)
         self.options.pop("class")
         self.log = logging.getLogger(__name__)
         self.subscription_class = Subscription
