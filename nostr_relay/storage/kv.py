@@ -8,19 +8,21 @@ import asyncio
 import collections
 import threading
 import functools
+import traceback
 
 from contextlib import contextmanager
-from queue import Queue
+from queue import SimpleQueue
 
 from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
-from concurrent.futures import ThreadPoolExecutor
+from concurrent import futures
 
-from .base import BaseStorage, BaseSubscription, compile_filters
+from .base import BaseStorage, BaseSubscription
 from ..auth import get_authenticator
 from ..config import Config
-from ..util import catchtime, StatsCollector, json
+from ..util import catchtime, Periodic, StatsCollector
 from ..validators import get_validator
+
 
 # ids: b'\x00<32 bytes of id>'
 # created: b'\x01<4 bytes time>\x00<32 bytes id>'
@@ -28,37 +30,26 @@ from ..validators import get_validator
 # author: b'\x03<32 bytes pubkey>\x00<32 bytes id>'
 # tag: b'\x09<tag string>\x00<tag value>\x00<32 bytes id>'
 
+DONE = object()
 
-version = 1
-
-
-def encode_event(event):
-    row = (
-        version,
-        event.id_bytes,
-        event.created_at,
-        event.kind,
-        bytes.fromhex(event.pubkey),
-        event.content,
-        event.tags,
-        bytes.fromhex(event.sig),
-    )
-    return packb(row, use_bin_type=True, encoding="utf8")
+QUERY_POOL = futures.ThreadPoolExecutor(max_workers=20)
 
 
-def decode_event(data):
-    et = unpackb(data, encoding="utf8")
-    assert et[0] == 1, "unknown version"
-    event = Event(
-        id=et[1].hex(),
-        created_at=et[2],
-        kind=et[3],
-        pubkey=et[4].hex(),
-        content=et[5],
-        tags=et[6],
-        sig=et[7].hex(),
-    )
-    return event
+VERSION = 1
+
+FIELDS_TO_COLUMNS = {
+    "id": 1,
+    "created_at": 2,
+    "kind": 3,
+    "pubkey": 4,
+    "content": 5,
+    "tags": 6,
+    "sig": 7,
+}
+
+QueryPlan = collections.namedtuple(
+    "QueryPlan", ("query", "index", "matches", "limit", "since", "until")
+)
 
 
 class Index:
@@ -239,15 +230,17 @@ INDEXES = {
 
 
 class WriterThread(threading.Thread):
-    def __init__(self, env):
+    def __init__(self, env, stat_collector):
         super().__init__()
         self.running = True
         self.env = env
-        self.queue = Queue()
+        self.stat_collector = stat_collector
+        self.queue = SimpleQueue()
 
     def run(self):
         env = self.env
         qget = self.queue.get
+        stat_collector = self.stat_collector
         write_indexes = INDEXES.values()
         log = logging.getLogger("nostr_relay.writer")
 
@@ -263,20 +256,29 @@ class WriterThread(threading.Thread):
                 break
             event, operation = task
             try:
-                with env.begin(write=True, buffers=True) as txn:
-                    if operation == "add":
-                        for index in write_indexes:
-                            index.write(event, txn)
-                        if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
-                            # delete older metadata events
-                            with INDEXES["authorkinds"].scanner(
-                                txn, [(event.pubkey, event.kind)]
-                            ) as scanner:
-                                for event_id in scanner:
-                                    log.info("Deleting %s", event_id)
-                                    delete_event(event_id, txn)
-                    elif operation == "del":
-                        delete_event(bytes.fromhex(event_id), txn)
+                with stat_collector.timeit("write") as counter:
+                    with env.begin(write=True, buffers=True) as txn:
+                        if operation == "add":
+                            for index in write_indexes:
+                                index.write(event, txn)
+                            counter["count"] += 1
+                            if event.kind in (
+                                EventKind.SET_METADATA,
+                                EventKind.CONTACTS,
+                            ):
+                                # delete older metadata events
+                                with INDEXES["authorkinds"].scanner(
+                                    txn,
+                                    [(event.pubkey, event.kind)],
+                                    until=event.created_at - 1,
+                                ) as scanner:
+                                    for event_id in scanner:
+                                        log.info("Deleting %s", event_id)
+                                        delete_event(event_id, txn)
+                                        counter["count"] += 1
+                        elif operation == "del":
+                            delete_event(bytes.fromhex(event), txn)
+                            counter["count"] += 1
             except Exception as e:
                 log.exception("writer")
 
@@ -287,7 +289,6 @@ class LMDBStorage(BaseStorage):
         self.options.pop("class")
         self.log = logging.getLogger(__name__)
         self.subscription_class = Subscription
-        self.clients = collections.defaultdict(dict)
 
     async def __aenter__(self):
         await self.setup()
@@ -306,16 +307,19 @@ class LMDBStorage(BaseStorage):
 
     async def setup(self):
         await super().setup()
+        self.env = lmdb.open(**self.options)
         self.validate_event = get_validator(
             self.options.pop("validators", ["nostr_relay.validators.is_signed"])
         )
-        self.env = lmdb.open(**self.options)
-        self.writer_thread = WriterThread(self.env)
+        self.writer_thread = WriterThread(self.env, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
+        self.garbage_collector_task = asyncio.create_task(
+            KVGarbageCollector(self, collect_interval=300).start()
+        )
 
     def delete_event(self, event_id):
-        self.writer_queue.put((event, "del"))
+        self.writer_queue.put((event_id, "del"))
 
     async def add_event(self, event_json: dict, auth_token=None):
         """
@@ -331,8 +335,48 @@ class LMDBStorage(BaseStorage):
         await self.validate_event(event, Config)
 
         self.writer_queue.put((event, "add"))
-
+        await self.post_save(event)
         return event, True
+
+    async def post_save(self, event):
+        query = None
+        if event.is_replaceable or event.is_paramaterized_replaceable:
+            query = {
+                "authors": [event.pubkey],
+                "until": event.created_at - 1,
+                "kinds": [event.kind],
+            }
+            if event.is_paramaterized_replaceable:
+                query["#d"] = [tag[1] for tag in event.tags if tag[0] == "d"][0]
+            self.log.debug(query)
+        elif event.kind == EventKind.DELETE:
+            # delete the referenced events
+            ids = []
+            for tag in event.tags:
+                name = tag[0]
+                if name == "e":
+                    ids.append(tag[1])
+            query = {
+                "authors": [event.pubkey],
+                "ids": ids,
+                "until": event.created_at - 1,
+            }
+        if query:
+            task, events = executor(self.env, [query], loop=self.loop)
+            await task
+            for event in events:
+                if event is not None:
+                    self.delete_event(event.id)
+                    self.log.info(
+                        "Deleted/Replaced event %s kind=%d pubkey=%s",
+                        event.id,
+                        event.kind,
+                        event.pubkey,
+                    )
+
+        self.notify_all_connected(event)
+        # notify other processes
+        await self.notify_other_processes(event)
 
     async def get_event(self, event_id: str):
         with self.env.begin(buffers=True) as txn:
@@ -341,15 +385,11 @@ class LMDBStorage(BaseStorage):
                 return decode_event(event_data)
 
     async def run_single_query(self, filters):
-        queue = asyncio.Queue()
-        sub = Subscription(self, "", filters, queue=queue)
-        sub.prepare()
-        sub.start()
-        event = await queue.get()
-        while event is not None:
-            yield event
-            event = await queue.get()
-        yield None
+        task, events = executor(self.env, filters, default_limit=600000)
+        await task
+        for event in events:
+            if event is not None:
+                yield event
 
     async def get_identified_pubkey(self, identifier, domain=""):
         data = {"names": {}, "relays": {}}
@@ -365,163 +405,322 @@ class LMDBStorage(BaseStorage):
             num_subs += v
         stats["active_subscriptions"] = num_subs
         stats["active_clients"] = num_clients
+        stats.update(self.env.stat())
         return stats
 
 
 class Subscription(BaseSubscription):
-    execution_pool = ThreadPoolExecutor(max_workers=20)
-    __slots__ = ("filter_json", "check_event")
+    __slots__ = (
+        "filter_json",
+        # "check_event"
+    )
 
     def prepare(self):
-        with self.storage.stat_collector.timeit("prepare") as counter:
-            self.filter_json = json.dumps(self.filters)
-            self.check_event = compile_filters(self.filter_json)
-            self.query = self.build_query(self.filters)
-            counter["count"] += 1
-        self.log.debug(f"Took {counter['duration']*1000:.2f}ms to prepare")
+        self.query = self.filters
         return True
 
-    def build_query(self, filters):
-        queries = []
-        for query in filters:
-            matches = []
-            to_run = {
-                "since": query.pop("since", None),
-                "until": query.pop("until", None),
-                "limit": query.pop("limit", self.default_limit),
-            }
-
-            tags = []
-            scores = []
-            has_kinds = has_authors = False
-
-            if "ids" in query:
-                scores.append((100, "ids", query["ids"]))
-            else:
-                for key, value in query.items():
-                    if key[0] == "#" and len(key) == 2:
-                        tag = key[1]
-                        tags.extend([(tag, val) for val in value])
-
-                        scores.append((len(tags), "tags", tags))
-                    elif key == "kinds":
-                        scores.append((len(value) * 3, "kinds", value))
-                        has_kinds = True
-                    elif key == "authors":
-                        scores.append((len(value) * 3, "authors", value))
-                        has_authors = True
-                    elif key == "ids":
-                        scores.append((len(value) * 3, "ids", value))
-
-            if has_kinds and has_authors:
-                idx = "authorkinds"
-                kinds = sorted(query["kinds"], reverse=True)
-                authorkinds = []
-                for author in sorted(query["authors"], reverse=True):
-                    for k in kinds:
-                        authorkinds.append((author, k))
-                scores.append((len(authorkinds) * 4, "authorkinds", authorkinds))
-
-            scores.sort(reverse=True)
-
-            if scores:
-                topscore, idx, matches = scores[0]
-            else:
-                idx = "created_at"
-
-            self.log.debug("Scored query %s", scores)
-
-            to_run["index"] = INDEXES[idx]
-            to_run["matches"] = matches
-            queries.append(to_run)
-        return queries
-
-    def collect_filters(self, filters, loop, queue, cancel_event):
-        try:
-            tqueue = Queue()
-            for query in filters:
-                self.execution_pool.submit(
-                    self.execute_one_query, query, tqueue, cancel_event
-                )
-
-            to_find = len(filters)
-            # breakpoint()
-            call_soon = loop.call_soon_threadsafe
-            getqueue = tqueue.get
-            event = getqueue()
-            check_event = self.check_event
-            hits = 0
-            misses = 0
-            while to_find:
-                if event is None:
-                    to_find -= 1
-                    continue
-                elif check_event(event):
-                    call_soon(queue.put_nowait, event)
-                    hits += 1
-                else:
-                    misses += 1
-                event = getqueue()
-
-            call_soon(queue.put_nowait, None)
-            cancel_event.set()
-            self.log.info("index stats: %d hits %d misses", hits, misses)
-            if misses > hits:
-                self.log.info("query: %s", self.filter_json)
-        except:
-            self.log.exception("collect_filters")
-            raise
-
-    def execute_one_query(self, query, queue, cancel_event):
-        try:
-            limit = self.default_limit
-            if "limit" in query:
-                limit = min(query["limit"], limit)
-            with self.storage.env.begin(buffers=True) as txn:
-                with query["index"].scanner(
-                    txn,
-                    query["matches"],
-                    since=query.get("since"),
-                    until=query.get("until"),
-                ) as scanner:
-                    for event_id in scanner:
-                        # if cancel_event.is_set():
-                        #     break
-                        event_data = txn.get(b"\x00%s" % event_id)
-                        event = decode_event(event_data)
-
-                        queue.put(event)
-                        limit -= 1
-                        if not limit:
-                            break
-            queue.put(None)
-        except:
-            self.log.exception("execute_one_query")
-            queue.put(None)
-            raise
-
     async def run_query(self):
-        inqueue = asyncio.Queue()
-        cancel_event = threading.Event()
-        send_to_subscriber = self.queue.put
-
         with self.storage.stat_collector.timeit("query") as counter:
-            task = self.storage.loop.run_in_executor(
-                None,
-                self.collect_filters,
+            task, events = executor(
+                self.storage.env,
                 self.query,
-                self.storage.loop,
-                inqueue,
-                cancel_event,
+                loop=self.storage.loop,
+                default_limit=self.default_limit,
+            )
+            await task
+
+            for event in events:
+                await self.queue.put((self.sub_id, event))
+                counter["count"] += 1
+        self.log.debug("Done with query")
+
+
+class KVGarbageCollector(Periodic):
+    def __init__(self, storage, **kwargs):
+        super().__init__(
+            kwargs.get("collect_interval", 300),
+            run_at_start=False,
+            swallow_exceptions=True,
+        )
+        self.log = logging.getLogger("nostr_relay.kv:gc")
+        self.storage = storage
+
+    async def run_once(self):
+        self.log.info("Starting gc")
+
+        to_del = []
+        with self.storage.env.begin(buffers=False) as txn:
+            cursor = txn.cursor()
+            start = INDEXES["kinds"].to_key(20000)
+            end = INDEXES["kinds"].to_key(29999)
+            if cursor.set_range(start):
+                for key in cursor.iternext(values=False):
+                    if key > end:
+                        break
+                    event_id = key[-32:].hex()
+                    to_del.append(event_id)
+        if to_del:
+            for event_id in to_del:
+                self.storage.delete_event(event_id)
+            self.log.info("Deleted %d events", len(to_del))
+
+
+def planner(filters, default_limit=6000):
+    """
+    Create a list of QueryPlans for the the list of REQ filters
+    """
+    plans = []
+    for query in filters:
+        matches = []
+        tags = []
+        scores = []
+        has_kinds = has_authors = False
+
+        if "ids" in query:
+            # if there are ids in the query, always use the id index
+            scores.append((100, "ids", query["ids"]))
+        else:
+            # otherwise, try to choose an index based on cardinality
+            for key, value in query.items():
+                if key[0] == "#" and len(key) == 2:
+                    tag = key[1]
+                    tags.extend([(tag, val) for val in value])
+
+                    scores.append((len(tags), "tags", tags))
+                elif key == "kinds":
+                    scores.append((len(value) * 3, "kinds", value))
+                    has_kinds = True
+                elif key == "authors":
+                    scores.append((len(value) * 3, "authors", value))
+                    has_authors = True
+
+        if has_kinds and has_authors:
+            idx = "authorkinds"
+            kinds = sorted(query["kinds"], reverse=True)
+            authorkinds = []
+            for author in sorted(query["authors"], reverse=True):
+                for k in kinds:
+                    authorkinds.append((author, k))
+            scores.append((len(authorkinds) * 4, "authorkinds", authorkinds))
+
+        scores.sort(reverse=True)
+
+        if scores:
+            topscore, idx, matches = scores[0]
+        else:
+            idx = "created_at"
+
+        try:
+            limit = min(max(0, int(query["limit"])), default_limit)
+        except KeyError:
+            limit = default_limit
+
+        plans.append(
+            QueryPlan(
+                query,
+                INDEXES[idx],
+                matches,
+                limit,
+                query.get("since"),
+                query.get("until"),
+            )
+        )
+    return plans
+
+
+def matcher(txn, event_id_iterator, query):
+    """
+    Given an event_id (bytes) iterator, match the events according to the passed in query
+    Yields Event objects
+    """
+    query_items = []
+    for key, value in query.items():
+        query_items.append((key, tuple(value) if isinstance(value, list) else value))
+
+    match = compile_match_from_query(tuple(query_items))
+
+    def get_event_data(event_id):
+        try:
+            return unpackb(txn.get(b"\x00%s" % event_id), encoding="utf8")
+        except TypeError:
+            return None
+
+    hits = misses = 0
+    for event_id in event_id_iterator:
+        event_tuple = get_event_data(event_id)
+        if match(event_tuple):
+            event = Event(
+                id=event_tuple[1].hex(),
+                created_at=event_tuple[2],
+                kind=event_tuple[3],
+                pubkey=event_tuple[4].hex(),
+                content=event_tuple[5],
+                tags=event_tuple[6],
+                sig=event_tuple[7].hex(),
+            )
+            yield event
+            hits += 1
+        else:
+            misses += 1
+
+
+@functools.lru_cache()
+def compile_match_from_query(query_items):
+    filter_clauses = set()
+    for key, value in query_items:
+        if key == "ids":
+            col = FIELDS_TO_COLUMNS["id"]
+            filter_clauses.add(f"(et[{col}].hex() in {value!r})")
+        elif key == "authors":
+            col = FIELDS_TO_COLUMNS["pubkey"]
+            filter_clauses.add(f"(et[{col}].hex() in {value!r})")
+        elif key == "kinds":
+            col = FIELDS_TO_COLUMNS["kind"]
+            filter_clauses.add(f"(et[{col}] in {value!r})")
+        elif key == "since" and value:
+            col = FIELDS_TO_COLUMNS["created_at"]
+            filter_clauses.add(f"(et[{col}] >= {value!r})")
+        elif key == "until" and value:
+            col = FIELDS_TO_COLUMNS["created_at"]
+            filter_clauses.add(f"(et[{col}] <= {value!r})")
+        elif key[0] == "#" and len(key) == 2:
+            col = FIELDS_TO_COLUMNS["tags"]
+            filter_clauses.add(
+                f"bool([t for t in et[{col}] if t[0] == {key[1]!r} and len(t) > 1 and t[1] in {value!r}])"
+            )
+    filter_string = " and ".join(filter_clauses)
+    function = f"""
+def check(et):
+    try:
+        return {filter_string}
+    except:
+        import traceback;traceback.print_exc()
+"""
+    loc = {}
+    # print(function)
+    exec(compile(function, "", "exec"), loc)
+    return loc["check"]
+
+
+def executor(lmdb_environment, filters, loop=None, default_limit=6000):
+    """
+    Execute one or several queries.
+    Returns (future, event_list)
+    await the future before accessing the list
+    """
+    plans = planner(filters, default_limit=default_limit)
+    loop = loop or asyncio.get_running_loop()
+
+    try:
+        # in the common case, when there's only one query,
+        # we can avoid some complexity.
+        # when there are multiple queries in the filter,
+        # we run them simultaneously and collect the results with collect_filters()
+
+        events = collections.deque()
+
+        if len(plans) == 1:
+            return (
+                loop.run_in_executor(
+                    None, execute_one_plan, lmdb_environment, plans[0], events.append
+                ),
+                events,
+            )
+        else:
+            return (
+                loop.run_in_executor(
+                    None, execute_many_plans, lmdb_environment, plans, events.append
+                ),
+                events,
+            )
+    except:
+        traceback.print_exc()
+
+
+def execute_one_plan(lmdb_environment: lmdb.Environment, plan: QueryPlan, on_event):
+    """
+    Run a single query plan, calling on_event for each event
+    """
+    try:
+        limit = plan.limit
+        with lmdb_environment.begin(buffers=True) as txn:
+            with plan.index.scanner(
+                txn,
+                plan.matches,
+                since=plan.since,
+                until=plan.until,
+            ) as scanner:
+                for event in matcher(txn, scanner, plan.query):
+                    if limit < 1:
+                        break
+                    on_event(event)
+                    limit -= 1
+    except:
+        traceback.print_exc()
+
+    finally:
+        on_event(None)
+
+
+def execute_many_plans(lmdb_environment: lmdb.Environment, plans, on_event):
+    """
+    Run multiple plans and coalesce the results
+    """
+    try:
+        tqueue = SimpleQueue()
+        getqueue = tqueue.get
+
+        tasks = []
+        for plan in plans:
+            tasks.append(
+                QUERY_POOL.submit(execute_one_plan, lmdb_environment, plan, tqueue.put)
             )
 
-            event = await inqueue.get()
+        event = getqueue()
 
-            while event:
-                await send_to_subscriber((self.sub_id, event))
-                event = await inqueue.get()
-                counter["count"] += 1
-            await send_to_subscriber((self.sub_id, None))
+        to_find = len(filters)
+        while True:
+            if event is not None:
+                on_event(event)
+            else:
+                to_find -= 1
+            if to_find:
+                event = getqueue()
+            else:
+                break
+    except:
+        traceback.print_exc()
+    finally:
+        on_event(None)
+
+
+def encode_event(event):
+    row = (
+        VERSION,
+        event.id_bytes,
+        event.created_at,
+        event.kind,
+        bytes.fromhex(event.pubkey),
+        event.content,
+        event.tags,
+        bytes.fromhex(event.sig),
+    )
+    return packb(row, use_bin_type=True, encoding="utf8")
+
+
+def decode_event(data):
+    et = unpackb(data, encoding="utf8")
+    assert et[0] == 1, "unknown version"
+    event = Event(
+        id=et[1].hex(),
+        created_at=et[2],
+        kind=et[3],
+        pubkey=et[4].hex(),
+        content=et[5],
+        tags=et[6],
+        sig=et[7].hex(),
+    )
+    return event
 
 
 if __name__ == "__main__":
