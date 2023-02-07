@@ -307,10 +307,10 @@ class LMDBStorage(BaseStorage):
 
     async def setup(self):
         await super().setup()
-        self.env = lmdb.open(**self.options)
         self.validate_event = get_validator(
             self.options.pop("validators", ["nostr_relay.validators.is_signed"])
         )
+        self.env = lmdb.open(**self.options)
         self.writer_thread = WriterThread(self.env, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
