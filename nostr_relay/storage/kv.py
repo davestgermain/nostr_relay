@@ -678,7 +678,7 @@ def execute_many_plans(lmdb_environment: lmdb.Environment, plans, on_event):
 
         event = getqueue()
 
-        to_find = len(filters)
+        to_find = len(plans)
         while True:
             if event is not None:
                 on_event(event)
