@@ -20,6 +20,7 @@ from concurrent import futures
 from .base import BaseStorage, BaseSubscription
 from ..auth import get_authenticator
 from ..config import Config
+from ..errors import StorageError
 from ..util import catchtime, Periodic, StatsCollector
 from ..validators import get_validator
 
@@ -90,22 +91,25 @@ class Index:
         get_key = cursor.key
 
         def skip(key):
-            # print(f'skipping to {key}')
-            return cursor.set_range(key + b"\xff")
+            found = cursor.set_range(key + b"\xff")
+            return found
 
         if matches:
             next_match = iter(compiled_matches).__next__
             match = next_match()
-            stop = compiled_matches[-1]
+            if len(compiled_matches) > 1:
+                stop = compiled_matches[-1]
+            else:
+                stop = self.prefix
             if since:
                 stop += b"\x00%s" % since
             skip(match + add_time)
         else:
             match = None
             if until:
-                start = self.prefix + until + b"\xff"
+                start = self.prefix + until + b"\x00"
             else:
-                start = (int.from_bytes(self.prefix, "big") + 1).to_bytes(1, "big")
+                start = self.prefix + b"\xff"
             cursor.set_range(start)
             stop = self.prefix
             if since:
@@ -119,6 +123,7 @@ class Index:
                 if not prev():
                     break
                 key = bytes(get_key())
+
                 # print(key, int.from_bytes(key[-37:-33]))
 
                 if match is not None:
@@ -144,6 +149,9 @@ class Index:
                             continue
                         else:
                             break
+                elif key[0:1] != self.prefix:
+                    continue
+
                 yield key[-32:]
 
         try:
@@ -205,7 +213,7 @@ class TagIndex(Index):
         tags = []
         for tag in event.tags:
             if len(tag[0]) == 1 or tag[0] in ("expiration", "delegation"):
-                yield self.to_key((tag[0], tag[1]))
+                yield self.to_key((tag[0], str(tag[1])))
 
 
 class AuthorKindIndex(Index):
@@ -266,6 +274,7 @@ class WriterThread(threading.Thread):
                         if operation == "add":
                             for index in write_indexes:
                                 index.write(event, txn)
+                                # log.debug("index %s event %s", index, event)
                             counter["count"] += 1
                             if event.kind in (
                                 EventKind.SET_METADATA,
@@ -284,10 +293,11 @@ class WriterThread(threading.Thread):
                         elif operation == "del":
                             delete_event(bytes.fromhex(event), txn)
                             counter["count"] += 1
-                if qsize() > 1000:
+                qs = qsize()
+                if qs >= 1000 and qs % 100 == 0:
                     # since we can do about 1,000 writes per second (end-to-end),
                     # this would indicate very heavy load
-                    log.warning("Write queue size: %d", qsize())
+                    log.warning("Write queue size: %d", qs)
             except Exception as e:
                 log.exception("writer")
 
@@ -313,6 +323,7 @@ class LMDBStorage(BaseStorage):
         self.writer_queue.put(None)
         self.writer_thread.join()
         self.env.close()
+        self.log.debug("Closed storage %s", self.options["path"])
 
     async def setup(self):
         await super().setup()
@@ -320,12 +331,20 @@ class LMDBStorage(BaseStorage):
             self.options.pop("validators", ["nostr_relay.validators.is_signed"])
         )
         self.env = lmdb.open(**self.options)
+        self.write_tombstone()
         self.writer_thread = WriterThread(self.env, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
         self.garbage_collector_task = asyncio.create_task(
             KVGarbageCollector(self, collect_interval=300).start()
         )
+
+    def write_tombstone(self):
+        """
+        Write a record at the end of the db, to avoid a weird edge case
+        """
+        with self.env.begin(write=True) as txn:
+            txn.put(b"\xee", b"")
 
     def delete_event(self, event_id):
         self.writer_queue.put((event_id, "del"))
@@ -394,6 +413,8 @@ class LMDBStorage(BaseStorage):
                 return decode_event(event_data)
 
     async def run_single_query(self, filters):
+        if isinstance(filters, dict):
+            filters = [filters]
         task, events = executor(self.env, filters, default_limit=600000)
         await task
         for event in events:
@@ -657,9 +678,12 @@ def executor(
             )
 
         if len(tasks) == 1:
-            return tasks[0], events
+            task = tasks[0]
         else:
-            return asyncio.gather(*tasks), events
+            task = asyncio.gather(*tasks)
+        # log queries, analyze results, etc.
+        task.add_done_callback(analyze)
+        return task, events
     except:
         if log:
             log.exception("executor")
@@ -691,7 +715,40 @@ def execute_one_plan(
         log.exception("execute_one_plan")
 
     finally:
+        return plan, log
+
+
+def _analyze_threaded(task):
+    result = task.result()
+    if not isinstance(result, list):
+        plans, log = [result[0]], result[1]
+
+    else:
+        plans, log = [r[0] for r in result], result[0][1]
+
+    for plan in plans:
         log.debug("Executed plan. Stats: %s", plan.stats)
+        stats = plan.stats
+        if stats["index_misses"] > stats["index_hits"]:
+            total = stats["index_hits"] + stats["index_misses"]
+            log.info(
+                "Misses for query %s since:%s until:%s – %s/%s",
+                plan.query,
+                plan.since,
+                plan.until,
+                stats["index_misses"],
+                total,
+            )
+
+
+def analyze(task, later=True):
+    """
+    Analyze and log query stats from the completed task
+    """
+    if later:
+        QUERY_POOL.submit(_analyze_threaded, task)
+    else:
+        _analyze_threaded(task)
 
 
 def encode_event(event):
@@ -732,5 +789,10 @@ if __name__ == "__main__":
         with env.begin() as txn:
             with txn.cursor() as c:
                 c.set_range(b"\xff")
+                mapping = {i.prefix: i.__class__.__name__ for i in INDEXES.values()}
+
                 for key in c.iterprev(values=False):
-                    print(repr(key)[2:])
+                    idx = key[0:1]
+                    event_id = key[-32:].hex()
+                    s = f"{mapping[idx]} {key[1:-32]} {event_id}"
+                    print(s)
