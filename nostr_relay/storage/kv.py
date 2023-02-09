@@ -590,7 +590,6 @@ def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
             stats["index_hits"] += 1
         else:
             stats["index_misses"] += 1
-            print(repr(event_tuple))
 
 
 @functools.lru_cache()
