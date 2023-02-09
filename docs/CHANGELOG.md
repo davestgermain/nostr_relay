@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.10.1
+
+* Improve index matches when there are few results
+* Fixed: mistakenly using the old version of msgpack
+
 ## 1.10
 
 * Improved LMDB storage. [Documentation](lmdb.md)

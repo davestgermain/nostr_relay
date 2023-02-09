@@ -145,7 +145,8 @@ class Index:
                             key = get_key()
                         else:
                             break
-                    yield key[-32:]
+                    if key[:matchlen] == match:
+                        yield key[-32:]
                 elif key[0:1] == self.prefix:
                     yield key[-32:]
 
@@ -568,7 +569,7 @@ def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
 
     def get_event_data(event_id):
         try:
-            return unpackb(txn.get(b"\x00%s" % event_id), encoding="utf8")
+            return unpackb(txn.get(b"\x00%s" % event_id))
         except TypeError:
             return None
 
@@ -589,6 +590,7 @@ def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
             stats["index_hits"] += 1
         else:
             stats["index_misses"] += 1
+            print(repr(event_tuple))
 
 
 @functools.lru_cache()
@@ -748,11 +750,11 @@ def encode_event(event):
         event.tags,
         bytes.fromhex(event.sig),
     )
-    return packb(row, use_bin_type=True, encoding="utf8")
+    return packb(row, use_bin_type=True)
 
 
 def decode_event(data):
-    et = unpackb(data, encoding="utf8")
+    et = unpackb(data)
     assert et[0] == 1, "unknown version"
     event = Event(
         id=et[1].hex(),
