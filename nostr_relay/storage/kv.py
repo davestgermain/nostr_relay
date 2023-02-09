@@ -466,9 +466,9 @@ class KVGarbageCollector(BaseGarbageCollector):
     def __init__(self, storage, **kwargs):
         super().__init__(
             storage,
+            async_transaction=False,
             **kwargs,
         )
-        self.async_transaction = False
 
     async def collect(self, conn):
         to_del = []

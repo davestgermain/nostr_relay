@@ -23,7 +23,6 @@ class ConfigClass:
             "update_frequency": 3600,
         }
         self.garbage_collector = {
-            "class": "nostr_relay.storage.db.QueryGarbageCollector",
             "collect_interval": 300,
         }
         self.logging = {
