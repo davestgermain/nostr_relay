@@ -191,11 +191,11 @@ class DBTests(BaseTestsWithStorage):
         ).id == distant_future_event["id"]
 
         # stop and restart garbage collector to have it run immediately
-        from nostr_relay.storage.db import start_garbage_collector
+        from nostr_relay.storage.base import start_garbage_collector
 
         # self.storage.garbage_collector.stop()
         self.storage.garbage_collector = start_garbage_collector(
-            self.storage.db, {"collect_interval": 2}
+            self.storage, {"collect_interval": 2}
         )
 
         await asyncio.sleep(2.5)
@@ -206,10 +206,10 @@ class DBTests(BaseTestsWithStorage):
         ).id == distant_future_event["id"]
 
     async def test_ephemeral_event(self):
-        from nostr_relay.storage.db import start_garbage_collector
+        from nostr_relay.storage.base import start_garbage_collector
 
         self.storage.garbage_collector_task = start_garbage_collector(
-            self.storage.db, {"collect_interval": 2}
+            self.storage, {"collect_interval": 2}
         )
         ephemeral_event = {
             "id": "2696df86ce47142b7d272408e222b7a9fc4b2cc3a428bf2debf5d730ae2f42c7",

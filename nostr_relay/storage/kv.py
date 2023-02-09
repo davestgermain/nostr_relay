@@ -17,7 +17,7 @@ from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
 from concurrent import futures
 
-from .base import BaseStorage, BaseSubscription
+from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
 from ..auth import get_authenticator
 from ..config import Config
 from ..errors import StorageError
@@ -91,7 +91,10 @@ class Index:
         get_key = cursor.key
 
         def skip(key):
+            # print(f'skipping to {key}')
             found = cursor.set_range(key + b"\xff")
+            if found:
+                prev()
             return found
 
         if matches:
@@ -119,40 +122,36 @@ class Index:
         def iterator(match):
             key = bytes(get_key())
 
+            matchlen = len(match) if match is not None else 0
             while key > stop:
-                if not prev():
-                    break
-                key = bytes(get_key())
-
                 # print(key, int.from_bytes(key[-37:-33]))
-
+                # breakpoint()
                 if match is not None:
-                    time_miss = False
-                    if since or until:
-                        ts = key[-37:-33]
-                        if since and ts < since:
-                            time_miss = True
-                        if until and ts > until:
-                            time_miss = True
-                        # print(f"miss? {int.from_bytes(ts, 'big')} {time_miss} {int.from_bytes(since)} -> {int.from_bytes(until)}")
-                        # if time_miss:
-                        #     continue
-                    if key[: len(match)] != match or time_miss:
+                    ts = key[-37:-33]
+
+                    if (
+                        key[:matchlen] != match
+                        or (since and ts < since)
+                        or (until and ts > until)
+                    ):
                         try:
                             match = next_match()
+                            matchlen = len(match)
                         except StopIteration:
                             break
                         skipped = skip(match + add_time)
                         if skipped:
-                            # print(f"found {match} {skipped} {self.cursor.key()}")
-                            # yield key[-32:]
-                            continue
+                            # print(f"found {match} {skipped} {cursor.key()}")
+                            key = get_key()
                         else:
                             break
-                elif key[0:1] != self.prefix:
-                    continue
+                    yield key[-32:]
+                elif key[0:1] == self.prefix:
+                    yield key[-32:]
 
-                yield key[-32:]
+                if not prev():
+                    break
+                key = bytes(get_key())
 
         try:
             yield iterator(match)
@@ -303,47 +302,39 @@ class WriterThread(threading.Thread):
 
 
 class LMDBStorage(BaseStorage):
+    DEFAULT_GARBAGE_COLLECTOR = "nostr_relay.storage.kv.KVGarbageCollector"
+
     def __init__(self, options):
         super().__init__(options)
         self.options.pop("class")
         self.log = logging.getLogger(__name__)
         self.subscription_class = Subscription
-
-    async def __aenter__(self):
-        await self.setup()
-        return self
-
-    async def __aexit__(self, ex_type, ex, tb):
-        await self.close()
-
-    async def optimize(self):
-        pass
+        self.db = None
 
     async def close(self):
-        self.writer_queue.put(None)
-        self.writer_thread.join()
-        self.env.close()
-        self.log.debug("Closed storage %s", self.options["path"])
+        if self.db:
+            self.writer_queue.put(None)
+            self.writer_thread.join()
+            self.db.close()
+            self.db = None
+            self.log.debug("Closed storage %s", self.options["path"])
 
     async def setup(self):
         await super().setup()
         self.validate_event = get_validator(
             self.options.pop("validators", ["nostr_relay.validators.is_signed"])
         )
-        self.env = lmdb.open(**self.options)
+        self.db = lmdb.open(**self.options)
         self.write_tombstone()
-        self.writer_thread = WriterThread(self.env, self.stat_collector)
+        self.writer_thread = WriterThread(self.db, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
-        self.garbage_collector_task = asyncio.create_task(
-            KVGarbageCollector(self, collect_interval=300).start()
-        )
 
     def write_tombstone(self):
         """
         Write a record at the end of the db, to avoid a weird edge case
         """
-        with self.env.begin(write=True) as txn:
+        with self.db.begin(write=True) as txn:
             txn.put(b"\xee", b"")
 
     def delete_event(self, event_id):
@@ -390,7 +381,7 @@ class LMDBStorage(BaseStorage):
                 "until": event.created_at - 1,
             }
         if query:
-            task, events = executor(self.env, [query], loop=self.loop)
+            task, events = executor(self.db, [query], loop=self.loop)
             await task
             for event in events:
                 if event is not None:
@@ -407,7 +398,7 @@ class LMDBStorage(BaseStorage):
         await self.notify_other_processes(event)
 
     async def get_event(self, event_id: str):
-        with self.env.begin(buffers=True) as txn:
+        with self.db.begin(buffers=True) as txn:
             event_data = txn.get(b"\x00%s" % bytes.fromhex(event_id))
             if event_data:
                 return decode_event(event_data)
@@ -415,7 +406,7 @@ class LMDBStorage(BaseStorage):
     async def run_single_query(self, filters):
         if isinstance(filters, dict):
             filters = [filters]
-        task, events = executor(self.env, filters, default_limit=600000)
+        task, events = executor(self.db, filters, default_limit=600000)
         await task
         for event in events:
             if event is not None:
@@ -435,7 +426,7 @@ class LMDBStorage(BaseStorage):
             num_subs += v
         stats["active_subscriptions"] = num_subs
         stats["active_clients"] = num_clients
-        stats.update(self.env.stat())
+        stats.update(self.db.stat())
         return stats
 
 
@@ -452,7 +443,7 @@ class Subscription(BaseSubscription):
     async def run_query(self):
         with self.storage.stat_collector.timeit("query") as counter:
             task, events = executor(
-                self.storage.env,
+                self.storage.db,
                 self.query,
                 loop=self.storage.loop,
                 default_limit=self.default_limit,
@@ -470,34 +461,30 @@ class Subscription(BaseSubscription):
         self.log.debug("Done with query")
 
 
-class KVGarbageCollector(Periodic):
+class KVGarbageCollector(BaseGarbageCollector):
     def __init__(self, storage, **kwargs):
         super().__init__(
-            kwargs.get("collect_interval", 300),
-            run_at_start=False,
-            swallow_exceptions=True,
+            storage,
+            **kwargs,
         )
-        self.log = logging.getLogger("nostr_relay.kv:gc")
-        self.storage = storage
+        self.async_transaction = False
 
-    async def run_once(self):
-        self.log.info("Starting gc")
-
+    async def collect(self, conn):
         to_del = []
-        with self.storage.env.begin(buffers=False) as txn:
-            cursor = txn.cursor()
-            start = INDEXES["kinds"].to_key(20000)
-            end = INDEXES["kinds"].to_key(29999)
-            if cursor.set_range(start):
-                for key in cursor.iternext(values=False):
-                    if key > end:
-                        break
-                    event_id = key[-32:].hex()
-                    to_del.append(event_id)
+        cursor = conn.cursor()
+        start = INDEXES["kinds"].to_key(20000)
+        end = INDEXES["kinds"].to_key(29999)
+        if cursor.set_range(start):
+            for key in cursor.iternext(values=False):
+                if key > end:
+                    break
+                event_id = key[-32:].hex()
+                to_del.append(event_id)
+        cursor.close()
         if to_del:
             for event_id in to_del:
                 self.storage.delete_event(event_id)
-            self.log.info("Deleted %d events", len(to_del))
+        return len(to_del)
 
 
 def planner(filters, default_limit=6000, log=None):
@@ -685,8 +672,7 @@ def executor(
         task.add_done_callback(analyze)
         return task, events
     except:
-        if log:
-            log.exception("executor")
+        log.exception("executor")
 
 
 def execute_one_plan(

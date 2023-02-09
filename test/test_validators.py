@@ -1,14 +1,10 @@
 import unittest
 import time
-from . import BaseTestsWithStorage
+from . import BaseTestsWithStorage, PK1, PK2
 from nostr_relay import validators
 from nostr_relay.errors import StorageError
 from nostr_relay.config import ConfigClass
 from aionostr.event import Event
-
-
-PK1 = "f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753"
-PK2 = "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d"
 
 
 class ValidatorTests(BaseTestsWithStorage):

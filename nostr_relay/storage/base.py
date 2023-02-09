@@ -5,7 +5,14 @@ import functools
 from aionostr.event import Event
 from ..config import Config
 from ..errors import StorageError, AuthenticationError
-from ..util import StatsCollector, catchtime, json
+from ..util import (
+    StatsCollector,
+    catchtime,
+    json,
+    object_from_path,
+    call_from_path,
+    Periodic,
+)
 from ..auth import get_authenticator, Action
 
 
@@ -23,6 +30,9 @@ class BaseStorage:
     async def close(self):
         pass
 
+    async def optimize(self):
+        pass
+
     async def setup(self):
         self.loop = asyncio.get_running_loop()
         if Config.should_run_notifier:
@@ -35,6 +45,12 @@ class BaseStorage:
         self.stat_collector = StatsCollector(self.options.get("stats_interval", 60.0))
         await self.stat_collector.start()
         self.authenticator = get_authenticator(self, Config.get("authentication", {}))
+        output_validator = Config.get("output_validator")
+        if output_validator:
+            self.check_output = object_from_path(output_validator)
+        else:
+            self.check_output = None
+        self.garbage_collector_task = start_garbage_collector(self)
 
     async def __aenter__(self):
         await self.setup()
@@ -59,14 +75,19 @@ class BaseStorage:
         ):
             raise StorageError("rejected: too many subscriptions")
         sub = self.subscription_class(
-            self, sub_id, filters, queue=queue, client_id=client_id, **kwargs
+            self,
+            sub_id,
+            filters,
+            queue=queue,
+            client_id=client_id,
+            auth_token=auth_token,
+            **kwargs,
         )
         if sub.prepare():
             if self.authenticator and not await self.authenticator.can_do(
                 auth_token, Action.query.value, sub
             ):
                 raise AuthenticationError("restricted: permission denied")
-
             sub.start()
             self.clients[client_id][sub_id] = sub
             self.log.debug("%s/%s +", client_id, sub_id)
@@ -115,6 +136,7 @@ class BaseSubscription:
         "query_task",
         "default_limit",
         "log",
+        "auth_token",
     )
 
     def __init__(
@@ -126,6 +148,7 @@ class BaseSubscription:
         client_id=None,
         default_limit=6000,
         log=None,
+        auth_token=None,
         **kwargs,
     ):
         self.storage = storage
@@ -135,6 +158,7 @@ class BaseSubscription:
         self.queue = queue
         self.query_task = None
         self.default_limit = default_limit
+        self.auth_token = auth_token
         self.log = log or storage.log
 
     def prepare(self):
@@ -196,6 +220,51 @@ class BaseSubscription:
             if all(matched):
                 return True
         return False
+
+
+class BaseGarbageCollector(Periodic):
+    def __init__(self, storage, **kwargs):
+        self.log = logging.getLogger("nostr_relay.storage:gc")
+        self.storage = storage
+        self.running = True
+        self.collect_interval = kwargs.get("collect_interval", 300)
+        self.async_transaction = True
+        super().__init__(self.collect_interval, swallow_exceptions=True)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    async def collect(self, db):
+        pass
+
+    async def start(self):
+        self.log.info(
+            "Starting garbage collector %s. Interval %s",
+            self.__class__.__name__,
+            self.collect_interval,
+        )
+        await super().start()
+
+    async def run_once(self):
+        collected = 0
+        if self.async_transaction:
+            async with self.storage.db.begin() as conn:
+                collected = await self.collect(conn)
+        else:
+            with self.storage.db.begin() as conn:
+                collected = await self.collect(conn)
+        if collected:
+            self.log.info("Collected garbage (%d events)", collected)
+
+
+def start_garbage_collector(storage, options=None):
+    options = options or Config.garbage_collector
+    if options:
+        gc_obj = call_from_path(
+            options.pop("class", storage.DEFAULT_GARBAGE_COLLECTOR),
+            storage,
+            **options,
+        )
+        return asyncio.create_task(gc_obj.start())
 
 
 @functools.lru_cache

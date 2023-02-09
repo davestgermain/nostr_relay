@@ -1,5 +1,11 @@
 # CHANGES
 
+## 1.10
+
+* Improved LMDB storage. [Documentation](lmdb.md)
+* Added `output_validator` feature
+* Added `purge` CLI command, for deleting events based on a passed-in query
+
 ## 1.9.2
 
 * Throttle clients that continuously receive authentication errors

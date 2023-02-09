@@ -10,7 +10,7 @@ from nostr_relay.storage import kv
 from nostr_relay.config import Config
 
 
-class KVStorageTests(BaseTestsWithStorage):
+class BaseLMDBTests(BaseTestsWithStorage):
     envdir = "/tmp/nostrtests/"
 
     def setUp(self):
@@ -33,6 +33,8 @@ class KVStorageTests(BaseTestsWithStorage):
         if False and os.path.isdir(self.envdir):
             shutil.rmtree(self.envdir)
 
+
+class LMDBStorageTests(BaseLMDBTests):
     async def test_add_event(self):
         event = self.make_event(PK1, kind=1, content="hello world")
         result = await self.storage.add_event(event)
@@ -104,7 +106,7 @@ class KVStorageTests(BaseTestsWithStorage):
             event = self.make_event(
                 PK1, kind=1, content=f"test_good_queries {now} {i}", created_at=now - i
             )
-            print(event["pubkey"])
+            # print(event["pubkey"])
             await self.storage.add_event(event)
         for i in range(10):
             event = self.make_event(
@@ -181,9 +183,7 @@ class KVStorageTests(BaseTestsWithStorage):
         plan = kv.planner(query)[0]
 
         results = []
-        kv.execute_one_plan(
-            self.storage.env, plan, results.append, log=self.storage.log
-        )
+        kv.execute_one_plan(self.storage.db, plan, results.append, log=self.storage.log)
 
         assert results[0].id == event["id"]
 
@@ -207,7 +207,7 @@ class KVStorageTests(BaseTestsWithStorage):
         async for event in self.storage.run_single_query(query):
             assert event.kind == 1
             results.append(event)
-            print(str(event))
+            # print(str(event))
         assert len(results) == 10
 
         results.clear()
@@ -291,3 +291,42 @@ class KVStorageTests(BaseTestsWithStorage):
     async def test_get_idp(self):
         idp = await self.storage.get_identified_pubkey("")
         assert idp == {"names": {}, "relays": {}}
+
+    async def test_context_manager(self):
+        async with self.storage:
+            hello = self.make_event(PK1)
+            await self.storage.add_event(hello)
+            await asyncio.sleep(0.3)
+            event = await self.storage.get_event(hello["id"])
+        assert self.storage.db is None
+
+
+class KVGCTests(BaseLMDBTests):
+    async def asyncSetUp(self):
+        Config.garbage_collector = {"collect_interval": 2}
+        await super().asyncSetUp()
+
+    async def test_garbage_collector(self):
+        now = int(time.time())
+        for i in range(10):
+            event = self.make_event(
+                PK1,
+                kind=22222,
+                content=f"test_garbage_collector {now} {i}",
+                created_at=now - i,
+            )
+            await self.storage.add_event(event)
+
+        await asyncio.sleep(0.2)
+        results = []
+        async for event in self.storage.run_single_query({"kinds": [22222]}):
+            assert event.kind == 22222
+            results.append(event)
+        assert len(results) == 10
+
+        await asyncio.sleep(2.2)
+
+        results = []
+        async for event in self.storage.run_single_query({"kinds": [22222]}):
+            results.append(event)
+        assert len(results) == 0

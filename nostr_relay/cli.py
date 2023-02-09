@@ -386,6 +386,44 @@ def mirror(ids, authors, kinds, etags, ptags, since, until, limit, source, targe
         return 0
 
 
+@main.command()
+@click.option("-q", "query", help="Query", required=True)
+@click.pass_context
+@async_cmd
+async def purge(ctx, query):
+    """
+    Purge events from the specified query
+    """
+    from .util import json
+    from .storage import get_storage
+
+    query = json.loads(query)
+    print(repr(query))
+    async with get_storage() as storage:
+        events = []
+        async for event in storage.run_single_query([query]):
+            events.append(event)
+        if events:
+            answer = (
+                click.prompt(
+                    f"Are you sure you want to delete {len(events)} events? [y/N]",
+                    default="n",
+                )
+                .strip()
+                .lower()[0]
+            )
+            if answer == "y":
+                click.echo(f"Deleting {len(events)} events...")
+                if asyncio.iscoroutinefunction(storage.delete_event):
+                    for event in events:
+                        await storage.delete_event(event.id)
+                else:
+                    for event in events:
+                        storage.delete_event(event.id)
+        else:
+            click.echo("No events found")
+
+
 @main.command(
     context_settings=dict(
         ignore_unknown_options=True,

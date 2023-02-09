@@ -15,13 +15,12 @@ from ..auth import get_authenticator, Action
 from ..errors import StorageError, AuthenticationError
 from ..util import (
     object_from_path,
-    call_from_path,
     catchtime,
     Periodic,
     json,
 )
 from . import get_metadata
-from .base import BaseStorage, BaseSubscription
+from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
 
 
 force_hex_translation = str.maketrans(
@@ -40,6 +39,8 @@ def validate_id(obj_id):
 
 
 class DBStorage(BaseStorage):
+    DEFAULT_GARBAGE_COLLECTOR = "nostr_relay.storage.db.QueryGarbageCollector"
+
     def __init__(self, options):
         super().__init__(options)
         self.options, self.sqlalchemy_options = self.parse_options(options)
@@ -145,7 +146,6 @@ class DBStorage(BaseStorage):
                 "OR IGNORE"
             )
 
-        self.garbage_collector_task = start_garbage_collector(self.db)
         self.verifier = Verifier(self, Config.get("verification", {}))
         await self.verifier.start(self.db)
         self.log.debug("done setting up")
@@ -164,6 +164,14 @@ class DBStorage(BaseStorage):
                 row = result.first()
         if row:
             return Event.from_tuple(row)
+
+    async def delete_event(self, event_id):
+        async with self.db.begin() as conn:
+            await conn.execute(
+                self.EventTable.delete().where(
+                    self.EventTable.c.id == bytes.fromhex(event_id)
+                )
+            )
 
     async def add_event(self, event_json, auth_token=None):
         """
@@ -477,7 +485,9 @@ class Subscription(BaseSubscription):
     async def run_query(self):
         sub_id = self.sub_id
         queue = self.queue
-        async for event in self.storage.run_query(
+        check_output = self.storage.check_output
+
+        results = self.storage.run_query(
             self.query,
             if_long=lambda duration: logging.getLogger(
                 "nostr_relay.long-queries"
@@ -485,8 +495,19 @@ class Subscription(BaseSubscription):
                 f"{self.client_id}/{self.sub_id} Long query: '{self.filters}' took %dms",
                 duration,
             ),
-        ):
-            await queue.put((sub_id, event))
+        )
+        if check_output:
+            context = {
+                "config": Config,
+                "client_id": self.client_id,
+                "auth_token": self.auth_token,
+            }
+            async for event in results:
+                if check_output(event, context):
+                    await queue.put((sub_id, event))
+        else:
+            async for event in results:
+                await queue.put((sub_id, event))
         await queue.put((sub_id, None))
 
     def evaluate_filter(self, filter_obj, subwhere):
@@ -606,38 +627,6 @@ class Subscription(BaseSubscription):
         return sa.text(select), new_filters
 
 
-class BaseGarbageCollector(Periodic):
-    def __init__(self, db, **kwargs):
-        self.log = logging.getLogger("nostr_relay.db:gc")
-        self.db = db
-        self.running = True
-        self.collect_interval = kwargs.get("collect_interval", 300)
-        super().__init__(self.collect_interval)
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-    async def collect(self, db):
-        pass
-
-    async def start(self):
-        self.log.info(
-            "Starting garbage collector %s. Interval %s",
-            self.__class__.__name__,
-            self.collect_interval,
-        )
-        await super().start()
-
-    async def run_once(self):
-        collected = 0
-        try:
-            async with self.db.begin() as conn:
-                collected = await self.collect(conn)
-            if collected:
-                self.log.info("Collected garbage (%d events)", collected)
-        except Exception:
-            self.log.exception("collect")
-
-
 class QueryGarbageCollector(BaseGarbageCollector):
     query = """
         DELETE FROM events WHERE events.id IN
@@ -656,14 +645,3 @@ class QueryGarbageCollector(BaseGarbageCollector):
             sa.text(self.query.replace("%NOW%", str(int(time()))))
         )
         return max(0, result.rowcount)
-
-
-def start_garbage_collector(db, options=None):
-    options = options or Config.garbage_collector
-    if options:
-        gc_obj = call_from_path(
-            options.pop("class", "nostr_relay.storage.db.QueryGarbageCollector"),
-            db,
-            **options,
-        )
-        return asyncio.create_task(gc_obj.start())
