@@ -522,7 +522,7 @@ class Subscription(BaseSubscription):
         self.query = planner(
             self.filters, default_limit=self.default_limit, log=self.log
         )
-        return True
+        return bool(self.query)
 
     async def run_query(self):
         with self.storage.stat_collector.timeit("query") as counter:

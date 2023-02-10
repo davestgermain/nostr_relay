@@ -99,23 +99,27 @@ async def query(ctx, query, results):
         sub = storage.subscription_class(
             storage, "cli", query, queue=queue, default_limit=60000
         )
-        sub.prepare()
+        if sub.prepare():
+            await sub.run_query()
+        else:
+            results = False
         click.echo(click.style("Query:", bold=True))
         click.echo(click.style(sub.query, fg="green"))
-        await sub.run_query()
 
-    if results:
-        click.echo(click.style("Results:", fg="black", bold=True))
+        if results:
+            click.echo(click.style("Results:", fg="black", bold=True))
 
-        while True:
-            sub, event = await queue.get()
-            if event:
-                click.echo(
-                    click.style(json.dumps(event.to_json_object(), indent=4), fg="red")
-                )
-                click.echo("")
-            else:
-                break
+            while True:
+                sub, event = await queue.get()
+                if event:
+                    click.echo(
+                        click.style(
+                            json.dumps(event.to_json_object(), indent=4), fg="red"
+                        )
+                    )
+                    click.echo("")
+                else:
+                    break
 
 
 @main.command()
