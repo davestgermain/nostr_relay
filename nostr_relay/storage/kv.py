@@ -122,12 +122,13 @@ class Index:
         def iterator(match):
             key = bytes(get_key())
 
-            matchlen = len(match) if match is not None else 0
-            while key > stop:
-                # print(key, int.from_bytes(key[-37:-33]))
-                # breakpoint()
-                if match is not None:
+
+            if match is not None:
+                matchlen = len(match)
+                while match:
+                    # breakpoint()
                     ts = key[-37:-33]
+                    # print(key, match, ts, since, until)
 
                     if (
                         key[:matchlen] != match
@@ -139,20 +140,31 @@ class Index:
                             matchlen = len(match)
                         except StopIteration:
                             break
+
                         skipped = skip(match + add_time)
                         if skipped:
                             # print(f"found {match} {skipped} {cursor.key()}")
-                            key = get_key()
+                            key = bytes(get_key())
+                            continue
                         else:
                             break
-                    if key[:matchlen] == match:
-                        yield key[-32:]
-                elif key[0:1] == self.prefix:
+                    elif key <= stop:
+                        break
                     yield key[-32:]
+                    if not prev():
+                        break
+                    key = bytes(get_key())
 
-                if not prev():
-                    break
-                key = bytes(get_key())
+            else:
+                while key > stop:
+                    # print(key, int.from_bytes(key[-37:-33]))
+                    # breakpoint()
+                    if key[0:1] == self.prefix:
+                        yield key[-32:]
+
+                    if not prev():
+                        break
+                    key = bytes(get_key())
 
         try:
             yield iterator(match)
@@ -294,7 +306,7 @@ class WriterThread(threading.Thread):
                             delete_event(bytes.fromhex(event), txn)
                             counter["count"] += 1
                 qs = qsize()
-                if qs >= 1000 and qs % 100 == 0:
+                if qs >= 1000 and qs % 1000 == 0:
                     # since we can do about 1,000 writes per second (end-to-end),
                     # this would indicate very heavy load
                     log.warning("Write queue size: %d", qs)

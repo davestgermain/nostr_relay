@@ -14,7 +14,10 @@ class BaseLMDBTests(BaseTestsWithStorage):
     envdir = "/tmp/nostrtests/"
 
     def setUp(self):
-        pass
+        try:
+            os.makedirs(self.envdir)
+        except FileExistsError:
+            pass
         # logging.disable(logging.CRITICAL)
 
     async def asyncSetUp(self):
@@ -38,7 +41,7 @@ class LMDBStorageTests(BaseLMDBTests):
     async def test_add_event(self):
         event = self.make_event(PK1, kind=1, content="hello world")
         result = await self.storage.add_event(event)
-        assert result[0].id == event["id"]
+        assert event["id"] == result[0].id
 
         event = self.make_event(
             PK1,
@@ -48,11 +51,11 @@ class LMDBStorageTests(BaseLMDBTests):
             tags=[["p", event["id"]], ["expiration", "12345"]],
         )
         result = await self.storage.add_event(event)
-        assert result[0].id == event["id"]
+        assert event["id"] == result[0].id
 
         event = self.make_event(PK1, kind=0, content="hello world 2")
         result = await self.storage.add_event(event)
-        assert result[0].id == event["id"]
+        assert event["id"] == result[0].id
 
     async def test_add_bad_events(self):
         with self.assertRaises(StorageError):
@@ -65,7 +68,7 @@ class LMDBStorageTests(BaseLMDBTests):
         # adding event returns before queue completes
         await asyncio.sleep(0.2)
         retrieved = await self.storage.get_event(event["id"])
-        assert retrieved.id == event["id"]
+        assert event["id"] == retrieved.id
 
     async def test_good_queries(self):
         now = int(time.time())
@@ -87,18 +90,20 @@ class LMDBStorageTests(BaseLMDBTests):
         query = {"kinds": [1]}
         results = []
         async for event in self.storage.run_single_query(query):
-            assert event.kind == 1
+            assert 1 == event.kind
             results.append(event)
 
-        assert len(results) == 10
+
+        assert 10 == len(results)
 
         query = [{"kinds": [1], "since": now - 3}, {"kinds": [22222], "until": now - 4}]
         results = []
-        async for event in self.storage.run_single_query(query):
-            assert event.kind in (1, 22222)
-            results.append(event)
+        with self.assertNoLogs('nostr_relay', level='INFO'):
+            async for event in self.storage.run_single_query(query):
+                assert event.kind in (1, 22222)
+                results.append(event)
 
-        assert len(results) == 6
+        assert 6 == len(results)
 
     async def test_subscription(self):
         now = int(time.time())
@@ -155,10 +160,10 @@ class LMDBStorageTests(BaseLMDBTests):
             sub_id, event = await queue.get()
             if event is None:
                 break
-            assert sub_id == "test_subscriptions"
-            assert event.kind == 1
+            assert "test_subscriptions" == sub_id
+            assert 1 == event.kind
             count += 1
-        assert count == 10
+        assert 10 == count
         await self.storage.unsubscribe("test", "test_subscriptions")
 
     async def test_tag_query(self):
@@ -185,7 +190,7 @@ class LMDBStorageTests(BaseLMDBTests):
         results = []
         kv.execute_one_plan(self.storage.db, plan, results.append, log=self.storage.log)
 
-        assert results[0].id == event["id"]
+        assert event["id"] == results[0].id
 
     async def test_date_scan(self):
         now = int(time.time())
@@ -205,10 +210,10 @@ class LMDBStorageTests(BaseLMDBTests):
             + 100,
         }
         async for event in self.storage.run_single_query(query):
-            assert event.kind == 1
+            assert 1 == event.kind
             results.append(event)
             # print(str(event))
-        assert len(results) == 10
+        assert 10 == len(results)
 
         results.clear()
         query = {
@@ -216,9 +221,9 @@ class LMDBStorageTests(BaseLMDBTests):
             "until": now - 4,
         }
         async for event in self.storage.run_single_query(query):
-            assert event.kind == 1
+            assert 1 == event.kind
             results.append(event)
-        assert len(results) == 1
+        assert 1 == len(results)
 
         results.clear()
         query = {
@@ -226,9 +231,9 @@ class LMDBStorageTests(BaseLMDBTests):
             # "until": now + 100,
         }
         async for event in self.storage.run_single_query(query):
-            assert event.kind == 1
+            assert 1 == event.kind
             results.append(event)
-        assert len(results) == 10
+        assert 10 == len(results)
 
     async def test_delete_event(self):
         event = self.make_event(PK1, kind=1, content="test_delete_event")
@@ -237,13 +242,13 @@ class LMDBStorageTests(BaseLMDBTests):
         # adding event returns before queue completes
         await asyncio.sleep(0.2)
         retrieved = await self.storage.get_event(event["id"])
-        assert retrieved.id == event["id"]
+        assert event["id"] == retrieved.id
 
         self.storage.delete_event(event["id"])
         await asyncio.sleep(0.2)
 
         retrieved = await self.storage.get_event(event["id"])
-        assert retrieved is None
+        assert None is retrieved
 
         again = self.make_event(
             PK1, kind=1, content="test_delete_event", created_at=int(time.time() - 10)
