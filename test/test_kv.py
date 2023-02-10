@@ -93,12 +93,11 @@ class LMDBStorageTests(BaseLMDBTests):
             assert 1 == event.kind
             results.append(event)
 
-
         assert 10 == len(results)
 
         query = [{"kinds": [1], "since": now - 3}, {"kinds": [22222], "until": now - 4}]
         results = []
-        with self.assertNoLogs('nostr_relay', level='INFO'):
+        with self.assertNoLogs("nostr_relay", level="INFO"):
             async for event in self.storage.run_single_query(query):
                 assert event.kind in (1, 22222)
                 results.append(event)
@@ -109,26 +108,32 @@ class LMDBStorageTests(BaseLMDBTests):
         now = int(time.time())
         for i in range(10):
             event = self.make_event(
-                PK1, kind=1, content=f"test_good_query_plan {now} {i}", created_at=now - i,
-                tags=[["t", "foobar"]]
+                PK1,
+                kind=1,
+                content=f"test_good_query_plan {now} {i}",
+                created_at=now - i,
+                tags=[["t", "foobar"]],
             )
             await self.storage.add_event(event)
 
         for i in range(20):
             event = self.make_event(
-                PK1, kind=1, content=f"test_good_query_plan {now} {i}", created_at=now - i,
-                tags=[["t", "bazbar"]]
+                PK1,
+                kind=1,
+                content=f"test_good_query_plan {now} {i}",
+                created_at=now - i,
+                tags=[["t", "bazbar"]],
             )
             await self.storage.add_event(event)
         await asyncio.sleep(0.4)
 
         query = {
-            "kinds": [1],
+            "kinds": [1, 4],
             "#t": ["foobar"],
-            # "since": now - 20,
+            "since": now - 20,
         }
         results = []
-        with self.assertNoLogs('nostr_relay.kvquery', level='INFO'):
+        with self.assertNoLogs("nostr_relay.kvquery", level="INFO"):
             async for event in self.storage.run_single_query(query):
                 assert 1 == event.kind
                 results.append(event)

@@ -12,6 +12,7 @@ import traceback
 
 from contextlib import contextmanager
 from queue import SimpleQueue
+from time import perf_counter
 
 from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
@@ -121,7 +122,6 @@ class Index:
 
         def iterator(match):
             key = bytes(get_key())
-
 
             if match is not None:
                 matchlen = len(match)
@@ -697,6 +697,7 @@ def execute_one_plan(
     try:
         limit = plan.limit
         count = 0
+        plan.stats["start"] = perf_counter()
         with lmdb_environment.begin(buffers=True) as txn:
             with plan.index.scanner(
                 txn,
@@ -710,11 +711,15 @@ def execute_one_plan(
                     on_event(event)
                     count += 1
         plan.stats["count"] = count
+        plan.stats["end"] = perf_counter()
     except:
         log.exception("execute_one_plan")
 
     finally:
         return plan, log
+
+
+SLOW_QUERY_THRESHOLD = 500
 
 
 def _analyze_threaded(task):
@@ -728,16 +733,26 @@ def _analyze_threaded(task):
     for plan in plans:
         log.debug("Executed plan. Stats: %s", plan.stats)
         stats = plan.stats
-        if stats["index_misses"] > stats["index_hits"]:
-            total = stats["index_hits"] + stats["index_misses"]
+        duration = (stats["end"] - stats["start"]) * 1000  # milliseconds
+        if duration > SLOW_QUERY_THRESHOLD:
             log.info(
-                "Misses for query %s since:%s until:%s – %s/%s",
+                "Slowish query: %s since:%s until:%s – took %.2fms",
                 plan.query,
                 plan.since,
                 plan.until,
-                stats["index_misses"],
-                total,
+                duration,
             )
+
+            if stats["index_misses"] > stats["index_hits"]:
+                total = stats["index_hits"] + stats["index_misses"]
+                log.info(
+                    "Misses for query %s since:%s until:%s – %s/%s",
+                    plan.query,
+                    plan.since,
+                    plan.until,
+                    stats["index_misses"],
+                    total,
+                )
 
 
 def analyze(task, later=True):
