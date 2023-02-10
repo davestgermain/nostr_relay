@@ -62,6 +62,13 @@ class BaseStorage:
     async def get_stats(self):
         return {}
 
+    async def get_event_from_query(self, query):
+        """
+        Return the first event from the query
+        """
+        async for event in self.run_single_query([query]):
+            return event
+
     async def subscribe(
         self, client_id, sub_id, filters, queue, auth_token=None, **kwargs
     ):

@@ -215,7 +215,7 @@ class LMDBStorageTests(BaseLMDBTests):
         )
         await self.storage.add_event(event)
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.2)
 
         query = [
             {"#p": ["5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"]}
@@ -235,7 +235,7 @@ class LMDBStorageTests(BaseLMDBTests):
             )
             # print(event['pubkey'])
             await self.storage.add_event(event)
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.2)
 
         results = []
 
@@ -321,7 +321,7 @@ class LMDBStorageTests(BaseLMDBTests):
         sub = await self.storage.subscribe(
             "test",
             "test_subscriptions",
-            {"ids": ["abcdef"]},
+            [{"ids": ["abcdef"]}],
             queue,
         )
         stats = await self.storage.get_stats()

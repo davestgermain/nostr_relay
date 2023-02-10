@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.10.5
+
+* Add a `MultiIndex` to chain index results, reducing query misses.
+
 ## 1.10.2 - 4
 
 * Improve index matches when there are few results

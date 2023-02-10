@@ -54,7 +54,14 @@ QueryPlan = collections.namedtuple(
 )
 
 
+class FakeContainer:
+    def __contains__(self, anything):
+        return True
+
+
 class Index:
+    cardinality = 1
+
     def __init__(self):
         self.hits = self.misses = 0
 
@@ -73,7 +80,9 @@ class Index:
         return f"{self.__class__.__name__}({self.prefix})"
 
     @contextmanager
-    def scanner(self, txn, matches: list, since=None, until=None):
+    def scanner(
+        self, txn, matches: list, since=None, until=None, events=FakeContainer()
+    ):
         cursor = txn.cursor()
         # compile the matches to the expected format for the index,
         # to make substring checks quicker
@@ -148,9 +157,11 @@ class Index:
                             continue
                         else:
                             break
-                    elif key <= stop:
+                    elif key < stop:
                         break
-                    yield key[-32:]
+
+                    if key[-32:] in events:
+                        yield key[-32:]
                     if not prev():
                         break
                     key = bytes(get_key())
@@ -174,6 +185,7 @@ class Index:
 
 class IdIndex(Index):
     prefix = b"\x00"
+    cardinality = 1000
 
     def to_key(self, value):
         return self.prefix + bytes.fromhex(value)
@@ -217,6 +229,7 @@ class PubkeyIndex(Index):
 
 class TagIndex(Index):
     prefix = b"\x09"
+    cardinality = 100
 
     def to_key(self, value):
         return b"%s%s\x00%s" % (self.prefix, value[0].encode(), value[1].encode())
@@ -230,6 +243,7 @@ class TagIndex(Index):
 
 class AuthorKindIndex(Index):
     prefix = b"\x04"
+    cardinality = 20
 
     def to_key(self, value):
         return b"%s%s\x00%s" % (
@@ -250,6 +264,61 @@ INDEXES = {
     "authorkinds": AuthorKindIndex(),
     "tags": TagIndex(),
 }
+
+
+class MultiIndex:
+    __slots__ = ("indexes", "_has_ids")
+    """
+    This class is a container for multiple indexes.
+    The `scanner()` method will chain the results of each index.
+    """
+
+    def __init__(self):
+        self.indexes = []
+        self._has_ids = None
+
+    def __repr__(self):
+        return f"MultiIndex({[i[0].__class__.__name__ for i in self.indexes]})"
+
+    def sort_key(self, item):
+        index, matches = item
+        key = index.cardinality * len(matches)
+        return key
+
+    def add(self, indexname: str, matches: list):
+        self.indexes.append((INDEXES[indexname], matches))
+        if indexname == "ids":
+            self._has_ids = len(self.indexes) - 1
+
+    def finalize(self):
+        # if there are no matches, this is a date range scan
+        if not self.indexes:
+            best_index = INDEXES["created_at"]
+            matches = []
+        elif len(self.indexes) == 1:
+            # if there's only one index needed in the query,
+            # just use that one instead of going through MultiIndex
+            best_index, matches = self.indexes.pop(0)
+        elif self._has_ids is not None:
+            # if there are ids in the query, use them instead of anything else
+            best_index, matches = self.indexes[self._has_ids]
+        else:
+            self.indexes.sort(key=self.sort_key, reverse=True)
+            best_index = self
+            matches = [k[1] for k in self.indexes]
+        return best_index, matches
+
+    @contextmanager
+    def scanner(self, txn, matches: list, since=None, until=None, events=None):
+        def iterator(events):
+            for (index, _), imatches in zip(self.indexes, matches):
+                with index.scanner(
+                    txn, imatches, since=since, until=until, events=events
+                ) as scanner:
+                    events = set(scanner)
+            yield from events
+
+        yield iterator(events or FakeContainer())
 
 
 class WriterThread(threading.Thread):
@@ -450,7 +519,9 @@ class Subscription(BaseSubscription):
     )
 
     def prepare(self):
-        self.query = self.filters
+        self.query = planner(
+            self.filters, default_limit=self.default_limit, log=self.log
+        )
         return True
 
     async def run_query(self):
@@ -506,68 +577,71 @@ def planner(filters, default_limit=6000, log=None):
     """
     plans = []
     for query in filters:
-        matches = []
-        tags = []
-        scores = []
-        has_kinds = has_authors = has_ids = False
+        if isinstance(query, QueryPlan):
+            plans.append(query)
+            continue
+        tags = set()
         query_items = []
 
-        for key, value in query.items():
-            if key == "ids":
-                # if there are ids in the query, always use the id index
-                scores.append((1000, "ids", list(query["ids"])))
-                has_ids = True
-            elif key[0] == "#" and len(key) == 2:
-                tag = key[1]
-                tags.extend([(tag, val) for val in value])
-
-                scores.append((len(tags), "tags", tags))
-            elif key == "kinds":
-                scores.append((len(value), "kinds", list(value)))
-                has_kinds = True
-            elif key == "authors":
-                scores.append((len(value) * 3, "authors", list(value)))
-                has_authors = True
-            query_items.append(
-                (key, tuple(value) if isinstance(value, list) else value)
-            )
-
-        query_items = tuple(query_items)
-
-        if has_kinds and has_authors:
-            idx = "authorkinds"
-            kinds = sorted(query["kinds"], reverse=True)
-            authorkinds = []
-            for author in sorted(query["authors"], reverse=True):
-                for k in kinds:
-                    authorkinds.append((author, k))
-            scores.append((len(authorkinds) * 4, "authorkinds", authorkinds))
-
-        scores.sort(reverse=True)
-
-        # simplest thing is to pick the highest score
-        # but this might need to be tuned, depending on real life performance
-        if scores:
-            topscore, idx, matches = scores[0]
-        else:
-            idx = "created_at"
-
+        since = query.pop("since", None)
+        if since is not None:
+            query_items.append(("since", since))
+        until = query.pop("until", None)
+        if until is not None:
+            query_items.append(("until", until))
         try:
-            limit = min(max(0, int(query["limit"])), default_limit)
+            limit = min(max(0, int(query.pop("limit"))), default_limit)
         except KeyError:
             limit = default_limit
 
+        best_index = MultiIndex()
+        if "ids" in query:
+            ids = query.pop("ids")
+            query_items.append(("ids", tuple(ids)))
+            best_index.add("ids", ids)
+        if "kinds" in query and "authors" in query:
+            kinds = tuple(sorted(query.pop("kinds"), reverse=True))
+            authors = tuple(sorted(query.pop("authors"), reverse=True))
+            authormatches = []
+            for author in authors:
+                for k in kinds:
+                    authormatches.append((author, k))
+            query_items.append(("kinds", kinds))
+            query_items.append(("authors", authors))
+            best_index.add("authorkinds", authormatches)
+        elif "kinds" in query:
+            kinds = tuple(sorted(query.pop("kinds"), reverse=True))
+            query_items.append(("kinds", kinds))
+            best_index.add("kinds", kinds)
+        elif "authors" in query:
+            authors = tuple(sorted(query.pop("authors"), reverse=True))
+            query_items.append(("authors", authors))
+            best_index.add("authors", authors)
+
+        for key, value in query.items():
+            if key[0] == "#" and len(key) == 2:
+                tag = key[1]
+                tags.update((tag, str(val)) for val in value)
+                query_items.append((key, tuple(value)))
+        if tags:
+            best_index.add("tags", sorted(tags, reverse=True))
+
+        query_items = tuple(query_items)
+
+        # set the final order of the multiindex
+        best_index, matches = best_index.finalize()
+
         plan = QueryPlan(
             query_items,
-            INDEXES[idx],
+            best_index,
             matches,
             limit,
-            query.get("since"),
-            query.get("until"),
+            since,
+            until,
             {},
         )
         if log:
-            log.debug("Plan: %s. Scores: %s", plan, scores)
+            log.debug("Plan: %s.", plan)
         plans.append(plan)
     return plans
 
