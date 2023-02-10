@@ -103,6 +103,14 @@ class LMDBStorageTests(BaseLMDBTests):
                 results.append(event)
 
         assert 6 == len(results)
+        with self.assertLogs("nostr_relay", level="INFO") as cm:
+            async for event in self.storage.run_single_query([{}]):
+                pass
+            assert ["INFO:nostr_relay.kvquery:No empty queries allowed"] == cm.output
+        with self.assertLogs("nostr_relay", level="INFO") as cm:
+            async for event in self.storage.run_single_query([{"foo": 1}]):
+                pass
+            assert ["INFO:nostr_relay.kvquery:No range scans allowed ()"] == cm.output
 
     async def test_good_query_plan(self):
         now = int(time.time())

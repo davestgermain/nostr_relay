@@ -448,7 +448,7 @@ class LMDBStorage(BaseStorage):
                 "kinds": [event.kind],
             }
             if event.is_paramaterized_replaceable:
-                query["#d"] = [tag[1] for tag in event.tags if tag[0] == "d"][0]
+                query["#d"] = [[tag[1] for tag in event.tags if tag[0] == "d"][0]]
             self.log.debug(query)
         elif event.kind == EventKind.DELETE:
             # delete the referenced events
@@ -580,6 +580,10 @@ def planner(filters, default_limit=6000, log=None):
         if isinstance(query, QueryPlan):
             plans.append(query)
             continue
+        if not query:
+            if log:
+                log.info("No empty queries allowed")
+            continue
         tags = set()
         query_items = []
 
@@ -619,7 +623,7 @@ def planner(filters, default_limit=6000, log=None):
             best_index.add("authors", authors)
 
         for key, value in query.items():
-            if key[0] == "#" and len(key) == 2:
+            if key[0] == "#" and len(key) == 2 and isinstance(value, list):
                 tag = key[1]
                 tags.update((tag, str(val)) for val in value)
                 query_items.append((key, tuple(value)))
@@ -630,6 +634,12 @@ def planner(filters, default_limit=6000, log=None):
 
         # set the final order of the multiindex
         best_index, matches = best_index.finalize()
+
+        if best_index is INDEXES["created_at"] and not (since or until):
+            # don't allow range scans
+            if log:
+                log.info("No range scans allowed %s", query_items)
+            continue
 
         plan = QueryPlan(
             query_items,

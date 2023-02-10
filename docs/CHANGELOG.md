@@ -3,6 +3,7 @@
 ## 1.10.5
 
 * Add a `MultiIndex` to chain index results, reducing query misses.
+* Prevent empty queries
 
 ## 1.10.2 - 4
 
