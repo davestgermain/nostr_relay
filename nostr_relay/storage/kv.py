@@ -523,7 +523,7 @@ def planner(filters, default_limit=6000, log=None):
 
                 scores.append((len(tags), "tags", tags))
             elif key == "kinds":
-                scores.append((len(value) * 3, "kinds", list(value)))
+                scores.append((len(value), "kinds", list(value)))
                 has_kinds = True
             elif key == "authors":
                 scores.append((len(value) * 3, "authors", list(value)))

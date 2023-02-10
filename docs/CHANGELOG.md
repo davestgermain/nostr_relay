@@ -1,6 +1,6 @@
 # CHANGES
 
-## 1.10.2-3
+## 1.10.2 - 4
 
 * Improve index matches when there are few results
 

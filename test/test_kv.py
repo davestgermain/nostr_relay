@@ -105,6 +105,36 @@ class LMDBStorageTests(BaseLMDBTests):
 
         assert 6 == len(results)
 
+    async def test_good_query_plan(self):
+        now = int(time.time())
+        for i in range(10):
+            event = self.make_event(
+                PK1, kind=1, content=f"test_good_query_plan {now} {i}", created_at=now - i,
+                tags=[["t", "foobar"]]
+            )
+            await self.storage.add_event(event)
+
+        for i in range(20):
+            event = self.make_event(
+                PK1, kind=1, content=f"test_good_query_plan {now} {i}", created_at=now - i,
+                tags=[["t", "bazbar"]]
+            )
+            await self.storage.add_event(event)
+        await asyncio.sleep(0.4)
+
+        query = {
+            "kinds": [1],
+            "#t": ["foobar"],
+            # "since": now - 20,
+        }
+        results = []
+        with self.assertNoLogs('nostr_relay.kvquery', level='INFO'):
+            async for event in self.storage.run_single_query(query):
+                assert 1 == event.kind
+                results.append(event)
+            assert 10 == len(results)
+            await asyncio.sleep(0.4)
+
     async def test_subscription(self):
         now = int(time.time())
         for i in range(10):
