@@ -23,6 +23,19 @@ class BaseStorage:
         self.clients = collections.defaultdict(dict)
         self.authenticator = None
         self.notifier = None
+        self.service_privatekey = Config.get("service_privatekey", "")
+        if self.service_privatekey:
+            from aionostr.key import PrivateKey
+
+            self.service_privatekey = PrivateKey(bytes.fromhex(self.service_privatekey))
+            self.service_pubkey = (
+                self.service_privatekey.public_key.hex()
+                if self.service_privatekey
+                else ""
+            )
+        else:
+            self.service_pubkey = ""
+        self.service_kind = 31494
 
     async def add_event(self, event_json: dict, auth_token=None):
         raise NotImplentedError()
@@ -130,6 +143,65 @@ class BaseStorage:
                 for sub in client.values():
                     asyncio.create_task(sub.notify(event))
                     counter["count"] += 1
+
+    async def add_service_event(
+        self, content="", kind=None, tags=None, created_at=None, encrypt=False
+    ):
+        """
+        Add an event for internal data storage
+        Currently defined as a parameterized replaceable event of kind 31494
+        """
+        if tags is None:
+            tags = []
+        elif isinstance(tags, dict):
+            tags = list(tags.items())
+        if not self.service_privatekey:
+            raise StorageError("Config.service_privatekey is not set")
+        if encrypt:
+            content = self.service_privatekey.encrypt_message(
+                content, self.service_pubkey
+            )
+
+        event = Event(
+            pubkey=self.service_pubkey,
+            content=content,
+            kind=kind or self.service_kind,
+            created_at=created_at,
+            tags=tags,
+        )
+        event.sign(self.service_privatekey.hex())
+        await self.add_event(event.to_json_object())
+        return event
+
+    async def get_auth_roles(self, pubkey: str):
+        query = {
+            "kinds": [self.service_kind],
+            "#d": ["auth:roles"],
+            "#p": [pubkey],
+            "authors": [self.service_pubkey],
+        }
+        event = await self.get_event_from_query(query)
+        if event:
+            return set(event.content)
+        else:
+            return self.authenticator.default_roles
+
+    async def get_all_auth_roles(self):
+        query = {
+            "kinds": [self.service_kind],
+            "#d": ["auth:roles"],
+            "authors": [self.service_pubkey],
+        }
+        async for event in self.run_single_query([query]):
+            for tag in event.tags:
+                if tag[0] == "p":
+                    role = event.content
+                    yield tag[1], set((role or "").lower())
+
+    async def set_auth_roles(self, pubkey: str, roles: str):
+        tags = {"p": pubkey, "d": "auth:roles"}
+        content = str(roles).lower()
+        await self.add_service_event(content=content, tags=tags)
 
 
 class BaseSubscription:

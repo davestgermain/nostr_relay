@@ -770,13 +770,11 @@ class AuthTests(APITests):
             self.unknown,
             self.throttled,
         ):
-            await self.storage.authenticator.set_roles(pubkey, role)
+            await self.storage.set_auth_roles(pubkey, role)
 
     async def asyncTearDown(self):
-        from nostr_relay.auth import AuthTable
-
         async with self.storage.db.begin() as conn:
-            await conn.execute(AuthTable.delete())
+            await conn.execute(self.storage.AuthTable.delete())
         await super().asyncTearDown()
 
     async def get_challenge(self, ws):

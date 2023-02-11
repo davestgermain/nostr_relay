@@ -2,7 +2,7 @@ import os
 import os.path
 import asyncio
 import logging
-
+from datetime import datetime
 from time import time
 
 import sqlalchemy as sa
@@ -130,6 +130,7 @@ class DBStorage(BaseStorage):
         metadata = get_metadata()
         self.EventTable = metadata.tables["events"]
         self.IdentTable = metadata.tables["identity"]
+        self.AuthTable = metadata.tables["auth"]
         TagTable = metadata.tables["tags"]
         if self.is_postgres:
             from sqlalchemy.dialects.postgresql import insert
@@ -461,6 +462,51 @@ class DBStorage(BaseStorage):
                     {"identifier": identifier, "pubkey": pubkey, "relays": relays}
                 )
                 await conn.execute(stmt)
+
+    async def get_auth_roles(self, pubkey):
+        """
+        Get the roles assigned to the public key
+        """
+        async with self.db.begin() as conn:
+            result = await conn.execute(
+                sa.select(self.AuthTable.c.roles).where(
+                    self.AuthTable.c.pubkey == pubkey
+                )
+            )
+            row = result.fetchone()
+        if row:
+            return set(row[0].lower())
+        else:
+            return self.authenticator.default_roles
+
+    async def get_all_auth_roles(self):
+        """
+        Return all roles in authentication table
+        """
+        async with self.db.begin() as conn:
+            result = await conn.stream(
+                sa.select(self.AuthTable.c.pubkey, self.AuthTable.c.roles)
+            )
+            async for pubkey, role in result:
+                yield pubkey, set((role or "").lower())
+
+    async def set_auth_roles(self, pubkey: str, roles: str):
+        """
+        Assign roles to the given public key
+        """
+        async with self.db.begin() as conn:
+            try:
+                await conn.execute(
+                    sa.insert(self.AuthTable).values(
+                        pubkey=pubkey, roles=roles, created=datetime.now()
+                    )
+                )
+            except sa.exc.IntegrityError:
+                await conn.execute(
+                    sa.update(self.AuthTable)
+                    .where(self.AuthTable.c.pubkey == pubkey)
+                    .values(roles=roles)
+                )
 
 
 class Subscription(BaseSubscription):

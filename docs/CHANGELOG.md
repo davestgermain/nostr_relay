@@ -3,7 +3,10 @@
 ## 1.10.5
 
 * Add a `MultiIndex` to chain index results, reducing query misses.
+* Enable authentication when using the [LMDB](lmdb.md) backend
 * Prevent empty queries
+* Added output validator feature
+* Garbage collect expired events
 
 ## 1.10.2 - 4
 

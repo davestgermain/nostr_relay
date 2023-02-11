@@ -49,3 +49,6 @@ message_timeout: 1800
 
 # number of open subscriptions per connection
 subscription_limit: 32
+
+# set this to a private key used for internal control events
+# service_privatekey: 9627da965699a2a3048f97b77df5047e8cd0d11daca75e7687d0b28b65416a3c

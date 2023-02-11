@@ -99,4 +99,13 @@ def get_metadata():
             sa.Column("pubkey", sa.Text()),
             sa.Column("relays", sa.JSON()),
         )
+
+        AuthTable = sa.Table(
+            "auth",
+            _METADATA,
+            sa.Column("pubkey", sa.Text(), primary_key=True),
+            sa.Column("roles", sa.Text()),
+            sa.Column("created", sa.DateTime()),
+        )
+
     return _METADATA

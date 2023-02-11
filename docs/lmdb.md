@@ -18,7 +18,9 @@ Recommended options: `metasync: false` and `lock: false` (if you're only running
 
 # Limitations
 
-As of version 1.10, authentication and NIP-05 verification do not work with the LMDB backend.
+As of version 1.10.5, authentication works if you set `service_privatekey` in your config file to a private key used for creating internal events.
+
+NIP-05 verification does not yet work with the LMDB backend.
 
 # Implementation Details
 

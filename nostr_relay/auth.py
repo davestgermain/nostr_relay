@@ -2,23 +2,10 @@ import enum
 import logging
 import secrets
 from time import time
-from datetime import datetime
-
-import sqlalchemy as sa
 
 from aionostr.event import Event
 from .errors import StorageError, AuthenticationError
 from .util import call_from_path
-from .storage import get_metadata
-
-
-AuthTable = sa.Table(
-    "auth",
-    get_metadata(),
-    sa.Column("pubkey", sa.Text(), primary_key=True),
-    sa.Column("roles", sa.Text()),
-    sa.Column("created", sa.DateTime()),
-)
 
 
 class Role(enum.Enum):
@@ -111,47 +98,6 @@ class Authenticator:
         # TODO: implement per-object permissions here
         return True
 
-    async def get_roles(self, pubkey):
-        """
-        Get the roles assigned to the public key
-        """
-        async with self.storage.db.begin() as conn:
-            result = await conn.execute(
-                sa.select(AuthTable.c.roles).where(AuthTable.c.pubkey == pubkey)
-            )
-            row = result.fetchone()
-        if row:
-            return set(row[0].lower())
-        else:
-            return self.default_roles
-
-    async def get_all_roles(self):
-        """
-        Return all roles in authentication table
-        """
-        async with self.storage.db.begin() as conn:
-            result = await conn.stream(sa.select(AuthTable.c.pubkey, AuthTable.c.roles))
-            async for pubkey, role in result:
-                yield pubkey, set((role or "").lower())
-
-    async def set_roles(self, pubkey: str, roles: str):
-        """
-        Assign roles to the given public key
-        """
-        async with self.storage.db.begin() as conn:
-            try:
-                await conn.execute(
-                    sa.insert(AuthTable).values(
-                        pubkey=pubkey, roles=roles, created=datetime.now()
-                    )
-                )
-            except sa.exc.IntegrityError:
-                await conn.execute(
-                    sa.update(AuthTable)
-                    .where(AuthTable.c.pubkey == pubkey)
-                    .values(roles=roles)
-                )
-
     async def authenticate(self, auth_event_json: dict, challenge: str = ""):
         """
         Authenticate, using the authentication event described in NIP-42
@@ -163,7 +109,7 @@ class Authenticator:
 
         token = {
             "pubkey": auth_event.pubkey,
-            "roles": await self.get_roles(auth_event.pubkey),
+            "roles": await self.storage.get_auth_roles(auth_event.pubkey),
             "now": time(),
         }
         self.log.info("Authenticated %s. roles:%s", auth_event.pubkey, token["roles"])

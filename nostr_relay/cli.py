@@ -307,7 +307,7 @@ async def set(pubkey, roles):
         return -1
 
     async with get_storage() as storage:
-        await storage.authenticator.set_roles(pubkey, roles)
+        await storage.set_auth_roles(pubkey, roles)
         click.echo(f"Set roles for pubkey: {pubkey} to {roles}")
 
 
@@ -322,10 +322,10 @@ async def get(pubkey):
 
     async with get_storage() as storage:
         if not pubkey:
-            async for pubkey, role in storage.authenticator.get_all_roles():
+            async for pubkey, role in storage.get_all_auth_roles():
                 click.echo(f"{pubkey}: {role}")
         else:
-            roles = await storage.authenticator.get_roles(pubkey)
+            roles = await storage.get_auth_roles(pubkey)
             click.echo(roles)
 
 

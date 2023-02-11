@@ -143,7 +143,7 @@ class AuthTests(BaseTestsWithStorage):
         assert token["roles"] == set("a")
 
         # now create a role
-        await auth.set_roles(pubkey1, "rw")
+        await self.storage.set_auth_roles(pubkey1, "rw")
 
         token = await auth.authenticate(good_event.to_json_object(), challenge)
         assert token["pubkey"] == pubkey1
@@ -153,16 +153,16 @@ class AuthTests(BaseTestsWithStorage):
         pubkey1 = "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
         pubkey2 = "5de724fcabfb5ffd14e48a18f329092f345d0d5ed9f0f02903f40ec02753b011"
 
-        await self.storage.authenticator.set_roles(pubkey1, "rw")
-        assert await self.storage.authenticator.get_roles(pubkey1) == set(["r", "w"])
+        await self.storage.set_auth_roles(pubkey1, "rw")
+        assert await self.storage.get_auth_roles(pubkey1) == set(["r", "w"])
 
-        assert await self.storage.authenticator.get_roles(pubkey2) == set(["a"])
-        await self.storage.authenticator.set_roles(pubkey2, "s")
-        assert await self.storage.authenticator.get_roles(pubkey2) == set(["s"])
+        assert await self.storage.get_auth_roles(pubkey2) == set(["a"])
+        await self.storage.set_auth_roles(pubkey2, "s")
+        assert await self.storage.get_auth_roles(pubkey2) == set(["s"])
 
         all_roles = []
-        async for pubkey, roles in self.storage.authenticator.get_all_roles():
+        async for pubkey, roles in self.storage.get_all_auth_roles():
             all_roles.append((pubkey, roles))
         assert all_roles == [(pubkey1, set(["r", "w"])), (pubkey2, set("s"))]
 
-        await self.storage.authenticator.set_roles(pubkey1, "s")
+        await self.storage.set_auth_roles(pubkey1, "s")

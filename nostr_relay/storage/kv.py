@@ -12,7 +12,7 @@ import traceback
 
 from contextlib import contextmanager
 from queue import SimpleQueue
-from time import perf_counter
+from time import perf_counter, time
 
 from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
@@ -556,6 +556,7 @@ class KVGarbageCollector(BaseGarbageCollector):
     async def collect(self, conn):
         to_del = []
         cursor = conn.cursor()
+        # remove all ephemeral events
         start = INDEXES["kinds"].to_key(20000)
         end = INDEXES["kinds"].to_key(29999)
         if cursor.set_range(start):
@@ -564,6 +565,16 @@ class KVGarbageCollector(BaseGarbageCollector):
                     break
                 event_id = key[-32:].hex()
                 to_del.append(event_id)
+        # remove all expired events
+        start = INDEXES["tags"].to_key(("expiration", "0"))
+        end = INDEXES["tags"].to_key(("expiration", str(int(time()))))
+        if cursor.set_range(start):
+            for key in cursor.iternext(values=False):
+                if key > end:
+                    break
+                event_id = key[-32:].hex()
+                to_del.append(event_id)
+
         cursor.close()
         if to_del:
             for event_id in to_del:

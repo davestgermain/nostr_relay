@@ -33,7 +33,7 @@ class BaseLMDBTests(BaseTestsWithStorage):
         await self.storage.close()
 
     def tearDown(self):
-        if False and os.path.isdir(self.envdir):
+        if os.path.isdir(self.envdir):
             shutil.rmtree(self.envdir)
 
 
@@ -348,13 +348,44 @@ class LMDBStorageTests(BaseLMDBTests):
             event = await self.storage.get_event(hello["id"])
         assert self.storage.db is None
 
+    async def test_authentication(self):
+        roles = await self.storage.get_auth_roles(
+            "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
+        )
+        assert set("a") == roles
+
+        await self.storage.set_auth_roles(
+            "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "rw"
+        )
+        roles = await self.storage.get_auth_roles(
+            "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
+        )
+        assert set("rw") == roles
+        await self.storage.set_auth_roles(
+            "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394a", "r"
+        )
+        all_roles = []
+        async for pubkey, roles in self.storage.get_all_auth_roles():
+            all_roles.append((pubkey, roles))
+        all_roles.sort()
+        assert [
+            (
+                "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394a",
+                set("r"),
+            ),
+            (
+                "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d",
+                set("rw"),
+            ),
+        ] == all_roles
+
 
 class KVGCTests(BaseLMDBTests):
     async def asyncSetUp(self):
         Config.garbage_collector = {"collect_interval": 2}
         await super().asyncSetUp()
 
-    async def test_garbage_collector(self):
+    async def test_collect_ephemeral(self):
         now = int(time.time())
         for i in range(10):
             event = self.make_event(
@@ -378,3 +409,50 @@ class KVGCTests(BaseLMDBTests):
         async for event in self.storage.run_single_query({"kinds": [22222]}):
             results.append(event)
         assert len(results) == 0
+
+    async def test_collect_expired(self):
+        now = int(time.time())
+        event1 = self.make_event(
+            PK1,
+            kind=1,
+            content=f"will expire {now} + 2",
+            tags=[["expiration", now + 2]],
+            created_at=now,
+        )
+
+        event2 = self.make_event(
+            PK1,
+            kind=1,
+            content=f"will expire {now} - 3",
+            tags=[["expiration", now - 3]],
+            created_at=now,
+        )
+        event3 = self.make_event(
+            PK1,
+            kind=1,
+            content=f"will expire {now} + 30",
+            tags=[["expiration", now + 30]],
+            created_at=now,
+        )
+        with self.assertLogs("nostr_relay.storage:gc", level="INFO") as cm:
+            await self.storage.add_event(event1)
+            await self.storage.add_event(event2)
+            await self.storage.add_event(event3)
+            await asyncio.sleep(0.2)
+            results = []
+            async for event in self.storage.run_single_query({"kinds": [1]}):
+                assert event.kind == 1
+                results.append(event)
+            assert 3 == len(results)
+
+            await asyncio.sleep(4)
+
+            results = []
+            async for event in self.storage.run_single_query({"kinds": [1]}):
+                results.append(event)
+                print(event)
+            assert 1 == len(results)
+        assert [
+            "INFO:nostr_relay.storage:gc:Collected garbage (1 events)",
+            "INFO:nostr_relay.storage:gc:Collected garbage (1 events)",
+        ] == cm.output
