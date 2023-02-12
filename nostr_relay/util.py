@@ -63,6 +63,7 @@ class Periodic:
     """
 
     _pending_tasks = []
+    _running_tasks = []
 
     @staticmethod
     def register(periodic_task):
@@ -73,6 +74,12 @@ class Periodic:
         while Periodic._pending_tasks:
             task = Periodic._pending_tasks.pop()
             await task
+
+    @classmethod
+    def cancel_running(cls):
+        for task in cls._running_tasks:
+            task.cancel()
+        cls._running_tasks.clear()
 
     def __init__(self, interval, run_at_start=False, swallow_exceptions=False):
         self.interval = interval
@@ -86,6 +93,7 @@ class Periodic:
             self.running = True
             # Start task to call func periodically:
             self._task = asyncio.ensure_future(self._run())
+            self._running_tasks.append(self._task)
 
     async def stop(self):
         if self.running:
@@ -94,6 +102,7 @@ class Periodic:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
+            self._running_tasks.remove(self._task)
 
     async def wait_function(self):
         await asyncio.sleep(self.interval)

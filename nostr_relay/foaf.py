@@ -31,6 +31,9 @@ def is_in_foaf(event, config):
     """
     Check that the pubkey is in the configured social network
     """
+    if event.kind == 10002:
+        # per NIP-65, relays should allow anyone to post a relay list event
+        return
     if config.foaf:
         if ALLOWED_PUBKEYS:
             if bytes.fromhex(event.pubkey) not in ALLOWED_PUBKEYS:

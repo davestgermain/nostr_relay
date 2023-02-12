@@ -16,33 +16,9 @@ import re
 import time
 
 from datetime import datetime, timedelta
-import sqlalchemy as sa
 
 from .errors import VerificationError
 from .util import Periodic, timeout, json
-from nostr_relay.storage import get_metadata
-
-
-_metadata = get_metadata()
-
-Verification = sa.Table(
-    "verification",
-    _metadata,
-    sa.Column("id", sa.Integer(), primary_key=True),
-    sa.Column("identifier", sa.Text()),
-    sa.Column(
-        "metadata_id",
-        _metadata.tables["events"].c.id.type,
-        sa.ForeignKey("events.id", ondelete="CASCADE"),
-    ),
-    sa.Column("verified_at", sa.TIMESTAMP()),
-    sa.Column("failed_at", sa.TIMESTAMP()),
-)
-sa.Index("identifieridx", Verification.c.identifier)
-sa.Index("metadataidx", Verification.c.metadata_id)
-sa.Index("verifiedidx", Verification.c.verified_at)
-
-EventTable = _metadata.tables["events"]
 
 
 class Verifier(Periodic):
@@ -63,26 +39,8 @@ class Verifier(Periodic):
         )
         if self.should_verify:
             self.log = logging.getLogger(__name__)
-            self.verification_query = (
-                sa.select(
-                    Verification.c.id,
-                    Verification.c.identifier,
-                    Verification.c.verified_at,
-                    Verification.c.failed_at,
-                    EventTable.c.created_at,
-                )
-                .select_from(
-                    sa.join(
-                        Verification,
-                        self.storage.EventTable,
-                        Verification.c.metadata_id == self.storage.EventTable.c.id,
-                        isouter=True,
-                    )
-                )
-                .where(sa.text("events.pubkey = :pubkey"))
-            )
 
-    async def update_metadata(self, cursor, event):
+    async def update_metadata(self, event):
         # metadata events are evaluated as candidates
         try:
             meta = json.loads(event.content)
@@ -97,9 +55,7 @@ class Verifier(Periodic):
                 if self.check_allowed_domains(domain) and re.fullmatch(
                     "[a-z0-9\\._-]+", uname
                 ):
-                    await self.queue.put(
-                        [None, identifier, 0, event.pubkey, event.id_bytes]
-                    )
+                    await self.queue.put([identifier, 0, event.pubkey])
                     return True
                 else:
                     self.log.error("Illegal identifier %s", identifier)
@@ -114,7 +70,7 @@ class Verifier(Periodic):
             return domain not in self.options["blacklist"]
         return True
 
-    async def verify(self, conn, event):
+    async def verify(self, event):
         """
         Check an event against the NIP-05
         verification table
@@ -123,7 +79,7 @@ class Verifier(Periodic):
             return True
 
         if event.kind == 0:
-            is_candidate = await self.update_metadata(conn, event)
+            is_candidate = await self.update_metadata(event)
             if not is_candidate:
                 if self.is_enabled:
                     raise VerificationError("rejected: metadata must have nip05 tag")
@@ -136,12 +92,15 @@ class Verifier(Periodic):
             else:
                 return True
 
-        result = await conn.execute(
-            self.verification_query, parameters={"pubkey": bytes.fromhex(event.pubkey)}
-        )
-        row = result.fetchone()
+        query = {
+            "kinds": [self.storage.service_kind],
+            "#d": ["verification"],
+            "#p": [event.pubkey],
+            "authors": [self.storage.service_pubkey],
+        }
+        verify_record = await self.storage.get_event_from_query(query)
 
-        if not row:
+        if not verify_record:
             if self.is_enabled:
                 raise VerificationError(
                     f"rejected: pubkey {event.pubkey} must be verified"
@@ -149,24 +108,12 @@ class Verifier(Periodic):
             else:
                 self.log.warning("pubkey %s is not verified.", event.pubkey)
         else:
-            vid, identifier, verified_at, failed_at, created_at = row
+            identifier = verify_record.content
             self.log.debug(
-                "Checking verification for %s verified:%s created:%s",
+                "Checking verification for %s verified:%s",
                 identifier,
-                verified_at,
-                created_at,
+                verify_record.created_at,
             )
-            now = datetime.utcnow()
-            if (now - timedelta(seconds=self.options["expiration"])) > verified_at:
-                # verification has expired
-                if self.is_enabled:
-                    raise VerificationError(
-                        f"rejected: verification expired for {identifier}"
-                    )
-                else:
-                    self.log.warning(
-                        "verification expired for %s on %s", identifier, verified_at
-                    )
 
             uname, domain = identifier.split("@", 1)
             domain = domain.lower()
@@ -183,40 +130,18 @@ class Verifier(Periodic):
         try:
             if (time.time() - self._last_run) > self.options["update_frequency"]:
                 self.log.debug("running batch query %s", self._last_run)
-                last_verified_date = datetime.utcnow() - timedelta(
-                    seconds=self.options["expiration"]
-                )
-                query = (
-                    sa.select(
-                        Verification.c.id,
-                        Verification.c.identifier,
-                        Verification.c.verified_at,
-                        EventTable.c.pubkey,
-                        Verification.c.metadata_id,
+                query = {
+                    "kinds": [self.storage.service_kind],
+                    "#d": ["verification"],
+                    "authors": [self.storage.service_pubkey],
+                    "until": int(time.time()) - (self.options["expiration"] - 300),
+                }
+                async for verify_record in self.storage.run_single_query([query]):
+                    pubkey = [t[1] for t in verify_record.tags if t[0] == "p"][0]
+                    candidates.append(
+                        [verify_record.content, verify_record.created_at, pubkey]
                     )
-                    .select_from(
-                        sa.join(
-                            Verification,
-                            self.storage.EventTable,
-                            Verification.c.metadata_id == self.storage.EventTable.c.id,
-                            isouter=True,
-                        )
-                    )
-                    .where(
-                        (EventTable.c.pubkey != None)
-                        & (Verification.c.verified_at <= last_verified_date)
-                    )
-                )
 
-                async with self.db.connect() as cursor:
-                    try:
-                        results = await cursor.stream(query)
-                        async for row in results:
-                            candidates.append(row)
-                    except Exception:
-                        self.log.exception("batch query")
-                        return
-                        # vid, identifier, verified_at, pubkey = row
         except Exception:
             self.log.exception("batch_query")
             return
@@ -229,35 +154,22 @@ class Verifier(Periodic):
             self.log.exception("process_verifications")
         if success or failure:
             try:
-                async with self.db.begin() as conn:
-                    for vid, identifier, metadata_id in success:
-                        if vid is None:
-                            # first time verifying
-                            await conn.execute(
-                                sa.insert(Verification).values(
-                                    {
-                                        "identifier": identifier,
-                                        "metadata_id": metadata_id,
-                                        "verified_at": datetime.utcnow(),
-                                    }
-                                )
-                            )
-                        else:
-                            await conn.execute(
-                                sa.update(Verification)
-                                .where(Verification.c.id == vid)
-                                .values({"verified_at": datetime.utcnow()})
-                            )
-                    for vid, identifier, metadata_id in failure:
-                        if vid is None:
-                            # don't persist first time candidates
-                            continue
-                        else:
-                            await conn.execute(
-                                sa.update(Verification)
-                                .where(Verification.c.id == vid)
-                                .values({"failed_at": datetime.utcnow()})
-                            )
+                expiration = str(int(time.time()) + self.options["expiration"])
+                for identifier, pubkey in success:
+                    tags = {"d": "verification", "p": pubkey, "expiration": expiration}
+                    verify_record = await self.storage.add_service_event(
+                        content=identifier, tags=tags
+                    )
+                # for identifier, pubkey in failure:
+                #     if vid is None:
+                #         # don't persist first time candidates
+                #         continue
+                #     # else:
+                #     #     tags = {
+                #     #         "d": "verification",
+                #     #         "p": pubkey
+                #     #     }
+                #     #     verify_record = await self.storage.add_service_event(content=identifier, tags=tags)
             except Exception:
                 self.log.exception("saving verifications")
             self.log.info("Saved success:%d failure:%d", len(success), len(failure))
@@ -274,9 +186,7 @@ class Verifier(Periodic):
         success = []
         failure = []
         async with self.get_aiohttp_session() as session:
-            for vid, identifier, verified_at, pubkey, metadata_id in candidates:
-                if not isinstance(pubkey, str):
-                    pubkey = pubkey.hex()
+            for identifier, verified_at, pubkey in candidates:
                 self.log.info(
                     "Checking verification for %s. Last verified %s",
                     identifier,
@@ -303,16 +213,16 @@ class Verifier(Periodic):
                     assert isinstance(names, dict)
                 except Exception:
                     self.log.exception("Failure verifying %s from %s", identifier, url)
-                    failure.append([vid, identifier, metadata_id])
+                    failure.append([identifier, pubkey])
                 else:
                     if names.get(uname, "") != pubkey:
                         self.log.warning(
                             "Could not verify %s=%s from %s", identifier, pubkey, url
                         )
-                        failure.append([vid, identifier, metadata_id])
+                        failure.append([identifier, pubkey])
                     else:
                         self.log.info("Verified %s=%s from %s", identifier, pubkey, url)
-                        success.append([vid, identifier, metadata_id])
+                        success.append([identifier, pubkey])
 
         return success, failure
 
@@ -327,13 +237,12 @@ class Verifier(Periodic):
         except asyncio.TimeoutError:
             self.log.debug("timed out waiting for queue")
 
-    async def start(self, db):
+    async def start(self, db=None):
         if self.should_verify:
             self.log.info(
                 "Starting verification task. Interval %s",
                 self.options["update_frequency"],
             )
-            self.db = db
             await super().start()
 
     def is_processing(self):

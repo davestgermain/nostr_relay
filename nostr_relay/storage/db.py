@@ -211,7 +211,7 @@ class DBStorage(BaseStorage):
                         await self.post_save(conn, event, changed)
             counter["count"] += 1
         if changed:
-            self.notify_all_connected(event)
+            await self.notify_all_connected(event)
             # notify other processes
             await self.notify_other_processes(event)
         return event, changed
@@ -222,7 +222,7 @@ class DBStorage(BaseStorage):
         Return None to skip adding the event.
         """
         # check NIP05 verification, if enabled
-        await self.verifier.verify(conn, event)
+        await self.verifier.verify(event)
 
         if event.is_replaceable or event.is_paramaterized_replaceable:
             # check for older event from same pubkey
@@ -377,9 +377,6 @@ class DBStorage(BaseStorage):
                 stats["total"] += count
             stats["kinds"] = kinds
 
-            result = await conn.execute(sa.text("SELECT COUNT(*) FROM verification"))
-            row = result.first()
-            stats["num_verified"] = row[0]
             if self.is_postgres:
                 result = await conn.execute(
                     sa.text(

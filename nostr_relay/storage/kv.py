@@ -395,6 +395,8 @@ class LMDBStorage(BaseStorage):
 
     async def close(self):
         if self.db:
+            if self.garbage_collector_task:
+                self.garbage_collector_task.cancel()
             self.writer_queue.put(None)
             self.writer_thread.join()
             self.db.close()
@@ -475,7 +477,7 @@ class LMDBStorage(BaseStorage):
                         event.pubkey,
                     )
 
-        self.notify_all_connected(event)
+        await self.notify_all_connected(event)
         # notify other processes
         await self.notify_other_processes(event)
 
@@ -525,6 +527,9 @@ class Subscription(BaseSubscription):
         return bool(self.query)
 
     async def run_query(self):
+        check_output = self.storage.check_output
+        sub_id = self.sub_id
+        queue = self.queue
         with self.storage.stat_collector.timeit("query") as counter:
             task, events = executor(
                 self.storage.db,
@@ -537,11 +542,25 @@ class Subscription(BaseSubscription):
             # we could start consuming events before all queries are complete,
             # but it creates more complexity and is actually slower because of thread contention
             await task
-
-            for event in events:
-                await self.queue.put((self.sub_id, event))
-                counter["count"] += 1
-            await self.queue.put((self.sub_id, None))
+            try:
+                if check_output:
+                    context = {
+                        "config": Config,
+                        "client_id": self.client_id,
+                        "auth_token": self.auth_token,
+                    }
+                    for event in events:
+                        if check_output(event, context):
+                            await queue.put((sub_id, event))
+                            counter["count"] += 1
+                else:
+                    for event in events:
+                        await queue.put((sub_id, event))
+                        counter["count"] += 1
+            except:
+                self.log.exception("run_query")
+            finally:
+                await queue.put((sub_id, None))
         self.log.debug("Done with query")
 
 

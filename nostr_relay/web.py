@@ -354,8 +354,8 @@ class SetupMiddleware:
         if Config.should_run_notifier:
             from .notifier import NotifyServer
 
-            notify_server = NotifyServer()
-            notify_server.start()
+            self.notify_server = NotifyServer()
+            self.notify_server.start()
         await self.storage.setup()
         from .util import Periodic
 

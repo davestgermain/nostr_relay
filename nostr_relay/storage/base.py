@@ -23,6 +23,7 @@ class BaseStorage:
         self.clients = collections.defaultdict(dict)
         self.authenticator = None
         self.notifier = None
+        self.garbage_collector_task = None
         self.service_privatekey = Config.get("service_privatekey", "")
         if self.service_privatekey:
             from aionostr.key import PrivateKey
@@ -47,6 +48,7 @@ class BaseStorage:
         pass
 
     async def setup(self):
+        self._notify_sub_tasks = []
         self.loop = asyncio.get_running_loop()
         if Config.should_run_notifier:
             from nostr_relay.notifier import NotifyClient
@@ -134,14 +136,21 @@ class BaseStorage:
 
     async def notify_other_processes(self, event):
         if self.notifier:
-            asyncio.create_task(self.notifier.notify(event))
+            self._notifiy_sub_tasks.append(
+                asyncio.create_task(self.notifier.notify(event))
+            )
 
-    def notify_all_connected(self, event):
+    async def notify_all_connected(self, event):
         # notify all subscriptions
+        if self._notify_sub_tasks:
+            await asyncio.wait(self._notify_sub_tasks)
+            self._notify_sub_tasks.clear()
         with self.stat_collector.timeit("notify") as counter:
             for client in self.clients.values():
                 for sub in client.values():
-                    asyncio.create_task(sub.notify(event))
+                    self._notify_sub_tasks.append(
+                        asyncio.create_task(sub.notify(event))
+                    )
                     counter["count"] += 1
 
     async def add_service_event(
@@ -321,7 +330,7 @@ class BaseGarbageCollector(Periodic):
             self.__class__.__name__,
             self.collect_interval,
         )
-        await super().start()
+        return await super().start()
 
     async def run_once(self):
         collected = 0

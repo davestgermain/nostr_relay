@@ -12,6 +12,7 @@ from nostr_relay.config import Config
 
 class BaseLMDBTests(BaseTestsWithStorage):
     envdir = "/tmp/nostrtests/"
+    garbage_collector = None
 
     def setUp(self):
         try:
@@ -26,6 +27,7 @@ class BaseLMDBTests(BaseTestsWithStorage):
             "class": "nostr_relay.storage.kv.LMDBStorage",
             "path": self.envdir,
         }
+        Config.garbage_collector = self.garbage_collector
         self.storage = kv.LMDBStorage(Config.storage)
         await self.storage.setup()
 
@@ -381,9 +383,7 @@ class LMDBStorageTests(BaseLMDBTests):
 
 
 class KVGCTests(BaseLMDBTests):
-    async def asyncSetUp(self):
-        Config.garbage_collector = {"collect_interval": 2}
-        await super().asyncSetUp()
+    garbage_collector = {"collect_interval": 2}
 
     async def test_collect_ephemeral(self):
         now = int(time.time())

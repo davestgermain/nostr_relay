@@ -5,6 +5,7 @@ import time
 import sqlalchemy
 
 from nostr_relay.config import Config
+from nostr_relay.util import Periodic
 
 Config.load(os.path.join(os.path.dirname(__file__), "./test_config.yaml"), reload=True)
 
@@ -40,6 +41,10 @@ class BaseTestsWithStorage(unittest.IsolatedAsyncioTestCase):
                 await conn.execute(self.storage.EventTable.delete())
             except sqlalchemy.exc.OperationalError:
                 pass
+
+    @classmethod
+    def tearDownClass(cls):
+        Periodic.cancel_running()
 
     def make_event(
         self,

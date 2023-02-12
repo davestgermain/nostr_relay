@@ -11,6 +11,7 @@ class NotifyServer:
         self.connections = {}
         self.port = port
         self.log = logging.getLogger("nostr_relay.notify:server")
+        self._task = None
 
     async def handle_notify(self, reader, writer):
         addr = writer.get_extra_info("peername")
@@ -46,7 +47,7 @@ class NotifyServer:
             await server.serve_forever()
 
     def start(self):
-        return asyncio.create_task(self.run())
+        self._task = asyncio.create_task(self.run())
 
 
 class NotifyClient:
@@ -56,6 +57,7 @@ class NotifyClient:
         self.port = port
         self.address = address
         self.log = logging.getLogger("nostr_relay.notify:client")
+        self._task = None
 
     async def notify(self, event: Event):
         self.log.debug("notifying about %s", event.id)
@@ -78,4 +80,4 @@ class NotifyClient:
         self.log.info("Closed")
 
     def start(self):
-        return asyncio.create_task(self.connect())
+        self._task = asyncio.create_task(self.connect())
