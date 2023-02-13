@@ -3,7 +3,7 @@
 ## 1.11
 
 * Switched verification to using internal events
-* Added a recipe for creating a [private relay](../../../../wiki?name=Homeserver)
+* Added a recipe for creating a [private relay](../../../wiki?name=Homeserver)
 
 ## 1.10.5
 
