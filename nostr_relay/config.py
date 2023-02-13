@@ -3,7 +3,7 @@ import yaml
 
 
 class ConfigClass:
-    DEBUG = True
+    DEBUG = False
     max_event_size = 4096
     oldest_event = 31536000
     redirect_homepage = ""
@@ -11,7 +11,7 @@ class ConfigClass:
 
     def __init__(self):
         self.authentication = {}
-        self.gunicorn = {}
+        self.gunicorn = {"bind": "127.0.0.1:6969"}
         self.storage = {
             "sqlalchemy.url": "sqlite+aiosqlite:///:memory:",
         }
