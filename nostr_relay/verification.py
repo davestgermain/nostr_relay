@@ -77,6 +77,8 @@ class Verifier(Periodic):
         """
         if not self.should_verify:
             return True
+        elif event.pubkey == self.storage.service_pubkey:
+            return True
 
         if event.kind == 0:
             is_candidate = await self.update_metadata(event)

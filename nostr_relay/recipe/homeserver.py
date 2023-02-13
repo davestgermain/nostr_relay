@@ -56,7 +56,11 @@ def whitelist_output_validator(event, context):
     """
     whitelist = context["config"].pubkey_whitelist
     auth_token = context["auth_token"]
-    return (event.pubkey in whitelist) or (auth_token.get("pubkey") in whitelist) or (event.kind == 10002)
+    return (
+        (event.pubkey in whitelist)
+        or (auth_token.get("pubkey") in whitelist)
+        or (event.kind == 10002)
+    )
 
 
 class PrivateStorage(LMDBStorage):
