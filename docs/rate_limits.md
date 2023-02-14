@@ -2,7 +2,7 @@ Rate Limiting
 =============
 
 To enable rate limiting, add `rate_limits` to your config file, like this:
-```
+```yaml
 rate_limits:
     global:
         EVENT: 1000/s
@@ -19,14 +19,14 @@ The syntax for each option is:
 The options for interval are `hour`, `minute`, `second` (or `h`, `m`, `s`)
 
 So, to allow each ip to add 100 events per hour, but only 1 event per second:
-```
+```yaml
 rate_limits:
     ip:
         EVENT: 100/hour,1/sec
 ```
 
 Or you can cap the global limit for events, and allow individual connections to exceed the rate:
-```
+```yaml
 rate_limits:
     global:
         EVENT: 1000/min
@@ -38,7 +38,7 @@ rate_limits:
 
 To exempt or restrict certain addresses from rate limits:
 
-```
+```yaml
 rate_limits:
     ip:
         EVENT: 100/hour,10/sec
@@ -54,7 +54,8 @@ In this case, 8.8.8.8 would never be limited.
 == Custom Rate Limiter Class ==
 
 You can also customize rate limiting with your own class:
-```
+
+```yaml
 rate_limiter_class: my_custom_module.MyRateLimiter
 rate_limits:
     arbitrary_option: foo

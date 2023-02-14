@@ -14,7 +14,7 @@ You can associate public keys with whichever (single-letter) roles you want. In 
 ## Configuration
 
 To enable, add this to your configuration file:
-```
+```yaml
 authentication:
   relay_urls: 
     - wss://my.relay.url
@@ -27,7 +27,7 @@ authentication:
 This would require the `w` role to add events, but anyone with the `r` role or anyone logged-out (who implictly get the `a` role) would be allowed to query.
 
 If there are no public keys assigned to roles, this configuration would allow access for anyone:
-```
+```yaml
 authentication:
   relay_urls: 
     - wss://my.relay.url
@@ -51,7 +51,7 @@ To get roles:
 
 You can slow down certain classes of users, based on their role. For instance, to slow down all unauthenticated users for 10 seconds every time they issue an EVENT or REQ:
 
-```
+```yaml
 authentication:
   relay_urls: 
     - wss://my.relay.url
@@ -63,7 +63,7 @@ authentication:
 
 Here's a more complete example, with different roles:
 
-```
+```yaml
 authentication:
   relay_urls: 
     - wss://my.relay.url
@@ -101,7 +101,7 @@ This should return a float number of seconds.
 
 Then, in your configuration:
 
-```
+```yaml
 authentication:
   enabled: true
   authenticator_class: my.custom.module.MyAuthenticator

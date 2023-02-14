@@ -3,7 +3,7 @@
 nostr-relay can use an LMDB storage backend. To install: `pip install "nostr-relay[lmdb]"`
 
 In your configuration file:
-```
+```yaml
 storage:
     class: nostr_relay.storage.kv.LMDBStorage
     path: /path/to/db-environment

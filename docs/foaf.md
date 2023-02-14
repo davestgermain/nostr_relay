@@ -4,7 +4,7 @@ nostr-relay can restrict access to publishing if the pubkey is not in your socia
 
 To configure, add `nostr_relay.foaf.is_in_foaf` to your list of validators (see [Storage](storage.md) for more) and configure which pubkey(s) to search for:
 
-```
+```yaml
 storage:
     validators:
         - nostr_relay.foaf.is_in_foaf
@@ -16,7 +16,7 @@ foaf:
 
 Here are the complete configuration options:
 
-```
+```yaml
 foaf:
     # list of starting pubkeys to search
     network_pubkeys:
