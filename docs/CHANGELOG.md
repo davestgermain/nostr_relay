@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.11.1
+
+* Added ability to use uvicorn instead of gunicorn. `nostr_relay serve --use-uvicorn`
+* Added ability to serve endpoint at a different path.
+
 ## 1.11
 
 * Switched verification to using internal events. If you have NIP-05 verification enabled, run `nostr_relay reverify` after upgrading

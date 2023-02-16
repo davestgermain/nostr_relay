@@ -348,6 +348,14 @@ class SetupMiddleware:
     def __init__(self, storage):
         self.storage = storage
 
+    async def process_request(self, req, resp):
+        if req.root_path:
+            req.path = req.path.replace(req.root_path, "/", 1)
+
+    async def process_request_ws(self, req, resp):
+        if req.root_path:
+            req.path = req.path.replace(req.root_path, "/", 1)
+
     async def process_startup(self, scope, event):
         if Config.DEBUG:
             asyncio.get_running_loop().set_debug(True)
@@ -444,6 +452,15 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
     Run the app using uvicorn.
     Optionally, start the server in a daemon thread
     """
+    import sys
+
+    from nostr_relay import monkeypatch
+
+    monkeypatch.monkey()
+    from uvicorn.config import logger
+
+    logger.setLevel(logging.WARNING)
+
     import uvicorn
 
     app = create_app(conf_file)
@@ -454,6 +471,9 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
         options["port"] = int(bind.rsplit(":", 1)[1])
     if "loglevel" in options:
         options["log_level"] = options.pop("loglevel")
+
+    if sys.implementation.name == "pypy":
+        options.update({"loop": "asyncio", "http": "h11"})
 
     uv_config = uvicorn.Config(app, **options)
     server = uvicorn.Server(uv_config)

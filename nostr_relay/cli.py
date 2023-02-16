@@ -29,23 +29,35 @@ def main(ctx, config):
 
 
 @main.command()
+@click.option(
+    "--use-uvicorn",
+    is_flag=True,
+    default=False,
+    help="Use uvicorn instead of gunicorn",
+)
 @click.pass_context
-def serve(ctx):
+def serve(ctx, use_uvicorn):
     """
     Start the http relay server
     """
-    import os.path
-    from alembic import config
-    from .web import run_with_gunicorn
-
     if (
         Config.storage.get("class", "nostr_relay.storage.db.DBStorage")
         == "nostr_relay.storage.db.DBStorage"
     ):
+        import os.path
+        from alembic import config
+
         alembic_config_file = os.path.join(os.path.dirname(__file__), "alembic.ini")
         config.main([f"-c{alembic_config_file}", "upgrade", "head"])
 
-    run_with_gunicorn()
+    if use_uvicorn:
+        from .web import run_with_uvicorn
+
+        run_with_uvicorn()
+    else:
+        from .web import run_with_gunicorn
+
+        run_with_gunicorn()
 
 
 @main.command()
