@@ -441,7 +441,7 @@ class LMDBStorage(BaseStorage):
         await self.post_save(event)
         return event, True
 
-    async def post_save(self, event):
+    async def post_save(self, event, **kwargs):
         query = None
         if event.is_replaceable or event.is_paramaterized_replaceable:
             query = {

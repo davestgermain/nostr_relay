@@ -208,7 +208,7 @@ class DBStorage(BaseStorage):
                             )
                         )
                         changed = result.rowcount == 1
-                        await self.post_save(conn, event, changed)
+                        await self.post_save(event, connection=conn, changed=changed)
             counter["count"] += 1
         if changed:
             await self.notify_all_connected(event)
@@ -317,7 +317,7 @@ class DBStorage(BaseStorage):
                         result = await conn.execute(query)
                         self.log.info("Deleted event %s", event_id)
 
-    async def post_save(self, conn, event, changed):
+    async def post_save(self, event, connection=None, changed=None):
         """
         Post-process event
         (clear old metadata, update tag references)
@@ -326,14 +326,14 @@ class DBStorage(BaseStorage):
         if changed:
             if event.kind in (EventKind.SET_METADATA, EventKind.CONTACTS):
                 # older metadata events can be cleared
-                await conn.execute(
+                await connection.execute(
                     self.EventTable.delete().where(
                         (self.EventTable.c.pubkey == bytes.fromhex(event.pubkey))
                         & (self.EventTable.c.kind == event.kind)
                         & (self.EventTable.c.created_at < event.created_at)
                     )
                 )
-            await self.process_tags(conn, event)
+            await self.process_tags(connection, event)
 
     async def run_single_query(self, query_filters):
         """

@@ -149,7 +149,7 @@ class Client:
                         event, result = await storage.add_event(
                             message[1], auth_token=self.auth_token
                         )
-                    except AuthenticationError as e:
+                    except (StorageError, AuthenticationError) as e:
                         throttle = min(throttle, 1) * 2
                         self.log.error("Auth error %s. Throttling %s", str(e), throttle)
                         result = False

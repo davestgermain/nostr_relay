@@ -14,7 +14,7 @@ pubkey_whitelist:
 output_validator: nostr_relay.recipe.homeserver.whitelist_output_validator
 
 storage:
-    class: nostr_relay.recipe.homeserver.PrivateStorage
+    class: nostr_relay.recipe.homeserver.PrivateLMDBStorage
     path: /path/to/db/
     validators:
         - nostr_relay.validators.is_signed
@@ -33,6 +33,7 @@ from aionostr import Manager
 from nostr_relay.config import Config
 from nostr_relay.errors import StorageError
 from nostr_relay.storage.kv import LMDBStorage
+from nostr_relay.storage.db import DBStorage
 
 
 def is_whitelisted_or_tagged(event, config):
@@ -63,9 +64,9 @@ def whitelist_output_validator(event, context):
     )
 
 
-class PrivateStorage(LMDBStorage):
-    async def post_save(self, event):
-        await super().post_save(event)
+class PostSaveForward:
+    async def post_save(self, event, **kwargs):
+        await super().post_save(event, **kwargs)
         if event.pubkey in Config.pubkey_whitelist and Config.forward_events:
             # to prevent loops, add our own relay to the list of already-delivered relays
             sent_to = set(Config.authentication.relay_urls)
@@ -82,3 +83,14 @@ class PrivateStorage(LMDBStorage):
                     async with Manager(relays) as man:
                         await man.add_event(event, check_response=True)
                     sent_to.update(relays)
+
+
+class PrivateLMDBStorage(PostSaveForward, LMDBStorage):
+    pass
+
+
+class PrivateDBStorage(PostSaveForward, DBStorage):
+    pass
+
+
+PrivateStorage = PrivateLMDBStorage

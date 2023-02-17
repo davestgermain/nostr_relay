@@ -41,5 +41,3 @@ To run a query, we use a pipeline:
 # pypy
 
 Using [pypy](https://www.pypy.org) can greatly increase performance. Be sure to install [pypy 3.9](https://www.pypy.org/download.html).  
-After installing `nostr-relay[lmdb]`, run `pip uninstall python-rapidjson`, because the default json module on pypy is faster than rapidjson.
-
