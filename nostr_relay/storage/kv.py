@@ -631,8 +631,11 @@ def planner(filters, default_limit=6000, log=None):
         best_index = MultiIndex()
         if "ids" in query:
             ids = query.pop("ids")
-            query_items.append(("ids", tuple(ids)))
-            best_index.add("ids", ids)
+            if ids:
+                query_items.append(("ids", tuple(ids)))
+                best_index.add("ids", ids)
+            else:
+                continue
         if "kinds" in query and "authors" in query:
             kinds = tuple(sorted(query.pop("kinds"), reverse=True))
             authors = tuple(sorted(query.pop("authors"), reverse=True))
@@ -640,17 +643,26 @@ def planner(filters, default_limit=6000, log=None):
             for author in authors:
                 for k in kinds:
                     authormatches.append((author, k))
-            query_items.append(("kinds", kinds))
-            query_items.append(("authors", authors))
-            best_index.add("authorkinds", authormatches)
+            if authormatches:
+                query_items.append(("kinds", kinds))
+                query_items.append(("authors", authors))
+                best_index.add("authorkinds", authormatches)
+            else:
+                continue
         elif "kinds" in query:
             kinds = tuple(sorted(query.pop("kinds"), reverse=True))
-            query_items.append(("kinds", kinds))
-            best_index.add("kinds", kinds)
+            if kinds:
+                query_items.append(("kinds", kinds))
+                best_index.add("kinds", kinds)
+            else:
+                continue
         elif "authors" in query:
             authors = tuple(sorted(query.pop("authors"), reverse=True))
-            query_items.append(("authors", authors))
-            best_index.add("authors", authors)
+            if authors:
+                query_items.append(("authors", authors))
+                best_index.add("authors", authors)
+            else:
+                continue
 
         for key, value in query.items():
             if key[0] == "#" and len(key) == 2 and isinstance(value, list):
