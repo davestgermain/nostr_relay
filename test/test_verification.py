@@ -124,25 +124,29 @@ class VerificationTests(BaseTestsWithStorage):
         # returns bad json
         for resp in (".", {}, {"names": "foo"}, {"names": {"test": "1234"}}):
             response.return_value = resp
-            success, failure = await verifier.process_verifications([candidate])
-
-            assert "test@localhost" == failure[0][0]
-            assert not success
+            with self.assertLogs("nostr_relay.verification", level="INFO") as cm:
+                await verifier.process_verifications([candidate])
+            assert 2 <= len(cm.output)
 
         # good json
         pubkey = candidate[2]
 
         response.return_value = {"names": {"test": pubkey}}
-        success, failure = await verifier.process_verifications([candidate])
-
-        assert success
+        with self.assertLogs("nostr_relay.verification", level="INFO") as cm:
+            await verifier.process_verifications([candidate])
+        assert (
+            "INFO:nostr_relay.verification:Saved verification for test@localhost=5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d success=True"
+            == cm.output[-1]
+        )
 
         # bad domain
         candidate[0] = "test@baddomain.biz"
-        success, failure = await verifier.process_verifications([candidate])
-
-        assert not failure
-        assert not success
+        with self.assertLogs("nostr_relay.verification", level="INFO") as cm:
+            await verifier.process_verifications([candidate])
+        assert (
+            "WARNING:nostr_relay.verification:skipping verification for disallowed domain test@baddomain.biz"
+            == cm.output[-1]
+        )
 
     @patch("nostr_relay.verification.Verifier.get_aiohttp_session")
     async def test_verify_verified(self, mock):

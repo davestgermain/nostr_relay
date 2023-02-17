@@ -28,7 +28,7 @@ class Verifier(Periodic):
         self.options.setdefault("update_frequency", 3600)
         self.options.setdefault("expiration", 86400)
         Periodic.__init__(self, self.options["update_frequency"])
-        self._candidate = None
+        self._candidates = []
         self._last_run = 0
         self.queue = asyncio.Queue()
         # nip05_verification can be "enabled", "disabled", or "passive"
@@ -108,7 +108,7 @@ class Verifier(Periodic):
                 )
             else:
                 self.log.warning("pubkey %s is not verified.", event.pubkey)
-        else:
+        elif "failed" not in [tag[0] for tag in verify_record.tags]:
             identifier = verify_record.content
             self.log.debug(
                 "Checking verification for %s verified:%s",
@@ -146,39 +146,30 @@ class Verifier(Periodic):
         except Exception:
             self.log.exception("batch_query")
             return
-        if self._candidate:
-            candidates.append(self._candidate)
+        if self._candidates:
+            candidates.extend(self._candidates)
 
         try:
-            success, failure = await self.process_verifications(candidates)
+            await self.process_verifications(candidates)
         except Exception:
             self.log.exception("process_verifications")
-        if success or failure:
-            try:
-                expiration = str(int(time.time()) + self.options["expiration"])
-                for identifier, pubkey in success:
-                    tags = {
-                        "t": "verification",
-                        "d": f"verify:{pubkey}",
-                        "expiration": expiration,
-                    }
-                    verify_record = await self.storage.add_service_event(
-                        content=identifier, tags=tags
-                    )
-                # for identifier, pubkey in failure:
-                #     if vid is None:
-                #         # don't persist first time candidates
-                #         continue
-                #     # else:
-                #     #     tags = {
-                #     #         "d": "verification",
-                #     #         "p": pubkey
-                #     #     }
-                #     #     verify_record = await self.storage.add_service_event(content=identifier, tags=tags)
-            except Exception:
-                self.log.exception("saving verifications")
-            self.log.info("Saved success:%d failure:%d", len(success), len(failure))
         self._last_run = time.time()
+
+    async def _mark_done(self, identifier, pubkey, success=False):
+        expiration = str(int(time.time()) + self.options["expiration"])
+        tags = {
+            "t": "verification",
+            "d": f"verify:{pubkey}",
+            "expiration": expiration,
+        }
+        if not success:
+            tags["failed"] = str(int(time.time()))
+        verify_record = await self.storage.add_service_event(
+            content=identifier, tags=tags
+        )
+        self.log.info(
+            "Saved verification for %s=%s success=%s", identifier, pubkey, success
+        )
 
     def get_aiohttp_session(self):
         import aiohttp
@@ -188,8 +179,7 @@ class Verifier(Periodic):
         )
 
     async def process_verifications(self, candidates):
-        success = []
-        failure = []
+        tasks = []
         async with self.get_aiohttp_session() as session:
             for identifier, verified_at, pubkey in candidates:
                 self.log.info(
@@ -197,48 +187,61 @@ class Verifier(Periodic):
                     identifier,
                     verified_at,
                 )
-                uname, domain = identifier.split("@", 1)
-                if not self.check_allowed_domains(domain):
-                    # how did this record get here?
-                    self.log.warning(
-                        "skipping verification for disallowed domain %s", identifier
+                tasks.append(
+                    asyncio.create_task(
+                        self._fetch_one_verification(session, identifier, pubkey)
                     )
-                    continue
+                )
+        self.log.info("Waiting for %d tasks", len(tasks))
+        await asyncio.wait(tasks)
 
-                # request well-known url
-                url = f"https://{domain}/.well-known/nostr.json?name={uname}"
-                self.log.info("Requesting %s", url)
+    async def _fetch_one_verification(self, session, identifier, pubkey):
+        uname, domain = identifier.split("@", 1)
+        if not self.check_allowed_domains(domain):
+            # how did this record get here?
+            self.log.warning(
+                "skipping verification for disallowed domain %s", identifier
+            )
+            return
 
-                try:
-                    async with session.get(url) as response:
-                        # content_type=None will not check for the correct content-type
-                        # lots of nostr.json files seem to be served with wrong types
-                        data = await response.json(loads=json.loads, content_type=None)
-                    names = data["names"]
-                    assert isinstance(names, dict)
-                except Exception:
-                    self.log.exception("Failure verifying %s from %s", identifier, url)
-                    failure.append([identifier, pubkey])
-                else:
-                    if names.get(uname, "") != pubkey:
-                        self.log.warning(
-                            "Could not verify %s=%s from %s", identifier, pubkey, url
-                        )
-                        failure.append([identifier, pubkey])
-                    else:
-                        self.log.info("Verified %s=%s from %s", identifier, pubkey, url)
-                        success.append([identifier, pubkey])
+        # request well-known url
+        url = f"https://{domain}/.well-known/nostr.json?name={uname}"
+        self.log.info("Requesting %s", url)
+        success = False
 
-        return success, failure
+        try:
+            async with session.get(url) as response:
+                # content_type=None will not check for the correct content-type
+                # lots of nostr.json files seem to be served with wrong types
+                data = await response.json(loads=json.loads, content_type=None)
+            names = data["names"]
+            assert isinstance(names, dict)
+        except Exception:
+            self.log.error("Failure verifying %s from %s %s", identifier, url, str(e))
+        else:
+            if names.get(uname, "") != pubkey:
+                self.log.warning(
+                    "Could not verify %s=%s from %s", identifier, pubkey, url
+                )
+            else:
+                self.log.info("Verified %s=%s from %s", identifier, pubkey, url)
+                success = True
+        await self._mark_done(identifier, pubkey, success=success)
 
     async def wait_function(self):
-        self._candidate = None
+        self._candidates = []
+        flag = True
         try:
             async with timeout(self.options["update_frequency"]):
-                self._candidate = await self.queue.get()
-            if self._candidate is None:
-                self.running = False
-            self.log.debug("Got candidate %s", self._candidate)
+                while flag or self.queue.qsize():
+                    candidate = await self.queue.get()
+                    if candidate is None:
+                        self.running = False
+                        return
+                    else:
+                        self._candidates.append(candidate)
+                        flag = False
+            self.log.debug("Got candidates %s", self._candidates)
         except asyncio.TimeoutError:
             self.log.debug("timed out waiting for queue")
 
@@ -251,4 +254,4 @@ class Verifier(Periodic):
             await super().start()
 
     def is_processing(self):
-        return not self.queue.empty()
+        return not (self.queue.empty() and self._candidates)
