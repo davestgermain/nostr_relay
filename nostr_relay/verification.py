@@ -216,7 +216,7 @@ class Verifier(Periodic):
                 data = await response.json(loads=json.loads, content_type=None)
             names = data["names"]
             assert isinstance(names, dict)
-        except Exception:
+        except Exception as e:
             self.log.error("Failure verifying %s from %s %s", identifier, url, str(e))
         else:
             if names.get(uname, "") != pubkey:
