@@ -150,7 +150,7 @@ class Client:
                             message[1], auth_token=self.auth_token
                         )
                     except (StorageError, AuthenticationError) as e:
-                        throttle = min(throttle, 1) * 2
+                        throttle = max(throttle, 1) * 2
                         self.log.error("Auth error %s. Throttling %s", str(e), throttle)
                         result = False
                         reason = str(e)
