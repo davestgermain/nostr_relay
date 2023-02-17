@@ -125,6 +125,7 @@ class Authenticator:
         can_do = True
         if self.is_enabled:
             if action in self.actions:
+                auth_token = auth_token or {}
                 can_do = bool(
                     self.actions[action].intersection(
                         auth_token.get("roles", self.default_roles)
