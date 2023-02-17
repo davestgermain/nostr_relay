@@ -192,8 +192,8 @@ class Verifier(Periodic):
                         self._fetch_one_verification(session, identifier, pubkey)
                     )
                 )
-        self.log.info("Waiting for %d tasks", len(tasks))
-        await asyncio.wait(tasks)
+            self.log.info("Waiting for %d tasks", len(tasks))
+            await asyncio.wait(tasks)
 
     async def _fetch_one_verification(self, session, identifier, pubkey):
         uname, domain = identifier.split("@", 1)
