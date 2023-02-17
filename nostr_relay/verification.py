@@ -96,8 +96,7 @@ class Verifier(Periodic):
 
         query = {
             "kinds": [self.storage.service_kind],
-            "#d": ["verification"],
-            "#p": [event.pubkey],
+            "#d": [f"verify:{event.pubkey}"],
             "authors": [self.storage.service_pubkey],
         }
         verify_record = await self.storage.get_event_from_query(query)
@@ -134,7 +133,7 @@ class Verifier(Periodic):
                 self.log.debug("running batch query %s", self._last_run)
                 query = {
                     "kinds": [self.storage.service_kind],
-                    "#d": ["verification"],
+                    "#t": ["verification"],
                     "authors": [self.storage.service_pubkey],
                     "until": int(time.time()) - (self.options["expiration"] - 300),
                 }
@@ -158,7 +157,11 @@ class Verifier(Periodic):
             try:
                 expiration = str(int(time.time()) + self.options["expiration"])
                 for identifier, pubkey in success:
-                    tags = {"d": "verification", "p": pubkey, "expiration": expiration}
+                    tags = {
+                        "t": "verification",
+                        "d": f"verify:{pubkey}",
+                        "expiration": expiration,
+                    }
                     verify_record = await self.storage.add_service_event(
                         content=identifier, tags=tags
                     )

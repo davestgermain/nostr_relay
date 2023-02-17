@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.11.4
+
+* Fixed egregious bug in verification code
+
 ## 1.11.1
 
 * Added ability to use uvicorn instead of gunicorn. `nostr_relay serve --use-uvicorn`
