@@ -179,6 +179,8 @@ class Verifier(Periodic):
         )
 
     async def process_verifications(self, candidates):
+        if not candidates:
+            return
         tasks = []
         async with self.get_aiohttp_session() as session:
             for identifier, verified_at, pubkey in candidates:
@@ -192,8 +194,9 @@ class Verifier(Periodic):
                         self._fetch_one_verification(session, identifier, pubkey)
                     )
                 )
-            self.log.info("Waiting for %d tasks", len(tasks))
-            await asyncio.wait(tasks)
+            if tasks:
+                self.log.info("Waiting for %d tasks", len(tasks))
+                await asyncio.wait(tasks)
 
     async def _fetch_one_verification(self, session, identifier, pubkey):
         uname, domain = identifier.split("@", 1)
