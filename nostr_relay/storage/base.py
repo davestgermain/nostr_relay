@@ -136,7 +136,7 @@ class BaseStorage:
 
     async def notify_other_processes(self, event):
         if self.notifier:
-            self._notifiy_sub_tasks.append(
+            self._notify_sub_tasks.append(
                 asyncio.create_task(self.notifier.notify(event))
             )
 
