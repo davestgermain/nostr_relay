@@ -188,7 +188,7 @@ class IdIndex(Index):
     cardinality = 1000
 
     def to_key(self, value):
-        return self.prefix + bytes.fromhex(value)
+        return self.prefix + bytes_from_hex(value)
 
     def write(self, event, txn, operation="put"):
         if operation == "put":
@@ -221,7 +221,7 @@ class PubkeyIndex(Index):
     prefix = b"\x03"
 
     def to_key(self, value):
-        return self.prefix + bytes.fromhex(value)
+        return self.prefix + bytes_from_hex(value)
 
     def convert(self, event):
         yield self.to_key(event.pubkey)
@@ -248,7 +248,7 @@ class AuthorKindIndex(Index):
     def to_key(self, value):
         return b"%s%s\x00%s" % (
             self.prefix,
-            bytes.fromhex(value[0]),
+            bytes_from_hex(value[0]),
             value[1].to_bytes(4, "big"),
         )
 
@@ -630,15 +630,19 @@ def planner(filters, default_limit=6000, log=None):
 
         best_index = MultiIndex()
         if "ids" in query:
-            ids = query.pop("ids")
+            ids = tuple(
+                sorted((i for i in query.pop("ids") if len(i) >= 2), reverse=True)
+            )
             if ids:
-                query_items.append(("ids", tuple(ids)))
+                query_items.append(("ids", ids))
                 best_index.add("ids", ids)
             else:
                 continue
         if "kinds" in query and "authors" in query:
             kinds = tuple(sorted(query.pop("kinds"), reverse=True))
-            authors = tuple(sorted(query.pop("authors"), reverse=True))
+            authors = tuple(
+                sorted((a for a in query.pop("authors") if len(a) >= 4), reverse=True)
+            )
             authormatches = []
             for author in authors:
                 for k in kinds:
@@ -657,7 +661,9 @@ def planner(filters, default_limit=6000, log=None):
             else:
                 continue
         elif "authors" in query:
-            authors = tuple(sorted(query.pop("authors"), reverse=True))
+            authors = tuple(
+                sorted((a for a in query.pop("authors") if len(a) >= 4), reverse=True)
+            )
             if authors:
                 query_items.append(("authors", authors))
                 best_index.add("authors", authors)
@@ -736,10 +742,20 @@ def compile_match_from_query(query_items):
     for key, value in query_items:
         if key == "ids":
             col = FIELDS_TO_COLUMNS["id"]
-            filter_clauses.add(f"(et[{col}].hex() in {value!r})")
+            if all(len(v) == 64 for v in value):
+                filter_clauses.add(f"(et[{col}].hex() in {value!r})")
+            else:
+                filter_clauses.add(
+                    f"any(et[{col}].hex().startswith(v) for v in {value!r})"
+                )
         elif key == "authors":
             col = FIELDS_TO_COLUMNS["pubkey"]
-            filter_clauses.add(f"(et[{col}].hex() in {value!r})")
+            if all(len(v) == 64 for v in value):
+                filter_clauses.add(f"(et[{col}].hex() in {value!r})")
+            else:
+                filter_clauses.add(
+                    f"any(et[{col}].hex().startswith(v) for v in {value!r})"
+                )
         elif key == "kinds":
             col = FIELDS_TO_COLUMNS["kind"]
             filter_clauses.add(f"(et[{col}] in {value!r})")
@@ -918,6 +934,17 @@ def decode_event(data):
         sig=et[7].hex(),
     )
     return event
+
+
+def bytes_from_hex(hexstr: str):
+    try:
+        return bytes.fromhex(hexstr)
+    except ValueError:
+        if len(hexstr) >= 4 and len(hexstr) % 2 != 0:
+            hexstr = hexstr[:-1]
+            return bytes.fromhex(hexstr)
+        else:
+            raise
 
 
 if __name__ == "__main__":

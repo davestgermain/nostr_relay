@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.11.5
+
+* Support prefix id and author searches
+
 ## 1.11.4
 
 * Fixed egregious bug in verification code
