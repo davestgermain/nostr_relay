@@ -28,12 +28,13 @@ authentication:
 forward_events: true
 """
 
-
-from aionostr import Manager
+import asyncio
+from aionostr import Relay
 from nostr_relay.config import Config
 from nostr_relay.errors import StorageError
 from nostr_relay.storage.kv import LMDBStorage
 from nostr_relay.storage.db import DBStorage
+from nostr_relay.util import timeout
 
 
 def is_whitelisted_or_tagged(event, config):
@@ -65,6 +66,11 @@ def whitelist_output_validator(event, context):
 
 
 class PostSaveForward:
+    async def _bounce_to_relay(self, relay_url, event):
+        async with timeout(10):
+            async with Relay(relay_url) as relay:
+                return await relay.add_event(event, check_response=True)
+
     async def post_save(self, event, **kwargs):
         await super().post_save(event, **kwargs)
         if event.pubkey in Config.pubkey_whitelist and Config.forward_events:
@@ -80,8 +86,12 @@ class PostSaveForward:
                 relays = set([r[1] for r in relay_list.tags if r[0] == "r"]) - sent_to
                 if relays:
                     self.log.info("Sending %s to %s", event.id, relays)
-                    async with Manager(relays) as man:
-                        await man.add_event(event, check_response=True)
+                    tasks = [
+                        asyncio.create_task(
+                            self._bounce_to_relay(r, event) for r in relays
+                        )
+                    ]
+                    done, _ = await asyncio.wait(tasks)
                     sent_to.update(relays)
 
 
