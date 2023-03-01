@@ -124,9 +124,6 @@ class Client:
                     continue
 
                 if command == "REQ":
-                    if throttle:
-                        await asyncio.sleep(throttle)
-
                     sub_id = str(message[1])
                     if self.send_task is None:
                         self.send_task = asyncio.create_task(self.send_subscriptions())
@@ -138,13 +135,12 @@ class Client:
                         self.subscription_queue,
                         auth_token=self.auth_token,
                     )
+                    if throttle:
+                        await asyncio.sleep(throttle)
                 elif command == "CLOSE":
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
                 elif command == "EVENT":
-                    if throttle:
-                        await asyncio.sleep(throttle)
-
                     try:
                         event, result = await storage.add_event(
                             message[1], auth_token=self.auth_token
@@ -167,6 +163,8 @@ class Client:
                             "%s added %s from %s", client_id, event.id, event.pubkey
                         )
                     finally:
+                        if throttle:
+                            await asyncio.sleep(throttle)
                         await ws.send_media(["OK", eventid, result, reason])
                 elif command == "AUTH" and storage.authenticator.is_enabled:
                     self.auth_token = await storage.authenticator.authenticate(
@@ -175,6 +173,7 @@ class Client:
                     throttle = await storage.authenticator.should_throttle(
                         self.auth_token
                     )
+
             except StorageError as e:
                 self.log.warning("storage error: %s for %s", e, client_id)
                 await ws.send_media(["NOTICE", str(e)])
