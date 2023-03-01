@@ -87,9 +87,8 @@ class PostSaveForward:
                 if relays:
                     self.log.info("Sending %s to %s", event.id, relays)
                     tasks = [
-                        asyncio.create_task(
-                            self._bounce_to_relay(r, event) for r in relays
-                        )
+                        asyncio.create_task(self._bounce_to_relay(r, event))
+                        for r in relays
                     ]
                     done, _ = await asyncio.wait(tasks)
                     sent_to.update(relays)
