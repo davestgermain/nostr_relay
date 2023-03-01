@@ -641,7 +641,10 @@ def planner(filters, default_limit=6000, log=None):
         if "kinds" in query and "authors" in query:
             kinds = tuple(sorted(query.pop("kinds"), reverse=True))
             authors = tuple(
-                sorted((a for a in query.pop("authors") if len(a) >= 4), reverse=True)
+                sorted(
+                    (a for a in query.pop("authors") if len(a) >= 4 and a[0] != "n"),
+                    reverse=True,
+                )
             )
             authormatches = []
             for author in authors:
@@ -662,7 +665,10 @@ def planner(filters, default_limit=6000, log=None):
                 continue
         elif "authors" in query:
             authors = tuple(
-                sorted((a for a in query.pop("authors") if len(a) >= 4), reverse=True)
+                sorted(
+                    (a for a in query.pop("authors") if len(a) >= 4 and a[0] != "n"),
+                    reverse=True,
+                )
             )
             if authors:
                 query_items.append(("authors", authors))
