@@ -3,6 +3,7 @@
 ## 1.11.5
 
 * Support prefix id and author searches
+* Set `default_req_limit` to limit the number of events returned per REQ. (default: 6000)
 
 ## 1.11.4
 

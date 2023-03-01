@@ -8,6 +8,7 @@ class ConfigClass:
     oldest_event = 31536000
     redirect_homepage = ""
     subscription_limit = 32
+    default_req_limit = 6000
 
     def __init__(self):
         self.authentication = {}

@@ -234,7 +234,7 @@ class BaseSubscription:
         filters: list,
         queue=None,
         client_id=None,
-        default_limit=6000,
+        default_limit=Config.default_req_limit,
         log=None,
         auth_token=None,
         **kwargs,
