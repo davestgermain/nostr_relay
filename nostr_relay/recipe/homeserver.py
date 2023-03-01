@@ -69,7 +69,7 @@ class PostSaveForward:
         await super().post_save(event, **kwargs)
         if event.pubkey in Config.pubkey_whitelist and Config.forward_events:
             # to prevent loops, add our own relay to the list of already-delivered relays
-            sent_to = set(Config.authentication.relay_urls)
+            sent_to = set(Config.authentication.get('relay_urls', []))
             bounce_to = set([event.pubkey])
             for tag in event.tags:
                 if tag[0] == "p":
