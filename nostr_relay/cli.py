@@ -402,17 +402,21 @@ def mirror(ids, authors, kinds, etags, ptags, since, until, limit, source, targe
 
 
 @main.command()
-@click.option("-q", "query", help="Query", required=True)
+@click.option("-q", "query", help="Query", required=False)
+@click.option("-a", "authors", type=click.File("r"), required=False)
 @click.pass_context
 @async_cmd
-async def purge(ctx, query):
+async def purge(ctx, query, authors):
     """
     Purge events from the specified query
     """
     from .util import json
     from .storage import get_storage
 
-    query = json.loads(query)
+    if authors:
+        query = {"authors": [a.strip() for a in authors.readlines()]}
+    else:
+        query = json.loads(query)
     print(repr(query))
     async with get_storage() as storage:
         events = []
