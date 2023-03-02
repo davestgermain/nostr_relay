@@ -33,8 +33,6 @@ from ..validators import get_validator
 
 DONE = object()
 
-QUERY_POOL = futures.ThreadPoolExecutor(max_workers=20)
-
 
 VERSION = 1
 
@@ -386,12 +384,14 @@ class LMDBStorage(BaseStorage):
 
     def __init__(self, options):
         super().__init__(options)
+        pool_size = self.options.pop("pool_size", 20)
         self.options.pop("class")
         # set this to the number of read threads
-        self.options.setdefault("max_spare_txns", 20)
+        self.options.setdefault("max_spare_txns", pool_size)
         self.log = logging.getLogger(__name__)
         self.subscription_class = Subscription
         self.db = None
+        self.query_pool = futures.ThreadPoolExecutor(max_workers=pool_size)
 
     async def close(self):
         if self.db:
@@ -465,7 +465,9 @@ class LMDBStorage(BaseStorage):
                 "until": event.created_at - 1,
             }
         if query:
-            task, events = executor(self.db, [query], loop=self.loop)
+            task, events = executor(
+                self.db, [query], loop=self.loop, pool=self.query_pool
+            )
             await task
             for event in events:
                 if event is not None:
@@ -488,11 +490,14 @@ class LMDBStorage(BaseStorage):
     async def run_single_query(self, filters):
         if isinstance(filters, dict):
             filters = [filters]
-        task, events = executor(self.db, filters, default_limit=600000)
+        task, events = executor(
+            self.db, filters, default_limit=600000, pool=self.query_pool
+        )
         await task
         for event in events:
             if event is not None:
                 yield event
+        analyze(task, loop=self.loop, pool=self.query_pool)
 
     async def get_identified_pubkey(self, identifier, domain=""):
         data = {"names": {}, "relays": {}}
@@ -535,6 +540,7 @@ class Subscription(BaseSubscription):
                 loop=self.storage.loop,
                 default_limit=self.default_limit,
                 log=self.log,
+                pool=self.storage.query_pool,
             )
 
             # we could start consuming events before all queries are complete,
@@ -559,6 +565,8 @@ class Subscription(BaseSubscription):
                 self.log.exception("run_query")
             finally:
                 await queue.put((sub_id, None))
+                analyze(task, loop=loop, pool=self.storage.query_pool)
+
         self.log.debug("Done with query")
 
 
@@ -788,6 +796,7 @@ def executor(
     loop=None,
     default_limit=6000,
     log=None,
+    pool=None,
 ):
     """
     Execute one or several queries.
@@ -804,25 +813,23 @@ def executor(
         # and faster than using a Queue
         events = collections.deque()
 
-        tasks = []
-        for plan in plans:
-            tasks.append(
-                loop.run_in_executor(
-                    QUERY_POOL,
-                    execute_one_plan,
-                    lmdb_environment,
-                    plan,
-                    events.append,
-                    log,
-                )
+        tasks = [
+            loop.run_in_executor(
+                pool,
+                execute_one_plan,
+                lmdb_environment,
+                plan,
+                events.append,
+                log,
             )
+            for plan in plans
+        ]
 
         if len(tasks) == 1:
             task = tasks[0]
         else:
             task = asyncio.gather(*tasks)
-        # log queries, analyze results, etc.
-        task.add_done_callback(analyze)
+
         return task, events
     except:
         log.exception("executor")
@@ -862,7 +869,7 @@ def execute_one_plan(
 SLOW_QUERY_THRESHOLD = 500
 
 
-def _analyze_threaded(task):
+def _analyze(task):
     result = task.result()
     if not isinstance(result, list):
         plans, log = [result[0]], result[1]
@@ -895,14 +902,12 @@ def _analyze_threaded(task):
                 )
 
 
-def analyze(task, later=True):
+def analyze(task, loop=None, pool=None):
     """
     Analyze and log query stats from the completed task
     """
-    if later:
-        QUERY_POOL.submit(_analyze_threaded, task)
-    else:
-        _analyze_threaded(task)
+    loop = loop or asyncio.get_running_loop()
+    loop.run_in_executor(pool, _analyze, task)
 
 
 def encode_event(event):
