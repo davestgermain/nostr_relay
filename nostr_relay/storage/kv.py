@@ -115,7 +115,7 @@ class Index:
             else:
                 stop = self.prefix
             if since:
-                stop += b"\x00%s" % since
+                stop += b"\x00" + since
             skip(match + add_time)
         else:
             match = None
@@ -338,9 +338,8 @@ class WriterThread(threading.Thread):
         log = logging.getLogger("nostr_relay.writer")
 
         def delete_event(event_id, txn):
-            event_data = txn.get(b"\x00%s" % event_id)
-            if event_data:
-                event = decode_event(event_data)
+            event = decode_event(get_event_data(txn, event_id))
+            if event:
                 for index in reversed(write_indexes):
                     index.clear(event, txn)
 
@@ -368,7 +367,7 @@ class WriterThread(threading.Thread):
                                     until=event.created_at - 1,
                                 ) as scanner:
                                     for event_id in scanner:
-                                        log.info("Deleting %s", event_id)
+                                        log.info("Deleting %s", event_id.hex())
                                         delete_event(event_id, txn)
                                         counter["count"] += 1
                         elif operation == "del":
@@ -483,9 +482,7 @@ class LMDBStorage(BaseStorage):
 
     async def get_event(self, event_id: str):
         with self.db.begin(buffers=True) as txn:
-            event_data = txn.get(b"\x00%s" % bytes.fromhex(event_id))
-            if event_data:
-                return decode_event(event_data)
+            return decode_event(get_event_data(txn, bytes.fromhex(event_id)))
 
     async def run_single_query(self, filters):
         if isinstance(filters, dict):
@@ -717,15 +714,9 @@ def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
     """
     match = compile_match_from_query(query_items)
 
-    def get_event_data(event_id):
-        try:
-            return unpackb(txn.get(b"\x00%s" % event_id))
-        except TypeError:
-            return None
-
     stats["index_hits"] = stats["index_misses"] = 0
     for event_id in event_id_iterator:
-        event_tuple = get_event_data(event_id)
+        event_tuple = get_event_data(txn, event_id)
         if match(event_tuple):
             event = Event(
                 id=event_tuple[1].hex(),
@@ -928,18 +919,25 @@ def encode_event(event):
 
 
 def decode_event(data):
-    et = unpackb(data)
-    assert et[0] == 1, "unknown version"
-    event = Event(
-        id=et[1].hex(),
-        created_at=et[2],
-        kind=et[3],
-        pubkey=et[4].hex(),
-        content=et[5],
-        tags=et[6],
-        sig=et[7].hex(),
-    )
-    return event
+    if data:
+        assert data[0] == 1, "unknown version"
+        event = Event(
+            id=data[1].hex(),
+            created_at=data[2],
+            kind=data[3],
+            pubkey=data[4].hex(),
+            content=data[5],
+            tags=data[6],
+            sig=data[7].hex(),
+        )
+        return event
+
+
+def get_event_data(txn, event_id: bytes):
+    try:
+        return unpackb(txn.get(b"\x00" + event_id), use_list=False)
+    except TypeError:
+        return None
 
 
 def bytes_from_hex(hexstr: str):
