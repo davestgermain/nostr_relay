@@ -68,8 +68,12 @@ def whitelist_output_validator(event, context):
 class PostSaveForward:
     async def _bounce_to_relay(self, relay_url, event):
         async with timeout(10):
-            async with Relay(relay_url) as relay:
-                return await relay.add_event(event, check_response=True)
+            try:
+                async with Relay(relay_url) as relay:
+                    return await relay.add_event(event, check_response=True)
+            except Exception as e:
+                self.log.warning("bouncing %e to %s: %s", event.id, relay_url, str(e))
+                return
 
     async def post_save(self, event, **kwargs):
         await super().post_save(event, **kwargs)
