@@ -571,7 +571,7 @@ class Subscription(BaseSubscription):
                 self.log.exception("run_query")
             finally:
                 await queue.put((sub_id, None))
-                analyze(task, loop=loop, pool=self.storage.query_pool)
+                analyze(task, loop=self.storage.loop, pool=self.storage.query_pool)
 
         self.log.debug("Done with query")
 
