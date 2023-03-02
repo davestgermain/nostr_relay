@@ -4,6 +4,9 @@
 
 * Support prefix id and author searches
 * Set `max_limit` to limit the number of events returned per REQ. (default: 6000)
+* Several micro-optimizations in the LMDB backend
+* Made Homeserver more reliable
+* Simplified storage of verification status
 
 ## 1.11.4
 
