@@ -76,7 +76,7 @@ class NotifyClient:
             event = await self.storage.get_event(data.hex())
             if event:
                 self.log.debug("Got %s", data.hex())
-                self.storage.notify_all_connected(event)
+                await self.storage.notify_all_connected(event)
         self.log.info("Closed")
 
     def start(self):
