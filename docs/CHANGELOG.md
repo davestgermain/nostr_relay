@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.11.6
+
+* Protect against garbage data in queries
+
 ## 1.11.5
 
 * Support prefix id and author searches

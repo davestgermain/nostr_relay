@@ -85,11 +85,14 @@ class Index:
         # to make substring checks quicker
         compiled_matches = []
         for match in sorted(matches, reverse=True):
-            compiled_matches.append(self.to_key(match))
+            try:
+                compiled_matches.append(self.to_key(match))
+            except ValueError:
+                pass
         if since is not None:
-            since = max(int(since), 1).to_bytes(4, "big")
+            since = since.to_bytes(4, "big")
         if until is not None:
-            until = max(int(until), 1).to_bytes(4, "big")
+            until = until.to_bytes(4, "big")
             add_time = b"\x00%s\x00" % until
         else:
             add_time = b""
@@ -104,7 +107,7 @@ class Index:
                 prev()
             return found
 
-        if matches:
+        if compiled_matches:
             next_match = iter(compiled_matches).__next__
             match = next_match()
             if len(compiled_matches) > 1:
@@ -631,14 +634,24 @@ def planner(filters, default_limit=6000, log=None):
 
         since = query.pop("since", None)
         if since is not None:
+            try:
+                since = max(int(since), 1)
+            except ValueError:
+                continue
             query_items.append(("since", since))
         until = query.pop("until", None)
         if until is not None:
+            try:
+                until = max(int(until), 1)
+            except ValueError:
+                continue
             query_items.append(("until", until))
         try:
             limit = min(max(0, int(query.pop("limit"))), default_limit)
         except KeyError:
             limit = default_limit
+        except ValueError:
+            continue
 
         best_index = MultiIndex()
         if "ids" in query:

@@ -466,6 +466,35 @@ class LMDBStorageTests(BaseLMDBTests):
             ),
         ] == all_roles
 
+    async def test_bogus_queries(self):
+        now = int(time.time())
+        for i in range(10):
+            added = self.make_event(
+                PK1, kind=1, content=f"test_bogus_queries {now} {i}", created_at=now - i
+            )
+            await self.storage.add_event(added)
+        await asyncio.sleep(0.2)
+        results = []
+        with self.assertNoLogs("nostr_relay", level="ERROR"):
+            async for event in self.storage.run_single_query({"authors": ["garbage"]}):
+                results.append(event)
+
+            async for event in self.storage.run_single_query(
+                {"ids": ["garbage", added["id"]]}
+            ):
+                results.append(event)
+
+            async for event in self.storage.run_single_query({"since": "abc"}):
+                results.append(event)
+
+            async for event in self.storage.run_single_query({"until": "abc"}):
+                results.append(event)
+
+            async for event in self.storage.run_single_query({"limit": "abc"}):
+                results.append(event)
+
+        assert 1 == len(results)
+
 
 class KVGCTests(BaseLMDBTests):
     garbage_collector = {"collect_interval": 2}
