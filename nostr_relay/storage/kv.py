@@ -325,20 +325,14 @@ class WriterThread(threading.Thread):
         self.env = env
         self.stat_collector = stat_collector
         self.queue = SimpleQueue()
+        self.write_indexes = INDEXES.values()
 
     def run(self):
         env = self.env
         qget = self.queue.get
         qsize = self.queue.qsize
         stat_collector = self.stat_collector
-        write_indexes = INDEXES.values()
         log = logging.getLogger("nostr_relay.writer")
-
-        def delete_event(event_id, txn):
-            event = decode_event(get_event_data(txn, event_id))
-            if event:
-                for index in reversed(write_indexes):
-                    index.clear(event, txn)
 
         while self.running:
             task = qget()
@@ -348,28 +342,20 @@ class WriterThread(threading.Thread):
             try:
                 with stat_collector.timeit("write") as counter:
                     with env.begin(write=True, buffers=True) as txn:
-                        if operation == "add":
-                            for index in write_indexes:
+                        if operation == "add" and not get_event_data(
+                            txn, event.id_bytes
+                        ):
+                            for index in self.write_indexes:
                                 index.write(event, txn)
                                 # log.debug("index %s event %s", index, event)
-                            counter["count"] += 1
-                            if event.kind in (
-                                EventKind.SET_METADATA,
-                                EventKind.CONTACTS,
-                            ):
-                                # delete older metadata events
-                                with INDEXES["authorkinds"].scanner(
-                                    txn,
-                                    [(event.pubkey, event.kind)],
-                                    until=event.created_at - 1,
-                                ) as scanner:
-                                    for event_id in scanner:
-                                        log.info("Deleting %s", event_id.hex())
-                                        delete_event(event_id, txn)
-                                        counter["count"] += 1
+                            self._post_save(txn, event, counter, log)
                         elif operation == "del":
-                            delete_event(bytes.fromhex(event), txn)
-                            counter["count"] += 1
+                            event = decode_event(
+                                get_event_data(txn, bytes.fromhex(event))
+                            )
+                            if event:
+                                self._delete_event(txn, event, log)
+                        counter["count"] += 1
                 qs = qsize()
                 if qs >= 1000 and qs % 1000 == 0:
                     # since we can do about 1,000 writes per second (end-to-end),
@@ -377,6 +363,63 @@ class WriterThread(threading.Thread):
                     log.warning("Write queue size: %d", qs)
             except Exception as e:
                 log.exception("writer")
+
+    def _delete_event(self, txn, event, log):
+        for index in reversed(self.write_indexes):
+            index.clear(event, txn)
+        log.info(
+            "Deleted event %s kind=%d pubkey=%s", event.id, event.kind, event.pubkey
+        )
+
+    def _post_save(self, txn, event, counter, log):
+        if (
+            event.kind
+            in (
+                EventKind.SET_METADATA,
+                EventKind.CONTACTS,
+            )
+            or event.is_replaceable
+            or event.is_paramaterized_replaceable
+        ):
+            saved_id = event.id_bytes
+            until = event.created_at - 1
+            if event.is_paramaterized_replaceable:
+                d_tag = [tag[1] for tag in event.tags if tag[0] == "d"][0]
+            else:
+                d_tag = None
+
+            # delete older replaceable events
+            with INDEXES["authorkinds"].scanner(
+                txn,
+                [(event.pubkey, event.kind)],
+                until=until,
+            ) as scanner:
+                for event_id in scanner:
+                    if event_id == saved_id:
+                        continue
+                    candidate = decode_event(get_event_data(txn, event_id))
+                    if d_tag is not None:
+                        if not all(candidate.has_tag("d", d_tag)):
+                            continue
+                    self._delete_event(txn, candidate, log)
+                    counter["count"] += 1
+
+        elif event.kind == EventKind.DELETE:
+            # delete the referenced events
+            ids = set((bytes_from_hex(tag[1]) for tag in event.tags if tag[0] == "e"))
+            if not ids:
+                return
+            with INDEXES["authors"].scanner(
+                txn,
+                [event.pubkey],
+                until=event.created_at - 1,
+            ) as scanner:
+                for event_id in scanner:
+                    if event_id in ids:
+                        candidate = decode_event(get_event_data(txn, event_id))
+                        if candidate:
+                            self._delete_event(txn, candidate, log)
+                            counter["count"] += 1
 
 
 class LMDBStorage(BaseStorage):
@@ -442,43 +485,6 @@ class LMDBStorage(BaseStorage):
         return event, True
 
     async def post_save(self, event, **kwargs):
-        query = None
-        if event.is_replaceable or event.is_paramaterized_replaceable:
-            query = {
-                "authors": [event.pubkey],
-                "until": event.created_at - 1,
-                "kinds": [event.kind],
-            }
-            if event.is_paramaterized_replaceable:
-                query["#d"] = [[tag[1] for tag in event.tags if tag[0] == "d"][0]]
-            self.log.debug(query)
-        elif event.kind == EventKind.DELETE:
-            # delete the referenced events
-            ids = []
-            for tag in event.tags:
-                name = tag[0]
-                if name == "e":
-                    ids.append(tag[1])
-            query = {
-                "authors": [event.pubkey],
-                "ids": ids,
-                "until": event.created_at - 1,
-            }
-        if query:
-            task, events = executor(
-                self.db, [query], loop=self.loop, pool=self.query_pool
-            )
-            await task
-            for event in events:
-                if event is not None:
-                    self.delete_event(event.id)
-                    self.log.info(
-                        "Deleted/Replaced event %s kind=%d pubkey=%s",
-                        event.id,
-                        event.kind,
-                        event.pubkey,
-                    )
-
         await self.notify_all_connected(event)
         # notify other processes
         await self.notify_other_processes(event)

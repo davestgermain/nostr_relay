@@ -185,8 +185,7 @@ class BaseStorage:
     async def get_auth_roles(self, pubkey: str):
         query = {
             "kinds": [self.service_kind],
-            "#d": ["auth:roles"],
-            "#p": [pubkey],
+            "#d": [f"auth:{pubkey}"],
             "authors": [self.service_pubkey],
         }
         event = await self.get_event_from_query(query)
@@ -198,7 +197,7 @@ class BaseStorage:
     async def get_all_auth_roles(self):
         query = {
             "kinds": [self.service_kind],
-            "#d": ["auth:roles"],
+            "#t": ["auth"],
             "authors": [self.service_pubkey],
         }
         async for event in self.run_single_query([query]):
@@ -208,7 +207,7 @@ class BaseStorage:
                     yield tag[1], set((role or "").lower())
 
     async def set_auth_roles(self, pubkey: str, roles: str):
-        tags = {"p": pubkey, "d": "auth:roles"}
+        tags = {"t": "auth", "d": f"auth:{pubkey}", "p": pubkey}
         content = str(roles).lower()
         await self.add_service_event(content=content, tags=tags)
 

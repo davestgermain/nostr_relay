@@ -442,6 +442,7 @@ class LMDBStorageTests(BaseLMDBTests):
         await self.storage.set_auth_roles(
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "rw"
         )
+        await asyncio.sleep(0.1)
         roles = await self.storage.get_auth_roles(
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
         )
@@ -449,6 +450,7 @@ class LMDBStorageTests(BaseLMDBTests):
         await self.storage.set_auth_roles(
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394a", "r"
         )
+        await asyncio.sleep(0.1)
         all_roles = []
         async for pubkey, roles in self.storage.get_all_auth_roles():
             all_roles.append((pubkey, roles))
