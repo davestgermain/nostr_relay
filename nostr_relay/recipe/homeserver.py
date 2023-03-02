@@ -72,7 +72,7 @@ class PostSaveForward:
                 async with Relay(relay_url) as relay:
                     return await relay.add_event(event, check_response=True)
             except Exception as e:
-                self.log.warning("bouncing %e to %s: %s", event.id, relay_url, str(e))
+                self.log.warning("bouncing %s to %s: %s", event.id, relay_url, str(e))
                 return
 
     async def post_save(self, event, **kwargs):
