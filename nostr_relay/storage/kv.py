@@ -22,7 +22,6 @@ from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
 from ..auth import get_authenticator
 from ..config import Config
 from ..errors import StorageError
-from ..util import catchtime, Periodic, StatsCollector
 from ..validators import get_validator
 
 
@@ -388,6 +387,8 @@ class LMDBStorage(BaseStorage):
     def __init__(self, options):
         super().__init__(options)
         self.options.pop("class")
+        # set this to the number of read threads
+        self.options.setdefault("max_spare_txns", 20)
         self.log = logging.getLogger(__name__)
         self.subscription_class = Subscription
         self.db = None
