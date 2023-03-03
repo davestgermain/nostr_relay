@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.12
+
+* Improve compatibility with python < 3.11
+
 ## 1.11.6
 
 * Protect against garbage data in queries

@@ -16,11 +16,7 @@ except ImportError:
 if hasattr(asyncio, "timeout"):
     timeout = asyncio.timeout
 else:
-    # python < 3.11 does not have asyncio.timeout
-    # rather than re-implement it, we'll just do nothing
-    @asynccontextmanager
-    async def timeout(duration):
-        yield
+    from async_timeout import timeout
 
 
 class catchtime:

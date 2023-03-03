@@ -13,6 +13,7 @@ from nostr_relay.config import Config
 from nostr_relay.web import create_app
 from nostr_relay.storage import get_storage
 from nostr_relay.auth import Authenticator
+from nostr_relay.util import timeout
 from aionostr.event import Event, PrivateKey
 from nostr_relay.errors import StorageError
 
@@ -608,7 +609,7 @@ class MainTests(APITests):
             assert data[0] == "OK"
             await asyncio.sleep(0.5)
             with self.assertRaises(asyncio.TimeoutError):
-                async with asyncio.timeout(1.2):
+                async with timeout(1.2):
                     data = await ws.receive_json()
 
     async def test_prefix_search(self):
@@ -936,7 +937,7 @@ class AuthTests(APITests):
 
             # unauthenticated throttled 1 second
             with self.assertRaises(asyncio.TimeoutError):
-                async with asyncio.timeout(0.5):
+                async with timeout(0.5):
                     response = await self.send_event(ws, EVENTS[2], True)
             await ws.receive_json()
 
@@ -950,7 +951,7 @@ class AuthTests(APITests):
                 ]
             )
             with self.assertRaises(asyncio.TimeoutError):
-                async with asyncio.timeout(2.0):
+                async with timeout(2.0):
                     response = await self.send_event(ws, EVENTS[2], True)
             await ws.receive_json()
 
@@ -963,7 +964,7 @@ class AuthTests(APITests):
                     ),
                 ]
             )
-            async with asyncio.timeout(0.5):
+            async with timeout(0.5):
                 response = await self.send_event(ws, EVENTS[2], True)
 
 
