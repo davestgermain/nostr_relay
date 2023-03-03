@@ -94,7 +94,7 @@ class FOAFBuilder(Periodic):
             )
             async for event in manager.get_events(find_query):
                 for tag in event.tags:
-                    if tag[0] == "p":
+                    if tag[0] == "p" and not tag[1].startswith("npub"):
                         network.add(tag[1])
             found = 1
             while found < self.network_levels:
@@ -103,7 +103,7 @@ class FOAFBuilder(Periodic):
                     find_query["authors"] = batch
                     async for event in manager.get_events(find_query):
                         for tag in event.tags:
-                            if tag[0] == "p":
+                            if tag[0] == "p" and not tag[1].startswith("npub"):
                                 network.add(tag[1])
                     self.log.info("Got batch of 100...")
                 found += 1
