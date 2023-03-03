@@ -77,7 +77,9 @@ class FOAFBuilder(Periodic):
             self.log.info(
                 "Loaded network of %d pubkeys from %s", len(network), self.save_file
             )
-            ALLOWED_PUBKEYS.update([bytes.fromhex(k) for k in network])
+            ALLOWED_PUBKEYS.update(
+                [bytes.fromhex(k) for k in network if not k.startswith("npub")]
+            )
             return True
 
     async def run_once(self):
@@ -112,7 +114,9 @@ class FOAFBuilder(Periodic):
                 json.dump(list(network), fp)
             self.log.info("Saved network to %s", self.save_file)
         ALLOWED_PUBKEYS.clear()
-        ALLOWED_PUBKEYS.update([bytes.fromhex(k) for k in network])
+        ALLOWED_PUBKEYS.update(
+            [bytes.fromhex(k) for k in network if not k.startswith("npub")]
+        )
 
 
 def batched(iterable, n):
