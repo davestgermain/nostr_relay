@@ -105,7 +105,10 @@ class RateLimiter(BaseRateLimiter):
                     ][command]
                     if self.evaluate_rules(rules[command], recent_timestamps):
                         self.log.warning(
-                            "Rate limiting for %s %s", command, rules[command]
+                            "Rate limiting %s for %s %s",
+                            client_address,
+                            command,
+                            rules[command],
                         )
                         return True
                     recent_timestamps.insert(0, self._timestamp())
