@@ -108,7 +108,7 @@ class Verifier(Periodic):
                 )
             else:
                 self.log.warning("pubkey %s is not verified.", event.pubkey)
-        elif "failed" not in [tag[0] for tag in verify_record.tags]:
+        elif not verify_record.has_tag("failed")[0]:
             identifier = verify_record.content
             self.log.debug(
                 "Checking verification for %s verified:%s",
@@ -160,6 +160,7 @@ class Verifier(Periodic):
         tags = {
             "t": "verification",
             "d": f"verify:{pubkey}",
+            "n": identifier,
             "expiration": expiration,
         }
         if not success:
