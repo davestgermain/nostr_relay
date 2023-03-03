@@ -258,4 +258,4 @@ class Verifier(Periodic):
             await super().start()
 
     def is_processing(self):
-        return not (self.queue.empty() and self._candidates)
+        return bool(self._candidates) or not self.queue.empty()
