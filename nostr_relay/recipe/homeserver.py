@@ -57,7 +57,7 @@ def whitelist_output_validator(event, context):
     (output validators should return booleans rather than raise exceptions)
     """
     whitelist = context["config"].pubkey_whitelist
-    auth_token = context["auth_token"]
+    auth_token = context["auth_token"] or {}
     return (
         (event.pubkey in whitelist)
         or (auth_token.get("pubkey") in whitelist)
