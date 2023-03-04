@@ -72,6 +72,18 @@ def is_pow(event, config):
         )
 
 
+def is_not_hellthread(event, config):
+    """
+    Ensure that the event does not have too many "p" tags
+    """
+    if config.hellthread_limit:
+        num_tags = len([t for t in event.tags if t[0] == "p"])
+        if num_tags > config.hellthread_limit:
+            raise StorageError(
+                f"rejected: too many 'p' tags: {num_tags}. limit: {config.hellthread_limit}"
+            )
+
+
 def get_validator(function_names):
     """
     Given a list of function names, return an async validator function to run them all

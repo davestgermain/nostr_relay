@@ -15,6 +15,7 @@ storage:
     - nostr_relay.validators.is_not_too_large
     - nostr_relay.validators.is_signed
     - nostr_relay.validators.is_recent
+    - nostr_relay.validators.is_not_hellthread
 
 verification:
   # options are disabled, passive, enabled
@@ -55,3 +56,6 @@ subscription_limit: 32
 
 # set this to limit the number of events returned per REQ
 max_limit: 6000
+
+# set this to the maximum number of "p" tags in an event
+hellthread_limit: 100
