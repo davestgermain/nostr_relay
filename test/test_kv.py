@@ -38,6 +38,12 @@ class BaseLMDBTests(BaseTestsWithStorage):
         if os.path.isdir(self.envdir):
             shutil.rmtree(self.envdir)
 
+    async def get_events(self, query):
+        results = []
+        async for event in self.storage.run_single_query(query):
+            results.append(event)
+        return results
+
 
 class LMDBStorageTests(BaseLMDBTests):
     async def test_add_event(self):
@@ -106,12 +112,10 @@ class LMDBStorageTests(BaseLMDBTests):
 
         assert 6 == len(results)
         with self.assertLogs("nostr_relay", level="INFO") as cm:
-            async for event in self.storage.run_single_query([{}]):
-                pass
+            await self.get_events([{}])
             assert ["INFO:nostr_relay.kvquery:No empty queries allowed"] == cm.output
         with self.assertLogs("nostr_relay", level="INFO") as cm:
-            async for event in self.storage.run_single_query([{"foo": 1}]):
-                pass
+            await self.get_events([{"foo": 1}])
             assert ["INFO:nostr_relay.kvquery:No range scans allowed ()"] == cm.output
 
     async def test_good_query_plan(self):
@@ -191,6 +195,7 @@ class LMDBStorageTests(BaseLMDBTests):
             },
             {"kinds": [2]},
             {"ids": ["abcdef"]},
+            {"ids": [event["id"]]},
         ]
         queue = asyncio.Queue()
         sub = await self.storage.subscribe(
@@ -208,7 +213,7 @@ class LMDBStorageTests(BaseLMDBTests):
             assert "test_subscriptions" == sub_id
             assert 1 == event.kind
             count += 1
-        assert 10 == count
+        assert 11 == count
         await self.storage.unsubscribe("test", "test_subscriptions")
 
     async def test_prefix_queries(self):
@@ -283,15 +288,11 @@ class LMDBStorageTests(BaseLMDBTests):
         await asyncio.sleep(0.2)
 
         query = {"ids": ["02"]}
-        found = []
-        async for event in self.storage.run_single_query(query):
-            found.append(event)
+        found = await self.get_events(query)
         assert 3 == len(found)
 
         query = {"authors": ["1a0e8"], "since": 1676678130}
-        found = []
-        async for event in self.storage.run_single_query(query):
-            found.append(event)
+        found = await self.get_events(query)
         assert 7 == len(found)
 
     async def test_tag_query(self):
@@ -473,25 +474,18 @@ class LMDBStorageTests(BaseLMDBTests):
                 PK1, kind=1, content=f"test_bogus_queries {now} {i}", created_at=now - i
             )
             await self.storage.add_event(added)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         results = []
         with self.assertNoLogs("nostr_relay", level="ERROR"):
-            async for event in self.storage.run_single_query({"authors": ["garbage"]}):
-                results.append(event)
-
-            async for event in self.storage.run_single_query(
-                {"ids": ["garbage", added["id"]]}
-            ):
-                results.append(event)
-
-            async for event in self.storage.run_single_query({"since": "abc"}):
-                results.append(event)
-
-            async for event in self.storage.run_single_query({"until": "abc"}):
-                results.append(event)
-
-            async for event in self.storage.run_single_query({"limit": "abc"}):
-                results.append(event)
+            results.extend(await self.get_events({"authors": ["garbage"]}))
+            results.extend(await self.get_events({"ids": ["garbage", added["id"]]}))
+            results.extend(await self.get_events({"ids": ["1"]}))
+            results.extend(await self.get_events({"since": "abc"}))
+            results.extend(await self.get_events({"until": "abc"}))
+            results.extend(await self.get_events({"limit": "abc"}))
+            results.extend(await self.get_events({"authors": ["npubblabab", "ab"]}))
+            results.extend(await self.get_events({"kinds": []}))
+            results.extend(await self.get_events({"kinds": [], "authors": [""]}))
 
         assert 1 == len(results)
 
@@ -519,10 +513,8 @@ class KVGCTests(BaseLMDBTests):
 
         await asyncio.sleep(2.2)
 
-        results = []
-        async for event in self.storage.run_single_query({"kinds": [22222]}):
-            results.append(event)
-        assert len(results) == 0
+        results = await self.get_events({"kinds": [22222]})
+        assert 0 == len(results)
 
     async def test_collect_expired(self):
         now = int(time.time())
@@ -561,12 +553,84 @@ class KVGCTests(BaseLMDBTests):
 
             await asyncio.sleep(4)
 
-            results = []
-            async for event in self.storage.run_single_query({"kinds": [1]}):
-                results.append(event)
-                print(event)
+            results = await self.get_events({"kinds": [1]})
             assert 1 == len(results)
         assert [
             "INFO:nostr_relay.storage:gc:Collected garbage (1 events)",
             "INFO:nostr_relay.storage:gc:Collected garbage (1 events)",
         ] == cm.output
+
+
+class FTSTests(BaseLMDBTests):
+    def setUp(self):
+        super().setUp()
+        Config.fts_enabled = True
+        kv.INDEXES["search"].enabled = True
+        kv.INDEXES["search"]._index = None
+        # kv.INDEXES["search"].index_path = Config.fts_index_path
+
+    async def add_events(self):
+        for content in [
+            "hello unicorn",
+            "hello banana",
+            "hello pizza",
+            "goodbye april",
+        ]:
+            event = self.make_event(
+                PK1,
+                kind=1,
+                content=content,
+                created_at=1676678145,
+            )
+            await self.storage.add_event(event)
+
+    async def test_fts_search(self):
+        await self.add_events()
+
+        old_event = self.make_event(
+            PK1,
+            kind=1,
+            content="hello earlier",
+            created_at=1676678135,
+        )
+        await self.storage.add_event(old_event)
+        await asyncio.sleep(0.4)
+        query = {"search": "hello", "since": 1676678140}
+        results = await self.get_events(query)
+        assert 3 == len(results)
+
+        query = {"search": "pizza"}
+        results = await self.get_events(query)
+        assert 1 == len(results)
+
+        query = {"search": "hello", "until": 1676678137}
+        results = await self.get_events(query)
+        assert 1 == len(results)
+
+        self.storage.delete_event(old_event["id"])
+        await asyncio.sleep(0.2)
+        query = {"search": "hello earlier"}
+        results = await self.get_events(query)
+        assert 0 == len(results)
+
+    async def test_bulk_index(self):
+        import time
+
+        await self.add_events()
+        await asyncio.sleep(0.5)
+
+        until = int(time.time()) + 10
+        with self.assertLogs("nostr_relay", level="INFO") as cm:
+            await self.storage.reindex("search", until=until)
+            await asyncio.sleep(1.0)
+        assert [
+            f"INFO:nostr_relay.storage.kv:Starting reindex for search from 1 to {until}",
+            "INFO:nostr_relay.storage.kv:Bulk updating search index. batch size: 4/500 count: 4",
+            "INFO:nostr_relay.storage.kv:Done bulk updating search. 4 events indexed",
+            "INFO:nostr_relay.fts:Indexed 8140d6aea54a718ae626dd4595ccec1ac8f5771af519e1c41ec115183ed598b5",
+            "INFO:nostr_relay.fts:Indexed 5792c3d4bd3a47cb1f445e2dcaa4af54c7b32ec01ed039722c8e55c48d8a1c35",
+            "INFO:nostr_relay.fts:Indexed 4bef6009b4b7b8862201a0ee052aa42908da9f2df6f54bde90f34466375b5927",
+            "INFO:nostr_relay.fts:Indexed 3ec01a9a03b9dbae8c79559639633011514ed696374b40c8d862a0774a9db489",
+        ] == cm.output
+        await self.storage.reindex("kinds")
+        await asyncio.sleep(0.4)

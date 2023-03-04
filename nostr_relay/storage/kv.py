@@ -9,6 +9,8 @@ import collections
 import threading
 import functools
 import traceback
+import re
+import os.path
 
 from contextlib import contextmanager
 from queue import SimpleQueue
@@ -51,6 +53,12 @@ QueryPlan = collections.namedtuple(
 )
 
 
+class QueryPlans(list):
+    """
+    Container for QueryPlan objects
+    """
+
+
 class FakeContainer:
     def __contains__(self, anything):
         return True
@@ -58,6 +66,7 @@ class FakeContainer:
 
 class Index:
     cardinality = 1
+    enabled = True
 
     def __init__(self):
         self.hits = self.misses = 0
@@ -72,6 +81,11 @@ class Index:
 
     def clear(self, event, txn):
         self.write(event, txn, operation="delete")
+
+    def bulk_update(self, events, txn):
+        for event in events:
+            if event:
+                self.write(event, txn)
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.prefix})"
@@ -256,6 +270,109 @@ class AuthorKindIndex(Index):
         yield self.to_key((event.pubkey, event.kind))
 
 
+class FTSIndex(Index):
+    """
+    Full-text index, using whoosh
+    """
+
+    cardinality = 1000
+    prefix = b""
+
+    def __init__(self, index_path=Config.fts_index_path, enabled=Config.fts_enabled):
+        self.index_path = index_path
+        self._schema = None
+        self._index = None
+
+        self.log = logging.getLogger("nostr_relay.fts")
+        self.enabled = Config.fts_enabled
+
+    @property
+    def schema(self):
+        if self._schema is None:
+            from whoosh.fields import Schema, TEXT, ID, NUMERIC
+            from whoosh.analysis import StemmingAnalyzer
+
+            self._schema = Schema(
+                id=ID(stored=True, unique=True),
+                created_at=NUMERIC(stored=True),
+                content=TEXT(analyzer=StemmingAnalyzer()),
+            )
+        return self._schema
+
+    @property
+    def index(self):
+        if self._index is None:
+            storage_path = self.index_path or os.path.join(
+                Config.storage["path"], "fts"
+            )
+            from whoosh.filedb.filestore import FileStorage
+            from whoosh.index import EmptyIndexError
+
+            storage = FileStorage(storage_path)
+            storage.create()
+            try:
+                self._index = storage.open_index()
+            except EmptyIndexError:
+                storage.create()
+                self._index = storage.create_index(self.schema)
+        return self._index
+
+    def _index_item(self, writer, event):
+        writer.update_document(
+            id=event.id, content=event.content, created_at=event.created_at
+        )
+        self.log.info("Indexed %s", event.id)
+
+    def write(self, event, txn):
+        if event.kind in (1, 0):
+            from whoosh.writing import AsyncWriter
+
+            with AsyncWriter(self.index) as writer:
+                self._index_item(writer, event)
+
+    def bulk_update(self, events, txn):
+        from whoosh.writing import BufferedWriter
+
+        with BufferedWriter(self.index, limit=200) as writer:
+            for event in events:
+                if event:
+                    self._index_item(writer, event)
+            writer.commit()
+
+    def clear(self, event, txn):
+        with self.index.writer() as writer:
+            writer.delete_by_term("id", event.id)
+
+    @contextmanager
+    def scanner(
+        self,
+        txn,
+        matches: list,
+        since=None,
+        until=None,
+        events=FakeContainer(),
+        limit=500,
+    ):
+        from whoosh.query import NumericRange
+        from whoosh.qparser import QueryParser
+
+        qp = QueryParser("content", schema=self.schema)
+        nr = NumericRange("created_at", since or 1, until or int(time()))
+
+        def iterator():
+            with self.index.searcher() as searcher:
+                for query in matches:
+                    q = qp.parse(query) & nr
+                    results = searcher.search(q, limit=limit)
+
+                    for result in results:
+                        event_id = bytes.fromhex(result["id"])
+                        if event_id in events:
+                            yield event_id
+
+        yield iterator()
+
+
 INDEXES = {
     "ids": IdIndex(),
     "created_at": CreatedIndex(),
@@ -263,6 +380,7 @@ INDEXES = {
     "authors": PubkeyIndex(),
     "authorkinds": AuthorKindIndex(),
     "tags": TagIndex(),
+    "search": FTSIndex(),
 }
 
 
@@ -328,7 +446,7 @@ class WriterThread(threading.Thread):
         self.env = env
         self.stat_collector = stat_collector
         self.queue = SimpleQueue()
-        self.write_indexes = INDEXES.values()
+        self.write_indexes = [i for i in INDEXES.values() if i.enabled]
 
     def run(self):
         env = self.env
@@ -341,23 +459,30 @@ class WriterThread(threading.Thread):
             task = qget()
             if task is None:
                 break
-            event, operation = task
+            operation, args = task
             try:
                 with stat_collector.timeit("write") as counter:
                     with env.begin(write=True, buffers=True) as txn:
                         if operation == "add" and not get_event_data(
-                            txn, event.id_bytes
+                            txn, args[0].id_bytes
                         ):
+                            event = args[0]
                             for index in self.write_indexes:
                                 index.write(event, txn)
                                 # log.debug("index %s event %s", index, event)
                             self._post_save(txn, event, counter, log)
                         elif operation == "del":
                             event = decode_event(
-                                get_event_data(txn, bytes.fromhex(event))
+                                get_event_data(txn, bytes.fromhex(args[0]))
                             )
                             if event:
                                 self._delete_event(txn, event, log)
+                        elif operation == "reindex":
+                            index_name, event = args
+                            INDEXES[index_name].write(event, txn)
+                        elif operation == "bulk_update":
+                            index_name, events = args
+                            INDEXES[index_name].bulk_update(events, txn)
                         counter["count"] += 1
                 qs = qsize()
                 if qs >= 1000 and qs % 1000 == 0:
@@ -445,6 +570,7 @@ class LMDBStorage(BaseStorage):
                 self.garbage_collector_task.cancel()
             self.writer_queue.put(None)
             self.writer_thread.join()
+            self.query_pool.shutdown()
             self.db.close()
             self.db = None
             self.log.debug("Closed storage %s", self.options["path"])
@@ -468,7 +594,7 @@ class LMDBStorage(BaseStorage):
             txn.put(b"\xee", b"")
 
     def delete_event(self, event_id):
-        self.writer_queue.put((event_id, "del"))
+        self.writer_queue.put(("del", [event_id]))
 
     async def add_event(self, event_json: dict, auth_token=None):
         """
@@ -483,7 +609,7 @@ class LMDBStorage(BaseStorage):
 
         await self.validate_event(event, Config)
 
-        self.writer_queue.put((event, "add"))
+        self.writer_queue.put(("add", [event]))
         await self.post_save(event)
         return event, True
 
@@ -491,6 +617,44 @@ class LMDBStorage(BaseStorage):
         await self.notify_all_connected(event)
         # notify other processes
         await self.notify_other_processes(event)
+
+    async def reindex(self, index_name, batch_size=500, kinds=(1, 0), since=1, until=0):
+        query = {
+            "kinds": kinds,
+            "limit": batch_size,
+            "until": until or int(time()) + 10,
+            "since": since,
+        }
+        self.log.info(
+            "Starting reindex for %s from %d to %d",
+            index_name,
+            query["since"],
+            query["until"],
+        )
+        full_count = 0
+        while True:
+            task, events = executor(
+                self.db, [query], default_limit=batch_size, pool=self.query_pool
+            )
+            await task
+            while self.writer_queue.qsize() >= 1:
+                await asyncio.sleep(2.0)
+            self.writer_queue.put(("bulk_update", [index_name, events]))
+            full_count += len(events)
+            self.log.info(
+                "Bulk updating %s index. batch size: %d/%d count: %d",
+                index_name,
+                len(events),
+                batch_size,
+                full_count,
+            )
+            if len(events) == batch_size:
+                query["until"] = events[-1].created_at + 2
+            else:
+                break
+        self.log.info(
+            "Done bulk updating %s. %d events indexed", index_name, full_count
+        )
 
     async def get_event(self, event_id: str):
         with self.db.begin(buffers=True) as txn:
@@ -527,11 +691,6 @@ class LMDBStorage(BaseStorage):
 
 
 class Subscription(BaseSubscription):
-    __slots__ = (
-        "filter_json",
-        # "check_event"
-    )
-
     def prepare(self):
         self.query = planner(
             self.filters, default_limit=self.default_limit, log=self.log
@@ -616,12 +775,12 @@ class KVGarbageCollector(BaseGarbageCollector):
         return len(to_del)
 
 
-def planner(filters, default_limit=6000, log=None):
+def planner(filters, default_limit=6000, log=None, maximum_plans=5):
     """
     Create a list of QueryPlans for the the list of REQ filters
     """
-    plans = []
-    for query in filters:
+    plans = QueryPlans()
+    for query in filters[:maximum_plans]:
         if isinstance(query, QueryPlan):
             plans.append(query)
             continue
@@ -700,6 +859,13 @@ def planner(filters, default_limit=6000, log=None):
                 best_index.add("authors", authors)
             else:
                 continue
+        if "search" in query and Config.fts_enabled:
+            # NIP-50 specifies name:value as extensions
+            # let's just remove them from the query
+            search_term = re.sub(r"([\w]+:[\w]+)", "", query.pop("search")).strip()
+            if len(search_term) > 3:
+                query_items.append(("search", search_term))
+                best_index.add("search", (search_term,))
 
         for key, value in query.items():
             if key[0] == "#" and len(key) == 2 and isinstance(value, list):
@@ -745,7 +911,7 @@ def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
     stats["index_hits"] = stats["index_misses"] = 0
     for event_id in event_id_iterator:
         event_tuple = get_event_data(txn, event_id)
-        if match(event_tuple):
+        if event_tuple and match(event_tuple):
             event = Event(
                 id=event_tuple[1].hex(),
                 created_at=event_tuple[2],
@@ -795,6 +961,10 @@ def compile_match_from_query(query_items):
             filter_clauses.add(
                 f"bool([t for t in et[{col}] if t[0] == {key[1]!r} and len(t) > 1 and t[1] in {value!r}])"
             )
+        elif key == "search" and Config.fts_enabled:
+            # assume that the index matched correctly
+            filter_clauses.add("True")
+
     filter_string = " and ".join(filter_clauses)
     function = f"""
 def check(et):
@@ -811,7 +981,7 @@ def check(et):
 
 def executor(
     lmdb_environment: lmdb.Environment,
-    filters: list,
+    plans: list,
     loop=None,
     default_limit=6000,
     log=None,
@@ -824,7 +994,8 @@ def executor(
     """
     log = log or logging.getLogger("nostr_relay.kvquery")
 
-    plans = planner(filters, default_limit=default_limit, log=log)
+    if not isinstance(plans, QueryPlans):
+        plans = planner(plans, default_limit=default_limit, log=log)
     loop = loop or asyncio.get_running_loop()
 
     try:

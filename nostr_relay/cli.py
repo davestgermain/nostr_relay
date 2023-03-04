@@ -458,3 +458,35 @@ def alembic(ctx, alembic_args):
         f'-c{os.path.join(os.path.dirname(__file__), "alembic.ini")}',
     ) + alembic_args
     return config.main(alembic_args)
+
+
+@click.group()
+@click.pass_context
+def fts(ctx):
+    """
+    Full Text Indexer Commands
+    """
+    pass
+
+
+@fts.command()
+@click.option("--since", type=int, required=False, default=1)
+@click.option("--until", type=int, required=False, default=0)
+@click.option("--batch", type=int, required=False, default=500)
+@async_cmd
+async def reindex(since, until, batch):
+    """
+    Reindex everything
+    """
+    import logging
+    import time
+
+    logging.basicConfig(level=logging.INFO)
+    from nostr_relay.storage import get_storage
+
+    click.echo(f"Starting reindex at {int(time.time())}")
+    async with get_storage() as storage:
+        await storage.reindex("search", since=since, until=until, batch_size=batch)
+
+
+main.add_command(fts)

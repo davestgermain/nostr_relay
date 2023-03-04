@@ -113,6 +113,8 @@ class BaseStorage:
             sub.start()
             self.clients[client_id][sub_id] = sub
             self.log.debug("%s/%s +", client_id, sub_id)
+        else:
+            await queue.put((sub_id, None))
 
     async def unsubscribe(self, client_id, sub_id=None):
         if sub_id:

@@ -223,6 +223,8 @@ class NostrAPI(BaseResource):
             supported_nips = [1, 2, 5, 9, 11, 12, 15, 20, 26, 33, 40]
             if Config.authentication.get("enabled"):
                 supported_nips.append(42)
+            if Config.fts_enabled:
+                supported_nips.append(50)
             metadata = {
                 "name": Config.relay_name,
                 "description": Config.relay_description,
