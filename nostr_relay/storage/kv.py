@@ -321,7 +321,7 @@ class FTSIndex(Index):
         writer.update_document(
             id=event.id, content=event.content, created_at=event.created_at
         )
-        self.log.info("Indexed %s", event.id)
+        self.log.debug("Indexed %s", event.id)
 
     def write(self, event, txn):
         if event.kind in (1, 0):

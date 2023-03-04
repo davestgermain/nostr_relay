@@ -481,7 +481,10 @@ async def reindex(since, until, batch):
     import logging
     import time
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        level=logging.INFO,
+    )
     from nostr_relay.storage import get_storage
 
     click.echo(f"Starting reindex at {int(time.time())}")

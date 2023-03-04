@@ -627,10 +627,10 @@ class FTSTests(BaseLMDBTests):
             f"INFO:nostr_relay.storage.kv:Starting reindex for search from 1 to {until}",
             "INFO:nostr_relay.storage.kv:Bulk updating search index. batch size: 4/500 count: 4",
             "INFO:nostr_relay.storage.kv:Done bulk updating search. 4 events indexed",
-            "INFO:nostr_relay.fts:Indexed 8140d6aea54a718ae626dd4595ccec1ac8f5771af519e1c41ec115183ed598b5",
-            "INFO:nostr_relay.fts:Indexed 5792c3d4bd3a47cb1f445e2dcaa4af54c7b32ec01ed039722c8e55c48d8a1c35",
-            "INFO:nostr_relay.fts:Indexed 4bef6009b4b7b8862201a0ee052aa42908da9f2df6f54bde90f34466375b5927",
-            "INFO:nostr_relay.fts:Indexed 3ec01a9a03b9dbae8c79559639633011514ed696374b40c8d862a0774a9db489",
+            # "DEBUG:nostr_relay.fts:Indexed 8140d6aea54a718ae626dd4595ccec1ac8f5771af519e1c41ec115183ed598b5",
+            # "DEBUG:nostr_relay.fts:Indexed 5792c3d4bd3a47cb1f445e2dcaa4af54c7b32ec01ed039722c8e55c48d8a1c35",
+            # "DEBUG:nostr_relay.fts:Indexed 4bef6009b4b7b8862201a0ee052aa42908da9f2df6f54bde90f34466375b5927",
+            # "DEBUG:nostr_relay.fts:Indexed 3ec01a9a03b9dbae8c79559639633011514ed696374b40c8d862a0774a9db489",
         ] == cm.output
         await self.storage.reindex("kinds")
         await asyncio.sleep(0.4)
