@@ -809,52 +809,61 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             continue
 
         best_index = MultiIndex()
+        has_authors = has_kinds = False
         if "ids" in query:
-            ids = tuple(
-                sorted((i for i in query.pop("ids") if len(i) >= 2), reverse=True)
-            )
+            try:
+                ids = tuple(
+                    sorted((i for i in query.pop("ids") if len(i) >= 2), reverse=True)
+                )
+            except ValueError:
+                continue
             if ids:
                 query_items.append(("ids", ids))
                 best_index.add("ids", ids)
             else:
                 continue
-        if "kinds" in query and "authors" in query:
-            kinds = tuple(sorted(query.pop("kinds"), reverse=True))
-            authors = tuple(
+        if "kinds" in query:
+            kinds = tuple(
                 sorted(
-                    (a for a in query.pop("authors") if len(a) >= 4 and a[0] != "n"),
-                    reverse=True,
+                    (k for k in query.pop("kinds") if isinstance(k, int)), reverse=True
                 )
             )
+            if kinds:
+                query_items.append(("kinds", kinds))
+                has_kinds = True
+            else:
+                continue
+        if "authors" in query:
+            try:
+                authors = tuple(
+                    sorted(
+                        (
+                            a
+                            for a in query.pop("authors")
+                            if len(a) >= 4 and a[0] != "n"
+                        ),
+                        reverse=True,
+                    )
+                )
+            except ValueError:
+                continue
+            if authors:
+                query_items.append(("authors", authors))
+                has_authors = True
+            else:
+                continue
+
+        if has_kinds and has_authors:
             authormatches = []
             for author in authors:
                 for k in kinds:
                     authormatches.append((author, k))
-            if authormatches:
-                query_items.append(("kinds", kinds))
-                query_items.append(("authors", authors))
-                best_index.add("authorkinds", authormatches)
-            else:
-                continue
-        elif "kinds" in query:
-            kinds = tuple(sorted(query.pop("kinds"), reverse=True))
-            if kinds:
-                query_items.append(("kinds", kinds))
-                best_index.add("kinds", kinds)
-            else:
-                continue
-        elif "authors" in query:
-            authors = tuple(
-                sorted(
-                    (a for a in query.pop("authors") if len(a) >= 4 and a[0] != "n"),
-                    reverse=True,
-                )
-            )
-            if authors:
-                query_items.append(("authors", authors))
-                best_index.add("authors", authors)
-            else:
-                continue
+            best_index.add("authorkinds", authormatches)
+        elif has_kinds:
+            best_index.add("kinds", kinds)
+        elif has_authors:
+            best_index.add("authors", authors)
+
         if "search" in query and Config.fts_enabled:
             # NIP-50 specifies name:value as extensions
             # let's just remove them from the query

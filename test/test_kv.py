@@ -524,6 +524,8 @@ class LMDBStorageTests(BaseLMDBTests):
             results.extend(await self.get_events({"authors": ["npubblabab", "ab"]}))
             results.extend(await self.get_events({"kinds": []}))
             results.extend(await self.get_events({"kinds": [], "authors": [""]}))
+            results.extend(await self.get_events({"kinds": [None], "authors": [None]}))
+            results.extend(await self.get_events({"kinds": [None]}))
 
         assert 1 == len(results)
 
