@@ -593,7 +593,7 @@ class LMDBStorage(BaseStorage):
         with self.db.begin(write=True) as txn:
             txn.put(b"\xee", b"")
 
-    def delete_event(self, event_id):
+    async def delete_event(self, event_id):
         self.writer_queue.put(("del", [event_id]))
 
     async def add_event(self, event_json: dict, auth_token=None):
@@ -767,7 +767,7 @@ class KVGarbageCollector(BaseGarbageCollector):
         cursor.close()
         if to_del:
             for event_id in to_del:
-                self.storage.delete_event(event_id)
+                await self.storage.delete_event(event_id)
         return len(to_del)
 
 

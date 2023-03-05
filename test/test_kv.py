@@ -373,7 +373,7 @@ class LMDBStorageTests(BaseLMDBTests):
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
 
-        self.storage.delete_event(event["id"])
+        await self.storage.delete_event(event["id"])
         await asyncio.sleep(0.2)
 
         retrieved = await self.storage.get_event(event["id"])
@@ -454,6 +454,14 @@ class LMDBStorageTests(BaseLMDBTests):
                     "ws://localhost:6969"
                 ]
             },
+        } == idp
+
+        await self.storage.set_identified_pubkey("test@falconframework.org", "")
+        await asyncio.sleep(0.2)
+        idp = await self.storage.get_identified_pubkey("test@falconframework.org")
+        assert {
+            "names": {},
+            "relays": {},
         } == idp
 
     async def test_context_manager(self):
@@ -637,7 +645,7 @@ class FTSTests(BaseLMDBTests):
         results = await self.get_events(query)
         assert 1 == len(results)
 
-        self.storage.delete_event(old_event["id"])
+        await self.storage.delete_event(old_event["id"])
         await asyncio.sleep(0.2)
         query = {"search": "hello earlier"}
         results = await self.get_events(query)

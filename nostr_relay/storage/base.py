@@ -239,16 +239,26 @@ class BaseStorage:
         return data
 
     async def set_identified_pubkey(self, identifier, pubkey, relays=None):
-        tags = [
-            ["d", f"nip05:{pubkey}"],
-            ["t", "nip05"],
-            ["p", pubkey],
-            ["i", identifier],
-        ]
-        if relays:
-            for relay in relays:
-                tags.append(["r", relay])
-        await self.add_service_event(tags=tags, content=pubkey)
+        if pubkey:
+            tags = [
+                ["d", f"nip05:{pubkey}"],
+                ["t", "nip05"],
+                ["p", pubkey],
+                ["i", identifier],
+            ]
+            if relays:
+                for relay in relays:
+                    tags.append(["r", relay])
+            await self.add_service_event(tags=tags, content=pubkey)
+        else:
+            query = {
+                "#i": [identifier],
+                "authors": [self.service_pubkey],
+                "kinds": [self.service_kind],
+            }
+            event = await self.get_event_from_query(query)
+            if event:
+                await self.delete_event(event.id)
 
 
 class BaseSubscription:
