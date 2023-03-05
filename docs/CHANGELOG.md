@@ -4,6 +4,7 @@
 
 * Added [full-text index](fulltext.md), compatible with NIP-50
 * Added validator to limit "hellthreads": `is_not_hellthread`. Configure `hellthread_limit` to number of tags
+* Enabled NIP-05 identity provider for LMDB backend
 * Improve compatibility with python < 3.11
 
 ## 1.11.6

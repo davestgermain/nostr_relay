@@ -672,10 +672,6 @@ class LMDBStorage(BaseStorage):
                 yield event
         analyze(task, loop=self.loop, pool=self.query_pool)
 
-    async def get_identified_pubkey(self, identifier, domain=""):
-        data = {"names": {}, "relays": {}}
-        return data
-
     async def get_stats(self):
         stats = {}
         subs = await self.num_subscriptions(True)

@@ -213,6 +213,43 @@ class BaseStorage:
         content = str(roles).lower()
         await self.add_service_event(content=content, tags=tags)
 
+    async def get_identified_pubkey(self, identifier="", domain=""):
+        query = {
+            "authors": [self.service_pubkey],
+            "kinds": [self.service_kind],
+            "#t": ["nip05"],
+        }
+
+        if identifier:
+            query["#i"] = [identifier]
+
+        data = {"names": {}, "relays": {}}
+        self.log.debug("Getting identity for %s %s", identifier, domain)
+        async for event in self.run_single_query([query]):
+            tags = collections.defaultdict(list)
+            for tag in event.tags:
+                tags[tag[0]].append(tag[1])
+            identifier, id_domain = tags["i"][0].split("@", 1)
+            if domain and id_domain != domain:
+                continue
+            data["names"][identifier] = event.content
+            if tags["r"]:
+                data["relays"][event.content] = tags["r"]
+
+        return data
+
+    async def set_identified_pubkey(self, identifier, pubkey, relays=None):
+        tags = [
+            ["d", f"nip05:{pubkey}"],
+            ["t", "nip05"],
+            ["p", pubkey],
+            ["i", identifier],
+        ]
+        if relays:
+            for relay in relays:
+                tags.append(["r", relay])
+        await self.add_service_event(tags=tags, content=pubkey)
+
 
 class BaseSubscription:
     __slots__ = (

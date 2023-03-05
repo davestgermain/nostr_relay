@@ -423,8 +423,38 @@ class LMDBStorageTests(BaseLMDBTests):
         assert stats["active_subscriptions"] == 1
 
     async def test_get_idp(self):
-        idp = await self.storage.get_identified_pubkey("")
-        assert idp == {"names": {}, "relays": {}}
+        await self.storage.set_identified_pubkey(
+            "test@falconframework.org",
+            "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d",
+            relays=["ws://localhost:6969"],
+        )
+        await self.storage.set_identified_pubkey(
+            "foo@falconframework.org",
+            "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d",
+        )
+        await self.storage.set_identified_pubkey(
+            "test@example.com",
+            "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618a",
+        )
+        idp = await self.storage.get_identified_pubkey("foo@falconframework.org")
+        assert {
+            "names": {
+                "foo": "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d"
+            },
+            "relays": {},
+        } == idp
+        idp = await self.storage.get_identified_pubkey(domain="falconframework.org")
+        assert {
+            "names": {
+                "foo": "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d",
+                "test": "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d",
+            },
+            "relays": {
+                "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d": [
+                    "ws://localhost:6969"
+                ]
+            },
+        } == idp
 
     async def test_context_manager(self):
         async with self.storage:
