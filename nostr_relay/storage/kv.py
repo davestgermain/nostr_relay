@@ -1006,15 +1006,22 @@ async def executor(
 
     if not isinstance(plans, QueryPlans):
         plans = planner(plans, default_limit=default_limit, log=log)
-    submitted = [
-        asyncio.wrap_future(
-            pool.submit(execute_one_plan, lmdb_environment, plan, log), loop=loop
+    if len(plans) == 1:
+        fut = asyncio.wrap_future(
+            pool.submit(execute_one_plan, lmdb_environment, plans[0], log), loop=loop
         )
-        for plan in plans
-    ]
-    for fut in submitted:
         await fut
         yield fut.result()
+    else:
+        submitted = [
+            asyncio.wrap_future(
+                pool.submit(execute_one_plan, lmdb_environment, plan, log), loop=loop
+            )
+            for plan in plans
+        ]
+        for fut in submitted:
+            await fut
+            yield fut.result()
 
 
 def execute_one_plan(
@@ -1092,27 +1099,26 @@ def _analyze(plans, log, slow_query_threshold=500):
 
 
 ANALYSIS_QUEUE = SimpleQueue()
-ANALYSIS_THREAD = None
 
 
 def analyze(plans, later=True, log=None):
     """
     Analyze and log query stats from the completed task
     """
-    global ANALYSIS_THREAD
     if later:
-        if ANALYSIS_THREAD is None:
-            ANALYSIS_THREAD = threading.Thread(
+        if analyze.ANALYSIS_THREAD is None:
+            analyze.ANALYSIS_THREAD = threading.Thread(
                 target=analysis_thread,
                 args=(ANALYSIS_QUEUE,),
                 kwargs={"delay": Config.get("analysis_delay", 0.5)},
             )
-            ANALYSIS_THREAD.daemon = True
-            ANALYSIS_THREAD.start()
+            analyze.ANALYSIS_THREAD.daemon = True
+            analyze.ANALYSIS_THREAD.start()
         ANALYSIS_QUEUE.put(plans)
     else:
         _analyze(plans, log)
 
+analyze.ANALYSIS_THREAD = None
 
 def encode_event(event):
     row = (
