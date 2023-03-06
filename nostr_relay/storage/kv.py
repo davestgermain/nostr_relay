@@ -784,7 +784,6 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             if log:
                 log.info("No empty queries allowed")
             continue
-        tags = set()
         query_items = []
 
         since = query.pop("since", None)
@@ -871,6 +870,8 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             if len(search_term) > 3:
                 query_items.append(("search", search_term))
                 best_index.add("search", (search_term,))
+
+        tags = set()
 
         for key, value in query.items():
             if key[0] == "#" and len(key) == 2 and isinstance(value, list):

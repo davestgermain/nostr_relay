@@ -221,7 +221,7 @@ class BaseStorage:
         }
 
         if identifier:
-            query["#i"] = [identifier]
+            query["#n"] = [identifier]
 
         data = {"names": {}, "relays": {}}
         self.log.debug("Getting identity for %s %s", identifier, domain)
@@ -229,7 +229,7 @@ class BaseStorage:
             tags = collections.defaultdict(list)
             for tag in event.tags:
                 tags[tag[0]].append(tag[1])
-            identifier, id_domain = tags["i"][0].split("@", 1)
+            identifier, id_domain = tags["n"][0].split("@", 1)
             if domain and id_domain != domain:
                 continue
             data["names"][identifier] = event.content
@@ -244,7 +244,7 @@ class BaseStorage:
                 ["d", f"nip05:{pubkey}"],
                 ["t", "nip05"],
                 ["p", pubkey],
-                ["i", identifier],
+                ["n", identifier],
             ]
             if relays:
                 for relay in relays:
@@ -252,7 +252,8 @@ class BaseStorage:
             await self.add_service_event(tags=tags, content=pubkey)
         else:
             query = {
-                "#i": [identifier],
+                "#n": [identifier],
+                "#t": ["nip05"],
                 "authors": [self.service_pubkey],
                 "kinds": [self.service_kind],
             }

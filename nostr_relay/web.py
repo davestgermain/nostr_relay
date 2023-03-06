@@ -22,13 +22,13 @@ class Client:
         "remote_addr",
         "log",
         "id",
-        "running",
         "subscription_queue",
         "send_task",
         "rate_limiter",
         "timeout",
         "auth_token",
         "sent",
+        "start_time",
     )
 
     def __init__(self, ws, req, rate_limiter=None, log=None, timeout=1800):
@@ -37,13 +37,13 @@ class Client:
         self.id = f"{req.remote_addr}-{secrets.token_hex(2)}"
         self.log = log
         self.log.info(f'Accepted {self.id} from Origin: {req.get_header("origin")}')
-        self.running = True
         self.subscription_queue = asyncio.Queue()
         self.send_task = None
         self.sent = 0
         self.rate_limiter = rate_limiter
         self.timeout = timeout
         self.auth_token = {}
+        self.start_time = time()
 
     def validate_message(self, message):
         if not isinstance(message, list):
@@ -58,16 +58,15 @@ class Client:
         ws = self.ws
         get_from_storage = self.subscription_queue.get
         send_text = ws.send_text
-        sent = 0
         self.log.debug("%s waiting for subs", self.id)
-        while self.running and ws.ready:
+        while True:
             try:
                 sub_id, event = await get_from_storage()
                 if event is not None:
                     message = event.to_message(sub_id)
                 else:
                     # done with stored events
-                    message = f'["EOSE", "{sub_id}"]'
+                    message = f'["EOSE","{sub_id}"]'
                 await send_text(message)
                 # self.log.debug("SENT: %s", message)
                 self.sent += len(message)
@@ -75,9 +74,8 @@ class Client:
                 falcon.WebSocketDisconnected,
                 ConnectionClosedError,
                 ConnectionClosedOK,
+                asyncio.CancelledError,
             ):
-                break
-            except asyncio.CancelledError:
                 break
             except Exception:
                 self.log.exception("subs")
@@ -125,9 +123,6 @@ class Client:
 
                 if command == "REQ":
                     sub_id = str(message[1])
-                    if self.send_task is None:
-                        self.send_task = asyncio.create_task(self.send_subscriptions())
-                        await asyncio.sleep(0)
                     await storage.subscribe(
                         client_id,
                         sub_id,
@@ -137,6 +132,8 @@ class Client:
                     )
                     if throttle:
                         await asyncio.sleep(throttle)
+                    if self.send_task is None:
+                        self.send_task = asyncio.create_task(self.send_subscriptions())
                 elif command == "CLOSE":
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
@@ -189,15 +186,27 @@ class Client:
                 self.log.info("%s timed out", client_id)
                 await ws.close(code=1013)
                 break
+            except Exception:
+                self.log.exception("client loop")
+                await ws.close(code=1013)
+                break
+        await storage.unsubscribe(self.id)
 
     async def stop(self):
-        self.running = False
         if self.send_task:
             self.send_task.cancel()
             try:
                 await self.send_task
             except asyncio.CancelledError:
                 pass
+        self.rate_limiter.cleanup()
+        duration = time() - self.start_time
+        self.log.info(
+            "Done %s. Sent: %d Bytes. Duration: %d Seconds",
+            self,
+            self.sent,
+            duration,
+        )
 
     def __str__(self):
         return f"{self.auth_token.get('pubkey', 'anon')}@{self.id}"
@@ -259,7 +268,6 @@ class NostrAPI(BaseResource):
                 self.log.warning("rate-limited ACCEPT %s", req.remote_addr)
                 return
             await ws.accept()
-            start = time()
 
         except falcon.WebSocketDisconnected:
             return
@@ -283,20 +291,8 @@ class NostrAPI(BaseResource):
             ConnectionClosedOK,
         ):
             pass
-        except Exception:
-            await ws.close(code=1013)
-            self.log.exception("client loop")
         finally:
             await client.stop()
-            await self.storage.unsubscribe(client.id)
-            self.rate_limiter.cleanup()
-            duration = time() - start
-            self.log.info(
-                "Done %s. Sent: %d Bytes. Duration: %d Seconds",
-                client,
-                client.sent,
-                duration,
-            )
 
 
 class NostrStats(BaseResource):
