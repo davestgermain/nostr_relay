@@ -20,7 +20,7 @@ import logging
 from itertools import islice
 from aionostr import Manager
 from nostr_relay.errors import StorageError
-from nostr_relay.util import Periodic, json
+from nostr_relay.util import Periodic, json, JSONDecodeError
 from nostr_relay.config import Config
 
 
@@ -72,7 +72,7 @@ class FOAFBuilder(Periodic):
             with open(self.save_file, "r") as fp:
                 try:
                     network = json.load(fp)
-                except json.JSONDecodeError:
+                except JSONDecodeError:
                     return False
             self.log.info(
                 "Loaded network of %d pubkeys from %s", len(network), self.save_file

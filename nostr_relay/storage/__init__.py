@@ -1,4 +1,3 @@
-import sqlalchemy as sa
 from nostr_relay.config import Config
 from nostr_relay.util import call_from_path
 
@@ -27,6 +26,8 @@ _METADATA = None
 def get_metadata():
     global _METADATA
     if _METADATA is None:
+        import sqlalchemy as sa
+
         _METADATA = sa.MetaData()
         if "asyncpg" in Config.storage.get("sqlalchemy.url", ""):
             from sqlalchemy.dialects.postgresql import BYTEA, JSONB

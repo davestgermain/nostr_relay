@@ -14,7 +14,7 @@ import os.path
 
 from contextlib import contextmanager
 from queue import SimpleQueue
-from time import perf_counter, time
+from time import perf_counter, time, sleep
 
 from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
@@ -567,7 +567,6 @@ class LMDBStorage(BaseStorage):
         self.subscription_class = Subscription
         self.db = None
         self.query_pool = futures.ThreadPoolExecutor(max_workers=pool_size)
-        # self.query_pool = futures.ProcessPoolExecutor(max_workers=4, initializer=_init_dbenv, initargs=(self.options,))
 
     async def close(self):
         if self.db:
@@ -675,7 +674,7 @@ class LMDBStorage(BaseStorage):
                 if event is not None:
                     yield event
             plans.append(plan)
-        analyze(plans, loop=self.loop, pool=self.query_pool)
+        analyze(plans)
 
     async def get_stats(self):
         stats = {}
@@ -710,6 +709,7 @@ class Subscription(BaseSubscription):
                 self.storage.query_pool,
                 default_limit=self.default_limit,
                 log=self.log,
+                loop=self.storage.loop,
             )
             try:
                 if check_output:
@@ -734,12 +734,7 @@ class Subscription(BaseSubscription):
                 self.log.exception("run_query")
             finally:
                 await queue_put((sub_id, None))
-                analyze(
-                    plans,
-                    loop=self.storage.loop,
-                    pool=self.storage.query_pool,
-                    log=self.log,
-                )
+                analyze(plans)
 
         self.log.debug("Done with query")
 
@@ -1001,6 +996,7 @@ async def executor(
     pool,
     default_limit=6000,
     log=None,
+    loop=None,
 ):
     """
     Execute one or several queries.
@@ -1010,10 +1006,15 @@ async def executor(
 
     if not isinstance(plans, QueryPlans):
         plans = planner(plans, default_limit=default_limit, log=log)
-    submitted = [pool.submit(execute_one_plan, lmdb_environment, plan, log) for plan in plans]
-    submitted.reverse()
-    while submitted:
-        yield submitted.pop().result()
+    submitted = [
+        asyncio.wrap_future(
+            pool.submit(execute_one_plan, lmdb_environment, plan, log), loop=loop
+        )
+        for plan in plans
+    ]
+    for fut in submitted:
+        await fut
+        yield fut.result()
 
 
 def execute_one_plan(
@@ -1022,7 +1023,7 @@ def execute_one_plan(
     """
     Run a single query plan, calling on_event for each event
     """
-    events = []
+    events = collections.deque()
     on_event = events.append
     try:
         limit = plan.limit
@@ -1049,15 +1050,27 @@ def execute_one_plan(
         return plan, events
 
 
-SLOW_QUERY_THRESHOLD = 500
+def analysis_thread(work_queue, slow_query_threshold=500, delay=0.5):
+    from time import sleep
+
+    log = logging.getLogger("nostr_relay.queries")
+    while True:
+        plans = work_queue.get()
+
+        sleep(delay)
+        try:
+            _analyze(plans, log, slow_query_threshold=slow_query_threshold)
+        except:
+            log.exception("analyze")
+        del plans
 
 
-def _analyze(plans, log):
+def _analyze(plans, log, slow_query_threshold=500):
     for plan in plans:
         log.debug("Executed plan. Stats: %s", plan.stats)
         stats = plan.stats
         duration = (stats["end"] - stats["start"]) * 1000  # milliseconds
-        if duration > SLOW_QUERY_THRESHOLD:
+        if duration > slow_query_threshold:
             log.info(
                 "Slowish query: %s since:%s until:%s – took %.2fms",
                 plan.query,
@@ -1078,12 +1091,27 @@ def _analyze(plans, log):
                 )
 
 
-def analyze(plans, loop=None, pool=None, log=None):
+ANALYSIS_QUEUE = SimpleQueue()
+ANALYSIS_THREAD = None
+
+
+def analyze(plans, later=True, log=None):
     """
     Analyze and log query stats from the completed task
     """
-    loop = loop or asyncio.get_running_loop()
-    loop.run_in_executor(pool, _analyze, plans, log)
+    global ANALYSIS_THREAD
+    if later:
+        if ANALYSIS_THREAD is None:
+            ANALYSIS_THREAD = threading.Thread(
+                target=analysis_thread,
+                args=(ANALYSIS_QUEUE,),
+                kwargs={"delay": Config.get("analysis_delay", 0.5)},
+            )
+            ANALYSIS_THREAD.daemon = True
+            ANALYSIS_THREAD.start()
+        ANALYSIS_QUEUE.put(plans)
+    else:
+        _analyze(plans, log)
 
 
 def encode_event(event):

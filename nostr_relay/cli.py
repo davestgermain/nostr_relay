@@ -36,7 +36,7 @@ def main(ctx, config):
     help="Use uvicorn instead of gunicorn",
 )
 @click.pass_context
-def serve(ctx, use_uvicorn, use_socketify):
+def serve(ctx, use_uvicorn):
     """
     Start the http relay server
     """
@@ -167,12 +167,12 @@ async def update_tags(ctx, query):
     Update the tags in the tag table, from a REQ query
     """
     from .storage import get_storage
-    from .util import json
+    from .util import json_loads
 
     if not query:
         query = '[{"since": 1}]'
 
-    query = json.loads(query)
+    query = json_loads(query)
 
     async with get_storage() as storage:
         count = 0
@@ -192,12 +192,12 @@ async def reverify(ctx):
     Reverify all NIP-05 metadata events
     """
     from .storage import get_storage
-    from .util import json
+    from .util import json_loads
 
     async with get_storage() as storage:
         count = 0
         async for event in storage.run_single_query([{"kinds": [0]}]):
-            meta = json.loads(event.content)
+            meta = json_loads(event.content)
             if "nip05" in meta:
                 try:
                     await storage.verifier.verify(event)
@@ -249,9 +249,7 @@ async def load(ctx, filename):
     else:
         fileobj = sys.stdin
     import collections
-    from .util import json
-
-    loads = json.loads
+    from .util import json_loads
 
     Config.authentication["enabled"] = False
     # this will reverify profiles but not reject unverified events
@@ -272,7 +270,7 @@ async def load(ctx, filename):
             line = fileobj.readline()
             if not line:
                 break
-            js = loads(line)
+            js = json_loads(line)
             if isinstance(js, list):
                 event = js[1]
             else:
@@ -410,13 +408,13 @@ async def purge(ctx, query, authors):
     """
     Purge events from the specified query
     """
-    from .util import json
+    from .util import json_loads
     from .storage import get_storage
 
     if authors:
         query = {"authors": [a.strip() for a in authors.readlines()]}
     else:
-        query = json.loads(query)
+        query = json_loads(query)
     print(repr(query))
     async with get_storage() as storage:
         events = []

@@ -5,14 +5,20 @@ import falcon
 
 from time import time
 from falcon import media
-from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+
+try:
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+except ImportError:
+    from wsproto.utilities import ProtocolError
+
+    ConnectionClosedError = ConnectionClosedOK = ProtocolError
 
 import falcon.asgi
 
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
-from .util import timeout, json, json_dumps, json_loads
+from .util import timeout, json_dumps, json_loads, event_as_json, JSONDecodeError
 from .errors import AuthenticationError, StorageError
 
 
@@ -63,9 +69,8 @@ class Client:
             try:
                 sub_id, event = await get_from_storage()
                 if event is not None:
-                    # message = event.to_message(sub_id)
                     # message = json_dumps(["EVENT", sub_id, event.to_json_object()])
-                    message = f'["EVENT","{sub_id}",{{"id":"{event.id}","created_at":{event.created_at},"kind":{event.kind},"pubkey":"{event.pubkey}","sig":"{event.sig}","content":{json_dumps(event.content)},"tags":{json_dumps(event.tags)}}}]'
+                    message = event_as_json(sub_id, event)
                 else:
                     # done with stored events
                     message = f'["EOSE","{sub_id}"]'
@@ -182,7 +187,7 @@ class Client:
                 await ws.send_media(["NOTICE", str(e)])
             except (falcon.WebSocketDisconnected, ConnectionClosedError):
                 break
-            except json.JSONDecodeError:
+            except JSONDecodeError:
                 self.log.debug("json decoding")
                 continue
             except asyncio.TimeoutError:
@@ -378,7 +383,6 @@ def create_app(conf_file=None, storage=None):
     import os
     import os.path
     import logging, logging.config
-    from functools import partial
 
     Config.load(conf_file)
     if Config.DEBUG:
@@ -427,6 +431,9 @@ def run_with_gunicorn(conf_file=None):
             import sys
 
             if sys.implementation.name == "pypy":
+                from uvicorn.workers import UvicornH11Worker
+
+                UvicornH11Worker.CONFIG_KWARGS["ws"] = "wsproto"
                 worker_class = "uvicorn.workers.UvicornH11Worker"
             else:
                 worker_class = "uvicorn.workers.UvicornWorker"
@@ -486,4 +493,3 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
         thr.start()
     else:
         server.run()
-

@@ -28,6 +28,7 @@ class BaseLMDBTests(BaseTestsWithStorage):
             "path": self.envdir,
         }
         Config.garbage_collector = self.garbage_collector
+        Config.analysis_delay = 0.0
         self.storage = kv.LMDBStorage(Config.storage)
         await self.storage.setup()
 

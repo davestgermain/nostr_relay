@@ -17,7 +17,8 @@ from ..util import (
     object_from_path,
     catchtime,
     Periodic,
-    json,
+    json_dumps,
+    json_loads,
 )
 from . import get_metadata
 from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
@@ -120,8 +121,8 @@ class DBStorage(BaseStorage):
 
         self.db = create_async_engine(
             self.db_url,
-            json_deserializer=json.loads,
-            json_serializer=json.dumps,
+            json_deserializer=json_loads,
+            json_serializer=json_dumps,
             pool_pre_ping=True,
             **self.sqlalchemy_options,
         )
@@ -449,7 +450,7 @@ class DBStorage(BaseStorage):
             elif not (validate_id(pubkey) and len(pubkey) == 64):
                 raise StorageError("invalid public key")
             else:
-                pars = [identifier, pubkey, json.dumps(relays or [])]
+                pars = [identifier, pubkey, json_dumps(relays or [])]
                 await conn.execute(
                     sa.delete(self.IdentTable).where(
                         self.IdentTable.c.identifier == identifier
