@@ -36,7 +36,7 @@ def main(ctx, config):
     help="Use uvicorn instead of gunicorn",
 )
 @click.pass_context
-def serve(ctx, use_uvicorn):
+def serve(ctx, use_uvicorn, use_socketify):
     """
     Start the http relay server
     """

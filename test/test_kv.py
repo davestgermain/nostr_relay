@@ -316,9 +316,7 @@ class LMDBStorageTests(BaseLMDBTests):
         ]
         plan = kv.planner(query)[0]
 
-        results = []
-        kv.execute_one_plan(self.storage.db, plan, results.append, log=self.storage.log)
-
+        plan, results = kv.execute_one_plan(self.storage.db, plan, log=self.storage.log)
         assert event["id"] == results[0].id
 
     async def test_date_scan(self):

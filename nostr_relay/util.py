@@ -9,8 +9,13 @@ from time import perf_counter
 
 try:
     import rapidjson as json
+    json_dumps = json.Encoder().__call__
+    json_loads = json.Decoder().__call__
 except ImportError:
     import json
+    json_dumps = json.JSONEncoder(separators=(',', ':'), ensure_ascii=False).encode
+    json_loads = json.JSONDecoder().decode
+
 
 
 if hasattr(asyncio, "timeout"):

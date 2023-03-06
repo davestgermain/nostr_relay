@@ -12,7 +12,7 @@ import falcon.asgi
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
-from .util import timeout, json
+from .util import timeout, json, json_dumps, json_loads
 from .errors import AuthenticationError, StorageError
 
 
@@ -63,10 +63,13 @@ class Client:
             try:
                 sub_id, event = await get_from_storage()
                 if event is not None:
-                    message = event.to_message(sub_id)
+                    # message = event.to_message(sub_id)
+                    # message = json_dumps(["EVENT", sub_id, event.to_json_object()])
+                    message = f'["EVENT","{sub_id}",{{"id":"{event.id}","created_at":{event.created_at},"kind":{event.kind},"pubkey":"{event.pubkey}","sig":"{event.sig}","content":{json_dumps(event.content)},"tags":{json_dumps(event.tags)}}}]'
                 else:
                     # done with stored events
                     message = f'["EOSE","{sub_id}"]'
+
                 await send_text(message)
                 # self.log.debug("SENT: %s", message)
                 self.sent += len(message)
@@ -396,13 +399,14 @@ def create_app(conf_file=None, storage=None):
     rate_limiter = get_rate_limiter(Config)
 
     json_handler = media.JSONHandlerWS(
-        dumps=partial(json.dumps, ensure_ascii=False),
-        loads=json.loads,
+        dumps=json_dumps,
+        loads=json_loads,
     )
 
     logging.info("Starting version %s", __version__)
+    api = NostrAPI(store, rate_limiter=rate_limiter)
     app = falcon.asgi.App(middleware=SetupMiddleware(store))
-    app.add_route("/", NostrAPI(store, rate_limiter=rate_limiter))
+    app.add_route("/", api)
     app.add_route("/stats/", NostrStats(store))
     app.add_route("/e/{event_id}", ViewEventResource(store))
     app.add_route("/.well-known/nostr.json", NostrIDP(store))
@@ -482,3 +486,4 @@ def run_with_uvicorn(conf_file=None, in_thread=False):
         thr.start()
     else:
         server.run()
+

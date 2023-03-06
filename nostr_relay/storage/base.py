@@ -57,7 +57,7 @@ class BaseStorage:
             self.notifier.start()
         else:
             self.notifier = None
-        self.stat_collector = StatsCollector(self.options.get("stats_interval", 60.0))
+        self.stat_collector = StatsCollector(self.options.pop("stats_interval", 60.0))
         await self.stat_collector.start()
         self.authenticator = get_authenticator(self, Config.get("authentication", {}))
         output_validator = Config.get("output_validator")
