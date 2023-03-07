@@ -2,7 +2,11 @@ import asyncio
 import logging
 import collections
 import functools
+import typing
+
 from aionostr.event import Event
+from pydantic import BaseModel, Field, validator, ValidationError
+
 from ..config import Config
 from ..errors import StorageError, AuthenticationError
 from ..util import (
@@ -81,7 +85,7 @@ class BaseStorage:
         """
         Return the first event from the query
         """
-        async for event in self.run_single_query([query]):
+        async for event in self.run_single_query([NostrQuery.parse_obj(query)]):
             return event
 
     async def subscribe(
@@ -96,6 +100,13 @@ class BaseStorage:
             and len(self.clients[client_id]) == Config.subscription_limit
         ):
             raise StorageError("rejected: too many subscriptions")
+
+        try:
+            filters = [NostrQuery.parse_obj(q) for q in filters]
+        except ValidationError as e:
+            self.log.error(str(e))
+            await queue.put((sub_id, None))
+
         sub = self.subscription_class(
             self,
             sub_id,
@@ -329,34 +340,69 @@ class BaseSubscription:
             await self.queue.put((self.sub_id, event))
 
     def check_event(self, event: Event, filters: list):
-        for filter_obj in filters:
-            if not filter_obj:
-                continue
+        for query in filters:
             matched = set()
-            for key, value in filter_obj.items():
-                if key == "ids":
-                    matched.add(event.id in value)
-                elif key == "authors":
-                    matched.add(event.pubkey in value)
-                    has_delegation, match = event.has_tag("delegation", value)
-                    if match:
-                        matched.add(True)
-                elif key == "kinds":
-                    matched.add(event.kind in value)
-                elif key == "since":
-                    matched.add(event.created_at >= value)
-                elif key == "until":
-                    matched.add(event.created_at < value)
-                elif key[0] == "#" and len(key) == 2:
-                    matched.add(all(event.has_tag(key[1], value)))
-                elif key == "limit":
-                    # limit is irrelevant for broadcasts
-                    continue
-                else:
-                    matched.add(False)
+            if query.ids is not None:
+                matched.add(event.id in query.ids)
+            if query.authors is not None:
+                matched.add(event.pubkey in query.authors)
+                has_delegation, match = event.has_tag("delegation", query.authors)
+                if match:
+                    matched.add(True)
+            if query.kinds is not None:
+                matched.add(event.kind in query.kinds)
+            if query.since:
+                matched.add(event.created_at >= query.since)
+            if query.until:
+                matched.add(event.created_at < query.until)
+            if query.tags:
+                for tagname, values in query.tags.items():
+                    matched.add(all(event.has_tag(tagname, values)))
             if all(matched):
                 return True
         return False
+
+
+class NostrQuery(BaseModel):
+    """
+    Represents a valid nostr REQ query
+    """
+
+    ids: typing.Optional[list[str]] = Field(
+        anystr_lower=True, min_anystr_length=2, max_anystr_length=64
+    )
+    authors: typing.Optional[list[str]] = Field(
+        anystr_lower=True, min_anystr_length=2, max_anystr_length=64
+    )
+    kinds: typing.Optional[list[int]]
+    since: typing.Optional[int] = Field(ge=0, lt=2145934800)
+    until: typing.Optional[int] = Field(ge=0, lt=2145934800)
+    limit: typing.Optional[int] = Field(
+        ge=0, le=Config.max_limit, default=Config.max_limit
+    )
+    search: typing.Optional[str]
+    tags: typing.Optional[dict[str, list]]
+
+    @validator("ids", "authors", each_item=True)
+    def ids_are_hex(cls, hexid, field, **kwargs):
+        if any(i not in "abcdef0123456789" for i in hexid):
+            raise ValueError("not hex")
+        return hexid
+
+    @classmethod
+    def parse_obj(cls, obj):
+        tags = {}
+        try:
+            for k, v in obj.items():
+                if k.startswith("#") and len(k) == 2:
+                    tags[k[1]] = v
+        except AttributeError as e:
+            raise StorageError("not a query")
+        if tags:
+            obj["tags"] = tags
+            for k in tags:
+                del obj[f"#{k}"]
+        return super().parse_obj(obj)
 
 
 class BaseGarbageCollector(Periodic):

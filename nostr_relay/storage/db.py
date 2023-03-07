@@ -343,9 +343,9 @@ class DBStorage(BaseStorage):
         sub = self.subscription_class(
             self, "", query_filters, queue=queue, default_limit=600000
         )
-        sub.prepare()
-        async for event in self.run_query(sub.query):
-            yield event
+        if sub.prepare():
+            async for event in self.run_query(sub.query):
+                yield event
 
     async def run_query(self, query, if_long=None):
         self.log.debug(query)
@@ -554,83 +554,70 @@ class Subscription(BaseSubscription):
         await queue.put((sub_id, None))
 
     def evaluate_filter(self, filter_obj, subwhere):
-        for key, value in filter_obj.items():
-            if key == "ids":
-                if not isinstance(value, list):
-                    value = [value]
-                ids = set(value)
-                if ids:
-                    exact = []
-                    for eid in ids:
-                        eid = validate_id(eid)
-                        if eid:
-                            if len(eid) == 64:
-                                if self.is_postgres:
-                                    exact.append(f"'\\x{eid}'")
-                                else:
-                                    exact.append(f"x'{eid}'")
-                            elif len(eid) > 2:
-                                if self.is_postgres:
-                                    subwhere.append(f"encode(id, 'hex') LIKE '{eid}%'")
-                                else:
-                                    subwhere.append(f"lower(hex(id)) LIKE '{eid}%'")
-                    if exact:
-                        idstr = ",".join(exact)
-                        subwhere.append(f"events.id IN ({idstr})")
-                else:
-                    # invalid query
-                    raise ValueError("ids")
-            elif key == "authors" and isinstance(value, list):
-                if value:
-                    exact = set()
-                    hexexact = set()
-                    for pubkey in value:
-                        pubkey = validate_id(pubkey)
-                        if pubkey:
-                            if len(pubkey) == 64:
-                                if self.is_postgres:
-                                    exact.add(f"'\\x{pubkey}'")
-                                else:
-                                    exact.add(f"x'{pubkey}'")
-                                hexexact.add(f"'{pubkey}'")
-                            # no prefix searches, for now
-                    if exact:
-                        astr = ",".join(exact)
-                        subwhere.append(
-                            f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tags WHERE name = 'delegation' AND value IN ({','.join(hexexact)})))"
-                        )
-                    else:
-                        raise ValueError("authors")
-                else:
-                    # query with empty list should be invalid
-                    raise ValueError("authors")
-            elif key == "kinds":
-                if isinstance(value, list) and all(isinstance(k, int) for k in value):
+        if filter_obj.ids is not None:
+            ids = set(filter_obj.ids)
+            if ids:
+                exact = []
+                for eid in ids:
+                    if len(eid) == 64:
+                        if self.is_postgres:
+                            exact.append(f"'\\x{eid}'")
+                        else:
+                            exact.append(f"x'{eid}'")
+                    elif len(eid) > 2:
+                        if self.is_postgres:
+                            subwhere.append(f"encode(id, 'hex') LIKE '{eid}%'")
+                        else:
+                            subwhere.append(f"lower(hex(id)) LIKE '{eid}%'")
+                if exact:
+                    idstr = ",".join(exact)
+                    subwhere.append(f"events.id IN ({idstr})")
+            else:
+                raise ValueError("ids")
+        if filter_obj.authors is not None:
+            if filter_obj.authors:
+                exact = set()
+                hexexact = set()
+                for pubkey in filter_obj.authors:
+                    if len(pubkey) == 64:
+                        if self.is_postgres:
+                            exact.add(f"'\\x{pubkey}'")
+                        else:
+                            exact.add(f"x'{pubkey}'")
+                        hexexact.add(f"'{pubkey}'")
+                        # no prefix searches, for now
+                if exact:
+                    astr = ",".join(exact)
                     subwhere.append(
-                        "kind IN ({})".format(",".join(str(int(k)) for k in value))
+                        f"(pubkey IN ({astr}) OR id IN (SELECT id FROM tags WHERE name = 'delegation' AND value IN ({','.join(hexexact)})))"
                     )
                 else:
-                    raise ValueError("kinds")
-            elif key == "since":
-                if value:
-                    subwhere.append("created_at >= %d" % int(value))
-            elif key == "until":
-                if value:
-                    subwhere.append("created_at < %d" % int(value))
-                else:
-                    raise ValueError("until")
-            elif key == "limit" and isinstance(value, int):
-                filter_obj["limit"] = min(max(value, 0), self.default_limit)
-            elif key[0] == "#" and len(key) == 2 and value:
+                    raise ValueError("authors")
+            else:
+                # query with empty list should be invalid
+                raise ValueError("authors")
+        if filter_obj.kinds is not None:
+            if filter_obj.kinds:
+                subwhere.append(
+                    "kind IN ({})".format(",".join(str(k) for k in filter_obj.kinds))
+                )
+            else:
+                raise ValueError("kinds")
+        if filter_obj.since is not None:
+            subwhere.append("created_at >= %d" % filter_obj.since)
+        if filter_obj.until is not None:
+            subwhere.append("created_at < %d" % filter_obj.until)
+        if filter_obj.tags:
+            for tagname, tags in filter_obj.tags.items():
                 pstr = []
-                for val in set(value):
+                for val in set(tags):
                     if val:
                         val = val.replace("'", "''")
                         pstr.append(f"'{val}'")
                 if pstr:
                     pstr = ",".join(pstr)
                     subwhere.append(
-                        f"id IN (SELECT id FROM tags WHERE name = '{key[1]}' AND value IN ({pstr})) "
+                        f"id IN (SELECT id FROM tags WHERE name = '{tagname}' AND value IN ({pstr})) "
                     )
         return filter_obj
 
@@ -655,7 +642,7 @@ class Subscription(BaseSubscription):
             else:
                 where.add("false")
             if "limit" in filter_obj:
-                limit = filter_obj["limit"]
+                limit = filter_obj.limit
             new_filters.append(filter_obj)
         if where:
             select += " WHERE (\n\t"
