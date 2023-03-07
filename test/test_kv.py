@@ -114,7 +114,7 @@ class LMDBStorageTests(BaseLMDBTests):
         assert 6 == len(results)
         with self.assertLogs("nostr_relay", level="INFO") as cm:
             await self.get_events([{}])
-            assert ["INFO:nostr_relay.kvquery:No empty queries allowed"] == cm.output
+            assert ["INFO:nostr_relay.kvquery:No range scans allowed ()"] == cm.output
         with self.assertLogs("nostr_relay", level="INFO") as cm:
             await self.get_events([{"foo": 1}])
             assert ["INFO:nostr_relay.kvquery:No range scans allowed ()"] == cm.output
@@ -315,7 +315,7 @@ class LMDBStorageTests(BaseLMDBTests):
         query = [
             {"#p": ["5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"]}
         ]
-        plan = kv.planner(query)[0]
+        plan = kv.planner(query, log=self.storage.log)[0]
 
         plan, results = kv.execute_one_plan(self.storage.db, plan, log=self.storage.log)
         assert event["id"] == results[0].id
@@ -506,27 +506,33 @@ class LMDBStorageTests(BaseLMDBTests):
 
     async def test_bogus_queries(self):
         now = int(time.time())
+        first = None
         for i in range(10):
             added = self.make_event(
                 PK1, kind=1, content=f"test_bogus_queries {now} {i}", created_at=now - i
             )
             await self.storage.add_event(added)
-        await asyncio.sleep(0.3)
-        results = []
-        with self.assertNoLogs("nostr_relay", level="ERROR"):
-            results.extend(await self.get_events({"authors": ["garbage"]}))
-            results.extend(await self.get_events({"ids": ["garbage", added["id"]]}))
-            results.extend(await self.get_events({"ids": ["1"]}))
-            results.extend(await self.get_events({"since": "abc"}))
-            results.extend(await self.get_events({"until": "abc"}))
-            results.extend(await self.get_events({"limit": "abc"}))
-            results.extend(await self.get_events({"authors": ["npubblabab", "ab"]}))
-            results.extend(await self.get_events({"kinds": []}))
-            results.extend(await self.get_events({"kinds": [], "authors": [""]}))
-            results.extend(await self.get_events({"kinds": [None], "authors": [None]}))
-            results.extend(await self.get_events({"kinds": [None]}))
+            if first is None:
+                first = added
+        await asyncio.sleep(0.4)
 
-        assert 1 == len(results)
+        queries = [
+            {"authors": ["garbage"]},
+            {"ids": ["garbage", first["id"]]},
+            {"ids": ["1"]},
+            {"since": "abc"},
+            {"until": "abc"},
+            {"limit": "abc"},
+            {"authors": ["npubblabab", "ab"]},
+            {"kinds": []},
+            {"kinds": [], "authors": [""]},
+            {"kinds": [None], "authors": [None]},
+            {"kinds": [None]},
+        ]
+        for query in queries:
+            print(query)
+            with self.assertNoLogs("nostr_relay", level="ERROR"):
+                assert not list(await self.get_events(query))
 
 
 class KVGCTests(BaseLMDBTests):

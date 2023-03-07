@@ -6,6 +6,7 @@
 * Added validator to limit "hellthreads": `is_not_hellthread`. Configure `hellthread_limit` to number of tags
 * Enabled NIP-05 identity provider for LMDB backend
 * Improve compatibility with python < 3.11
+* Consolidated and improved query validation
 
 ## 1.11.6
 

@@ -519,10 +519,17 @@ class MainTests(APITests):
             for event in EVENTS:
                 await self.send_event(ws, event, True)
             await ws.send_json(
-                ["REQ", "test", {"ids": [EVENTS[1]["id"]]}, {"#p": EVENTS[1]["pubkey"]}]
+                [
+                    "REQ",
+                    "test",
+                    {"ids": [EVENTS[1]["id"]]},
+                    {"#p": [EVENTS[1]["pubkey"]]},
+                ]
             )
             data = await ws.receive_json()
             assert data == ["EVENT", "test", EVENTS[1]]
+            data = await ws.receive_json()
+            assert data == ["EVENT", "test", EVENTS[2]]
             data = await ws.receive_json()
             assert data == ["EOSE", "test"]
             await ws.send_json(["CLOSE", "test"])

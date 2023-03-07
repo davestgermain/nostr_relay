@@ -20,7 +20,13 @@ from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
 from concurrent import futures
 
-from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
+from .base import (
+    BaseStorage,
+    BaseSubscription,
+    BaseGarbageCollector,
+    NostrQuery,
+    ValidationError,
+)
 from ..auth import get_authenticator
 from ..config import Config
 from ..errors import StorageError
@@ -786,72 +792,43 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
         if isinstance(query, QueryPlan):
             plans.append(query)
             continue
-        elif not query or not isinstance(query, dict):
+        elif not isinstance(query, NostrQuery):
+            try:
+                query = NostrQuery.parse_obj(query)
+            except ValidationError as e:
+                if log:
+                    log.info("invalid query %s", e)
+                continue
+        if not query:
             if log:
                 log.info("No empty queries allowed")
             continue
         query_items = []
 
-        since = query.pop("since", None)
-        if since is not None:
-            try:
-                since = max(int(since), 1)
-            except ValueError:
-                continue
-            query_items.append(("since", since))
-        until = query.pop("until", None)
-        if until is not None:
-            try:
-                until = max(int(until), 1)
-            except ValueError:
-                continue
-            query_items.append(("until", until))
-        try:
-            limit = min(max(0, int(query.pop("limit"))), default_limit)
-        except KeyError:
-            limit = default_limit
-        except ValueError:
-            continue
+        if query.since is not None:
+            query_items.append(("since", query.since))
+
+        if query.until is not None:
+            query_items.append(("until", query.until))
 
         best_index = MultiIndex()
         has_authors = has_kinds = False
-        if "ids" in query:
-            try:
-                ids = tuple(
-                    sorted((i for i in query.pop("ids") if len(i) >= 2), reverse=True)
-                )
-            except ValueError:
-                continue
+        if query.ids is not None:
+            ids = tuple(sorted(query.ids, reverse=True))
             if ids:
                 query_items.append(("ids", ids))
                 best_index.add("ids", ids)
             else:
                 continue
-        if "kinds" in query:
-            kinds = tuple(
-                sorted(
-                    (k for k in query.pop("kinds") if isinstance(k, int)), reverse=True
-                )
-            )
+        if query.kinds is not None:
+            kinds = tuple(sorted(query.kinds, reverse=True))
             if kinds:
                 query_items.append(("kinds", kinds))
                 has_kinds = True
             else:
                 continue
-        if "authors" in query:
-            try:
-                authors = tuple(
-                    sorted(
-                        (
-                            a
-                            for a in query.pop("authors")
-                            if len(a) >= 4 and a[0] != "n"
-                        ),
-                        reverse=True,
-                    )
-                )
-            except ValueError:
-                continue
+        if query.authors is not None:
+            authors = tuple(sorted(query.authors, reverse=True))
             if authors:
                 query_items.append(("authors", authors))
                 has_authors = True
@@ -869,22 +846,20 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
         elif has_authors:
             best_index.add("authors", authors)
 
-        if "search" in query and Config.fts_enabled:
+        if query.search is not None and Config.fts_enabled:
             # NIP-50 specifies name:value as extensions
             # let's just remove them from the query
-            search_term = re.sub(r"([\w]+:[\w]+)", "", query.pop("search")).strip()
+            search_term = re.sub(r"([\w]+:[\w]+)", "", query.search).strip()
             if len(search_term) > 3:
                 query_items.append(("search", search_term))
                 best_index.add("search", (search_term,))
 
-        tags = set()
-
-        for key, value in query.items():
-            if key[0] == "#" and len(key) == 2 and isinstance(value, list):
-                tag = key[1]
-                tags.update((tag, str(val)) for val in value)
-                query_items.append((key, tuple(value)))
-        if tags:
+        if query.tags:
+            tags = set()
+            for tag, values in query.tags.items():
+                for val in values:
+                    tags.add((tag, val))
+                query_items.append((tag, tuple(values)))
             best_index.add("tags", sorted(tags, reverse=True))
 
         query_items = tuple(query_items)
@@ -892,7 +867,7 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
         # set the final order of the multiindex
         best_index, matches = best_index.finalize()
 
-        if best_index is INDEXES["created_at"] and not (since or until):
+        if best_index is INDEXES["created_at"] and not (query.since or query.until):
             # don't allow range scans
             if log:
                 log.info("No range scans allowed %s", query_items)
@@ -902,9 +877,9 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             query_items,
             best_index,
             matches,
-            limit,
-            since,
-            until,
+            query.limit,
+            query.since,
+            query.until,
             {},
         )
         if log:
@@ -968,14 +943,14 @@ def compile_match_from_query(query_items):
         elif key == "until" and value:
             col = FIELDS_TO_COLUMNS["created_at"]
             filter_clauses.add(f"(et[{col}] <= {value!r})")
-        elif key[0] == "#" and len(key) == 2:
-            col = FIELDS_TO_COLUMNS["tags"]
-            filter_clauses.add(
-                f"bool([t for t in et[{col}] if t[0] == {key[1]!r} and len(t) > 1 and t[1] in {value!r}])"
-            )
         elif key == "search" and Config.fts_enabled:
             # assume that the index matched correctly
             filter_clauses.add("True")
+        else:
+            col = FIELDS_TO_COLUMNS["tags"]
+            filter_clauses.add(
+                f"bool([t for t in et[{col}] if t[0] == {key!r} and len(t) > 1 and t[1] in {value!r}])"
+            )
 
     filter_string = " and ".join(filter_clauses)
     function = f"""
