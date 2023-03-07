@@ -356,7 +356,7 @@ class BaseSubscription:
             if query.until:
                 matched.add(event.created_at < query.until)
             if query.tags:
-                for tagname, values in query.tags.items():
+                for tagname, values in query.tags:
                     matched.add(all(event.has_tag(tagname, values)))
             if all(matched):
                 return True
@@ -381,27 +381,35 @@ class NostrQuery(BaseModel):
         ge=0, le=Config.max_limit, default=Config.max_limit
     )
     search: typing.Optional[str]
-    tags: typing.Optional[dict[str, list]]
+    tags: typing.Optional[list[tuple[str, set]]]
 
     @validator("ids", "authors", each_item=True)
     def ids_are_hex(cls, hexid, field, **kwargs):
+        hexid = hexid.lower()
         if any(i not in "abcdef0123456789" for i in hexid):
             raise ValueError("not hex")
+        if len(hexid) < 2:
+            raise ValueError("too small")
         return hexid
+
+    @validator("ids", "authors", "kinds")
+    def sort_fields(cls, values):
+        return sorted(set(values), reverse=True)
 
     @classmethod
     def parse_obj(cls, obj):
-        tags = {}
+        tags = []
         try:
             for k, v in obj.items():
                 if k.startswith("#") and len(k) == 2:
-                    tags[k[1]] = v
+                    tags.append((k[1], set(v)))
+            tags.sort(reverse=True)
         except AttributeError as e:
             raise StorageError("not a query")
         if tags:
             obj["tags"] = tags
-            for k in tags:
-                del obj[f"#{k}"]
+        else:
+            obj.pop("tags", None)
         return super().parse_obj(obj)
 
 

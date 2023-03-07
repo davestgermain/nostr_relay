@@ -675,13 +675,13 @@ class LMDBStorage(BaseStorage):
             filters = [filters]
         plans = []
         async for plan, events in executor(
-            self.db, filters, self.query_pool, default_limit=600000
+            self.db, filters, self.query_pool, default_limit=600000, log=self.log
         ):
             for event in events:
                 if event is not None:
                     yield event
             plans.append(plan)
-        analyze(plans)
+        analyze(plans, log=self.log)
 
     async def get_stats(self):
         stats = {}
@@ -793,16 +793,17 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             plans.append(query)
             continue
         elif not isinstance(query, NostrQuery):
+            if not query:
+                if log:
+                    log.info("No empty queries allowed")
+                continue
             try:
                 query = NostrQuery.parse_obj(query)
             except ValidationError as e:
                 if log:
                     log.info("invalid query %s", e)
                 continue
-        if not query:
-            if log:
-                log.info("No empty queries allowed")
-            continue
+
         query_items = []
 
         if query.since is not None:
@@ -814,21 +815,21 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
         best_index = MultiIndex()
         has_authors = has_kinds = False
         if query.ids is not None:
-            ids = tuple(sorted(query.ids, reverse=True))
+            ids = tuple(query.ids)
             if ids:
                 query_items.append(("ids", ids))
                 best_index.add("ids", ids)
             else:
                 continue
         if query.kinds is not None:
-            kinds = tuple(sorted(query.kinds, reverse=True))
+            kinds = tuple(query.kinds)
             if kinds:
                 query_items.append(("kinds", kinds))
                 has_kinds = True
             else:
                 continue
         if query.authors is not None:
-            authors = tuple(sorted(query.authors, reverse=True))
+            authors = tuple(query.authors)
             if authors:
                 query_items.append(("authors", authors))
                 has_authors = True
@@ -856,7 +857,7 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
 
         if query.tags:
             tags = set()
-            for tag, values in query.tags.items():
+            for tag, values in query.tags:
                 for val in values:
                     tags.add((tag, val))
                 query_items.append((tag, tuple(values)))

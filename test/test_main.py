@@ -575,22 +575,23 @@ class MainTests(APITests):
                 ]
             )
 
-            data = await ws.receive_json()
-            assert data == ["EVENT", "test", EVENTS[1]]
+            async with timeout(5):
+                data = await ws.receive_json()
+                assert data == ["EVENT", "test", EVENTS[1]]
 
-            data = await ws.receive_json()
-            assert data == ["EOSE", "test"]
+                data = await ws.receive_json()
+                assert data == ["EOSE", "test"]
 
-            await ws.send_json(["REQ", "missing", {"kinds": [1000]}])
-            data = await ws.receive_json()
-            assert data == ["EOSE", "missing"]
+                await ws.send_json(["REQ", "missing", {"kinds": [1000]}])
+                data = await ws.receive_json()
+                assert data == ["EOSE", "missing"]
 
-            # now add a new event
-            data = await self.send_event(ws, EVENTS[2], True)
-            assert data[0] == "OK"
-            await asyncio.sleep(1)
-            data = await ws.receive_json()
-            assert data == ["EVENT", "test", EVENTS[2]]
+                # now add a new event
+                data = await self.send_event(ws, EVENTS[2], True)
+                assert data[0] == "OK"
+                await asyncio.sleep(1)
+                data = await ws.receive_json()
+                assert data == ["EVENT", "test", EVENTS[2]]
 
     async def test_req_after_add_bad(self):
         """

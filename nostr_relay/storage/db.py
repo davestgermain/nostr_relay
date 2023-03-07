@@ -609,9 +609,9 @@ class Subscription(BaseSubscription):
         if filter_obj.until is not None:
             subwhere.append("created_at < %d" % filter_obj.until)
         if filter_obj.tags:
-            for tagname, tags in filter_obj.tags.items():
+            for tagname, tags in filter_obj.tags:
                 pstr = []
-                for val in set(tags):
+                for val in tags:
                     if val:
                         val = val.replace("'", "''")
                         pstr.append(f"'{val}'")
