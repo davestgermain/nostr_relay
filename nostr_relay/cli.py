@@ -35,8 +35,14 @@ def main(ctx, config):
     default=False,
     help="Use uvicorn instead of gunicorn",
 )
+@click.option(
+    "--use-purple",
+    is_flag=True,
+    default=False,
+    help="Use purple instead of gunicorn",
+)
 @click.pass_context
-def serve(ctx, use_uvicorn):
+def serve(ctx, use_uvicorn, use_purple):
     """
     Start the http relay server
     """
@@ -54,6 +60,10 @@ def serve(ctx, use_uvicorn):
         from .web import run_with_uvicorn
 
         run_with_uvicorn()
+    elif use_purple:
+        from .purple import serve
+
+        serve(Config)
     else:
         from .web import run_with_gunicorn
 
@@ -491,3 +501,46 @@ async def reindex(since, until, batch):
 
 
 main.add_command(fts)
+
+
+@main.command()
+@async_cmd
+async def bench():
+    from nostr_relay.storage import get_storage
+    from nostr_relay.storage import kv
+    from nostr_relay.util import easy_profiler
+
+    import time
+
+    import logging
+
+    logging.basicConfig(level="INFO")
+
+    async with get_storage() as storage:
+        plan = kv.planner([{"kinds": [1], "limit": 50}])[0]
+        print(plan)
+
+        async def do_queries():
+            queries = 0
+            events = 0
+            start = time.perf_counter()
+            stop = start + 5
+
+            while time.perf_counter() < stop:
+                # for event in kv.execute_one_plan(storage.db, plan, storage.log)[1]:
+                #     events += 1
+                # queries += 1
+                async for event in storage.run_single_query(
+                    [{"kinds": [1], "limit": 25}]
+                ):
+                    events += 1
+                queries += 1
+
+            duration = time.perf_counter() - start
+            print(f"qps: {queries/duration:.1f}  events/sec: {events/duration:.1f}")
+
+        # with easy_profiler():
+        tasks = [asyncio.create_task(do_queries()) for i in range(3)]
+
+        # tasks = [asyncio.get_running_loop().run_in_executor(None, do_queries) for i in range(4)]
+        await asyncio.wait(tasks)

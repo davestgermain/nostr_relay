@@ -174,8 +174,9 @@ class Index:
                     elif key < stop:
                         break
 
-                    if key[-32:] in events:
-                        yield key[-32:]
+                    event_id = key[-32:]
+                    if event_id in events:
+                        yield event_id
                     if not prev():
                         break
                     key = bytes(get_key())
@@ -785,7 +786,7 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
         if isinstance(query, QueryPlan):
             plans.append(query)
             continue
-        if not query:
+        elif not query or not isinstance(query, dict):
             if log:
                 log.info("No empty queries allowed")
             continue
@@ -1030,7 +1031,7 @@ def execute_one_plan(
     """
     Run a single query plan, calling on_event for each event
     """
-    events = collections.deque()
+    events = []
     on_event = events.append
     try:
         limit = plan.limit
@@ -1118,7 +1119,9 @@ def analyze(plans, later=True, log=None):
     else:
         _analyze(plans, log)
 
+
 analyze.ANALYSIS_THREAD = None
+
 
 def encode_event(event):
     row = (

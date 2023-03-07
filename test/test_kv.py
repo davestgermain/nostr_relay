@@ -647,7 +647,7 @@ class FTSTests(BaseLMDBTests):
         assert 1 == len(results)
 
         await self.storage.delete_event(old_event["id"])
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         query = {"search": "hello earlier"}
         results = await self.get_events(query)
         assert 0 == len(results)

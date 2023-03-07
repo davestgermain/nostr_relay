@@ -83,6 +83,7 @@ class ConfigClass:
 
             multiprocessing.current_process().name = proc_name
         self._is_loaded = True
+        self.config_file = filename
 
     def __getattr__(self, attrname):
         return None
