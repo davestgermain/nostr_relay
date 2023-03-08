@@ -388,7 +388,7 @@ class NostrQuery(BaseModel):
         if any(i not in "abcdef0123456789" for i in hexid):
             raise ValueError("not hex")
         if len(hexid) < 2:
-            raise ValueError("too small")
+            raise ValueError(f"{hexid} too small")
         return hexid
 
     @validator("tags")

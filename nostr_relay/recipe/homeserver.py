@@ -71,6 +71,8 @@ class PostSaveForward:
             try:
                 async with Relay(relay_url) as relay:
                     return await relay.add_event(event, check_response=True)
+            except asyncio.exceptions.CancelledError:
+                return
             except Exception as e:
                 self.log.warning("bouncing %s to %s: %s", event.id, relay_url, str(e))
                 return

@@ -21,8 +21,8 @@ else:
             super().__init__(
                 server_no_context_takeover=server_no_context_takeover,
                 client_no_context_takeover=client_no_context_takeover,
-                server_max_window_bits=15,
-                client_max_window_bits=15,
+                server_max_window_bits=12,
+                client_max_window_bits=12,
                 compress_settings=compress_settings,
             )
 

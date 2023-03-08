@@ -20,7 +20,7 @@ import websockets
 from .config import Config
 from .rate_limiter import get_rate_limiter
 from .storage import get_storage
-from .web import Client
+from .web import start_client
 from .notifier import NotifyServer
 from .util import Periodic, easy_profiler
 
@@ -70,28 +70,31 @@ async def main(config, sock=None):
         await Periodic.start_pending()
 
         async def nostr_api(websocket):
-            client = Client(
-                websocket,
-                None,
-                rate_limiter=rate_limiter,
-                log=log,
-                timeout=config.get("message_timeout", 1800),
-            )
-
             try:
+                client = start_client(
+                    storage,
+                    websocket.send,
+                    websocket.recv,
+                    websocket.close,
+                    log,
+                    remote_addr="%s:%s" % websocket.remote_address,
+                    origin=websocket.origin,
+                    rate_limiter=rate_limiter,
+                    message_timeout=Config.get("message_timeout", 1800),
+                )
                 counters["clients"] += 1
                 if not run_profiler:
-                    await client.start(storage, websocket.send, websocket.recv)
+                    await client
                 else:
                     with easy_profiler():
-                        await client.start(storage, websocket.send, websocket.recv)
+                        await client
             except (
                 websockets.ConnectionClosedError,
                 websockets.ConnectionClosedOK,
             ):
                 pass
             finally:
-                await client.stop()
+                del client
                 counters["clients"] -= 1
                 counters["served"] += 1
 

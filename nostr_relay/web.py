@@ -22,100 +22,85 @@ from .util import timeout, json_dumps, json_loads, event_as_json, JSONDecodeErro
 from .errors import AuthenticationError, StorageError
 
 
-class Client:
-    __slots__ = (
-        "ws",
-        "remote_addr",
-        "log",
-        "id",
-        "subscription_queue",
-        "send_task",
-        "rate_limiter",
-        "timeout",
-        "auth_token",
-        "sent",
-        "start_time",
-    )
+def validate_message(message):
+    if not isinstance(message, list):
+        return False
+    if len(message) < 2:
+        return False
+    if message[0] not in ("EVENT", "REQ", "CLOSE", "AUTH"):
+        return False
+    return True
 
-    def __init__(self, ws, req, rate_limiter=None, log=None, timeout=1800):
-        self.ws = ws
-        self.remote_addr = req.remote_addr if req else "%s:%s" % ws.remote_address
-        origin = req.get_header("origin") if req else ws.origin
-        self.id = f"{self.remote_addr}-{secrets.token_hex(2)}"
-        self.log = log
-        self.log.info(f"Accepted {self.id} from Origin: {origin}")
-        self.subscription_queue = asyncio.Queue()
-        self.send_task = None
-        self.sent = 0
-        self.rate_limiter = rate_limiter
-        self.timeout = timeout
-        self.auth_token = {}
-        self.start_time = time()
 
-    def validate_message(self, message):
-        if not isinstance(message, list):
-            return False
-        if len(message) < 2:
-            return False
-        if message[0] not in ("EVENT", "REQ", "CLOSE", "AUTH"):
-            return False
-        return True
+async def send_subscriptions(get_from_storage, ws_send, log):
+    sent = 0
+    while True:
+        try:
+            sub_id, event = await get_from_storage()
+            if event is not None:
+                message = event_as_json(sub_id, event)
+            else:
+                # done with stored events
+                message = f'["EOSE","{sub_id}"]'
 
-    async def send_subscriptions(self, ws_send):
-        get_from_storage = self.subscription_queue.get
-        self.log.debug("%s waiting for subs", self.id)
-        while True:
-            try:
-                sub_id, event = await get_from_storage()
-                if event is not None:
-                    # message = json_dumps(["EVENT", sub_id, event.to_json_object()])
-                    message = event_as_json(sub_id, event)
-                else:
-                    # done with stored events
-                    message = f'["EOSE","{sub_id}"]'
+            await ws_send(message)
+            # log.debug("SENT: %s", message)
+            sent += len(message)
+        except (
+            falcon.WebSocketDisconnected,
+            ConnectionClosedError,
+            ConnectionClosedOK,
+            asyncio.CancelledError,
+        ):
+            break
+        except Exception:
+            log.exception("subs")
+    return sent
 
-                await ws_send(message)
-                # self.log.debug("SENT: %s", message)
-                self.sent += len(message)
-            except (
-                falcon.WebSocketDisconnected,
-                ConnectionClosedError,
-                ConnectionClosedOK,
-                asyncio.CancelledError,
-            ):
-                break
-            except Exception:
-                self.log.exception("subs")
 
-    async def start(self, storage, ws_send, ws_recv):
-        ws = self.ws
-        client_id = self.id
-        remote_addr = self.remote_addr
+async def start_client(
+    storage,
+    ws_send,
+    ws_recv,
+    ws_close,
+    log,
+    message_timeout=1800,
+    rate_limiter=None,
+    origin="",
+    remote_addr="",
+):
+    """
+    Start the client loop
+    """
+    client_id = f"{remote_addr}-{secrets.token_hex(2)}"
+    auth_token = {}
+    subscription_queue = asyncio.Queue()
+    send_task = None
+    start_time = time()
 
+    try:
+        log.info(f"Accepted {client_id} from Origin: {origin}")
         if storage.authenticator.is_enabled:
             challenge = storage.authenticator.get_challenge(remote_addr)
-            self.log.debug("Sent challenge %s to %s", challenge, client_id)
+            log.debug("Sent challenge %s to %s", challenge, client_id)
             await ws_send(json_dumps(["AUTH", challenge]))
-            throttle = await storage.authenticator.should_throttle(self.auth_token)
+            throttle = await storage.authenticator.should_throttle(auth_token)
         else:
             throttle = 0
-
         while True:
             try:
-                async with timeout(self.timeout):
+                async with timeout(message_timeout):
                     message = json_loads(await ws_recv())
 
-                if not self.validate_message(message):
+                if not validate_message(message):
                     if throttle:
                         await asyncio.sleep(throttle)
                     continue
 
-                self.log.debug("RECEIVED: %s", message)
+                log.debug("RECEIVED: %s", message)
                 command = message[0]
 
-                if self.rate_limiter and self.rate_limiter.is_limited(
-                    remote_addr, message
-                ):
+                if rate_limiter and rate_limiter.is_limited(remote_addr, message):
                     if command == "EVENT":
                         response = [
                             "OK",
@@ -134,38 +119,40 @@ class Client:
                         client_id,
                         sub_id,
                         message[2:],
-                        self.subscription_queue,
-                        auth_token=self.auth_token,
+                        subscription_queue,
+                        auth_token=auth_token,
                     )
                     if throttle:
                         await asyncio.sleep(throttle)
-                    if self.send_task is None:
-                        self.send_task = asyncio.create_task(
-                            self.send_subscriptions(ws_send)
+                    if send_task is None:
+                        send_task = asyncio.create_task(
+                            send_subscriptions(subscription_queue.get, ws_send, log)
                         )
+                        log.debug("%s waiting for subs", client_id)
+
                 elif command == "CLOSE":
                     sub_id = str(message[1])
                     await storage.unsubscribe(client_id, sub_id)
                 elif command == "EVENT":
                     try:
                         event, result = await storage.add_event(
-                            message[1], auth_token=self.auth_token
+                            message[1], auth_token=auth_token
                         )
                     except (StorageError, AuthenticationError) as e:
                         throttle = max(throttle, 1) * 2
-                        self.log.error("Auth error %s. Throttling %s", str(e), throttle)
+                        log.error("Auth error %s. Throttling %s", str(e), throttle)
                         result = False
                         reason = str(e)
                         eventid = ""
                     except Exception as e:
-                        self.log.error(str(e))
+                        log.error(str(e))
                         result = False
                         reason = str(e)
                         eventid = ""
                     else:
                         eventid = event.id
                         reason = "" if result else "duplicate: exists"
-                        self.log.info(
+                        log.info(
                             "%s added %s from %s", client_id, event.id, event.pubkey
                         )
                     finally:
@@ -173,18 +160,18 @@ class Client:
                             await asyncio.sleep(throttle)
                         await ws_send(json_dumps(["OK", eventid, result, reason]))
                 elif command == "AUTH" and storage.authenticator.is_enabled:
-                    self.auth_token = await storage.authenticator.authenticate(
+                    auth_token = await storage.authenticator.authenticate(
                         message[1], challenge=challenge
                     )
-                    throttle = await storage.authenticator.should_throttle(
-                        self.auth_token
-                    )
+                    throttle = await storage.authenticator.should_throttle(auth_token)
 
             except StorageError as e:
-                self.log.warning("storage error: %s for %s", e, client_id)
+                log.warning("storage error: %s for %s", e, client_id)
                 await ws_send(json_dumps(["NOTICE", str(e)]))
             except AuthenticationError as e:
-                self.log.warning("Auth error. %s token:%s", str(e), self.auth_token)
+                log.warning(
+                    "Auth error: %s for %s token:%s", str(e), client_id, auth_token
+                )
                 await ws_send(json_dumps(["NOTICE", str(e)]))
             except (
                 falcon.WebSocketDisconnected,
@@ -193,36 +180,36 @@ class Client:
             ):
                 break
             except JSONDecodeError:
-                self.log.debug("json decoding")
+                log.debug("json decoding")
                 continue
             except asyncio.TimeoutError:
-                self.log.info("%s timed out", client_id)
-                await ws.close(code=1013)
+                log.info("%s timed out", client_id)
+                await ws_close(code=1013)
                 break
             except Exception:
-                self.log.exception("client loop")
-                await ws.close(code=1013)
+                log.exception("client loop")
+                await ws_close(code=1013)
                 break
-        await storage.unsubscribe(self.id)
-
-    async def stop(self):
-        if self.send_task:
-            self.send_task.cancel()
+    except:
+        log.exception("client_loop")
+    finally:
+        await storage.unsubscribe(client_id)
+        sent = 0
+        if send_task:
+            send_task.cancel()
             try:
-                await self.send_task
+                sent = await send_task
             except asyncio.CancelledError:
                 pass
-        self.rate_limiter.cleanup()
-        duration = time() - self.start_time
-        self.log.info(
-            "Done %s. Sent: %d Bytes. Duration: %d Seconds",
-            self,
-            self.sent,
+        rate_limiter.cleanup()
+        duration = time() - start_time
+        log.info(
+            "Done %s@%s. Sent: %d Bytes. Duration: %d Seconds",
+            auth_token.get("pubkey", "anon"),
+            client_id,
+            sent,
             duration,
         )
-
-    def __str__(self):
-        return f"{self.auth_token.get('pubkey', 'anon')}@{self.id}"
 
 
 class BaseResource:
@@ -266,8 +253,8 @@ class NostrAPI(BaseResource):
         resp.append_header("Access-Control-Allow-Methods", "*")
 
     async def on_websocket(self, req: falcon.Request, ws: falcon.asgi.WebSocket):
+        origin = str(req.get_header("origin")).lower()
         if Config.origin_blacklist:
-            origin = str(req.get_header("origin")).lower()
             if origin in Config.origin_blacklist:
                 self.log.warning("Blocked origin %s from connecting", origin)
                 await ws.close(code=1008)
@@ -284,28 +271,20 @@ class NostrAPI(BaseResource):
 
         except falcon.WebSocketDisconnected:
             return
+        # from .util import easy_profiler
 
-        client = Client(
-            ws,
-            req,
+        # with easy_profiler():
+        await start_client(
+            self.storage,
+            ws.send_text,
+            ws.receive_text,
+            ws.close,
+            self.log,
+            remote_addr=req.remote_addr,
+            origin=origin,
             rate_limiter=self.rate_limiter,
-            log=self.log,
-            timeout=Config.get("message_timeout", 1800),
+            message_timeout=Config.get("message_timeout", 1800),
         )
-
-        try:
-            # from .util import easy_profiler
-
-            # with easy_profiler():
-            await client.start(self.storage, ws.send_text, ws.receive_text)
-        except (
-            falcon.WebSocketDisconnected,
-            ConnectionClosedError,
-            ConnectionClosedOK,
-        ):
-            pass
-        finally:
-            await client.stop()
 
 
 class NostrStats(BaseResource):
