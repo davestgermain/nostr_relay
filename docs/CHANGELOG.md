@@ -1,5 +1,10 @@
 # CHANGES
 
+## 1.12.1
+
+* Added a demo mode: `nostr-relay --try-fast`
+* Validate that tags are strings
+
 ## 1.12
 
 * Added [full-text index](fulltext.md), compatible with NIP-50

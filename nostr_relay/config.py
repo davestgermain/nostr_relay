@@ -88,6 +88,11 @@ class ConfigClass:
         self._is_loaded = True
         self.config_file = filename
 
+    def dump(self, filename):
+        obj = self.__dict__
+        with open(filename, "w") as fp:
+            yaml.dump(obj, stream=fp)
+
     def __getattr__(self, attrname):
         return None
 

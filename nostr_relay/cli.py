@@ -41,15 +41,57 @@ def main(ctx, config):
     default=False,
     help="Use purple instead of gunicorn",
 )
+@click.option(
+    "--try-fast",
+    is_flag=True,
+    default=False,
+    help="Try a faster implementation",
+)
 @click.pass_context
-def serve(ctx, use_uvicorn, use_purple):
+def serve(ctx, use_uvicorn, use_purple, try_fast):
     """
     Start the http relay server
     """
-    if (
-        Config.storage.get("class", "nostr_relay.storage.db.DBStorage")
-        == "nostr_relay.storage.db.DBStorage"
-    ):
+    storage_class = Config.storage.get("class", "nostr_relay.storage.db.DBStorage")
+    if try_fast:
+        print(
+            """
+Running a demo-mode, fast server based on LMDB
+===============================================\n"""
+        )
+        storage_config = {
+            "class": "nostr_relay.storage.kv.LMDBStorage",
+            "path": "/tmp/nostr.db",
+            "map_size": 1024 * 1024 * 100,
+            "metasync": False,
+        }
+        conf_file = "/tmp/nostr-config.yaml"
+        print(
+            f"Temporarily switching config to {conf_file} and running with --use-purple"
+        )
+        Config.storage = storage_config
+        Config.purple["workers"] = 4
+        Config.purple["host"] = "127.0.0.1"
+        Config.purple["port"] = 6969
+        Config.logging["loggers"]["nostr_relay"]["level"] = "WARNING"
+        Config.config_file = conf_file
+        Config.dump(conf_file)
+        try:
+            import lmdb
+        except ImportError:
+            print("Installing lmdb...")
+            import subprocess, sys
+
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "lmdb", "msgpack", "whoosh"]
+            )
+        from .purple import serve
+
+        print("Running on ws://127.0.0.1:6969/")
+        serve(Config)
+        return
+
+    if storage_class == "nostr_relay.storage.db.DBStorage":
         import os.path
         from alembic import config
 

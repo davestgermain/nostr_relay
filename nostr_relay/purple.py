@@ -139,7 +139,7 @@ def serve(config):
     signal.signal(signal.SIGTERM, _handle_exit)
 
     num_workers = opts.get("workers", 0) or min(multiprocessing.cpu_count(), 4)
-    for i in range(opts.get("workers", num_workers)):
+    for i in range(num_workers):
         proc = spawn.Process(
             name=f"Worker-{i}",
             target=worker_process,
