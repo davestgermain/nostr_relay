@@ -438,7 +438,7 @@ def run_with_gunicorn(conf_file=None):
             if sys.implementation.name == "pypy":
                 from uvicorn.workers import UvicornH11Worker
 
-                UvicornH11Worker.CONFIG_KWARGS["ws"] = "wsproto"
+                # UvicornH11Worker.CONFIG_KWARGS["ws"] = "wsproto"
                 worker_class = "uvicorn.workers.UvicornH11Worker"
             else:
                 worker_class = "uvicorn.workers.UvicornWorker"
