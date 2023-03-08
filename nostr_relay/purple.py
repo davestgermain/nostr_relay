@@ -84,16 +84,18 @@ async def main(config, sock=None):
                     message_timeout=Config.get("message_timeout", 1800),
                 )
                 counters["clients"] += 1
+
                 if not run_profiler:
                     await client
                 else:
                     with easy_profiler():
                         await client
+
             except (
                 websockets.ConnectionClosedError,
                 websockets.ConnectionClosedOK,
             ):
-                pass
+                log.debug("Connection closed")
             finally:
                 del client
                 counters["clients"] -= 1

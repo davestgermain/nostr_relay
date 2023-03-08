@@ -81,8 +81,8 @@ class Periodic:
     A periodic async task
     """
 
-    _pending_tasks = []
-    _running_tasks = []
+    _pending_tasks: list[asyncio.Task] = []
+    _running_tasks: list[asyncio.Task] = []
 
     @staticmethod
     def register(periodic_task):

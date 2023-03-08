@@ -9,6 +9,7 @@ import collections
 import threading
 import functools
 import traceback
+import typing
 import re
 import os.path
 
@@ -73,11 +74,12 @@ class FakeContainer:
 class Index:
     cardinality = 1
     enabled = True
+    prefix = b""
 
     def __init__(self):
         self.hits = self.misses = 0
 
-    def write(self, event, txn, operation="put"):
+    def write(self, event: Event, txn, operation="put"):
         event_id = event.id_bytes
         ctime = event.created_at.to_bytes(4, "big")
         func = getattr(txn, operation)
@@ -85,13 +87,16 @@ class Index:
             to_save = b"%s\x00%s\x00%s" % (key, ctime, event_id)
             func(to_save, b"")
 
-    def clear(self, event, txn):
+    def clear(self, event: Event, txn):
         self.write(event, txn, operation="delete")
 
     def bulk_update(self, events, txn):
         for event in events:
             if event:
                 self.write(event, txn)
+
+    def to_key(self, match) -> bytes:
+        return match
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.prefix})"
@@ -208,10 +213,10 @@ class IdIndex(Index):
     prefix = b"\x00"
     cardinality = 1000
 
-    def to_key(self, value):
+    def to_key(self, value) -> bytes:
         return self.prefix + bytes_from_hex(value)
 
-    def write(self, event, txn, operation="put"):
+    def write(self, event: Event, txn, operation="put"):
         if operation == "put":
             txn.put(self.to_key(event.id), encode_event(event))
         elif operation == "delete":
@@ -221,30 +226,30 @@ class IdIndex(Index):
 class CreatedIndex(Index):
     prefix = b"\x01"
 
-    def to_key(self, value):
+    def to_key(self, value) -> bytes:
         return self.prefix + value.to_bytes(4, "big")
 
-    def convert(self, event):
+    def convert(self, event: Event):
         yield self.to_key(event.created_at)
 
 
 class KindIndex(Index):
     prefix = b"\x02"
 
-    def to_key(self, value):
+    def to_key(self, value) -> bytes:
         return self.prefix + value.to_bytes(4, "big")
 
-    def convert(self, event):
+    def convert(self, event: Event):
         yield self.to_key(event.kind)
 
 
 class PubkeyIndex(Index):
     prefix = b"\x03"
 
-    def to_key(self, value):
+    def to_key(self, value) -> bytes:
         return self.prefix + bytes_from_hex(value)
 
-    def convert(self, event):
+    def convert(self, event: Event):
         yield self.to_key(event.pubkey)
 
 
@@ -252,11 +257,10 @@ class TagIndex(Index):
     prefix = b"\x09"
     cardinality = 100
 
-    def to_key(self, value):
+    def to_key(self, value: tuple[str, str]) -> bytes:
         return b"%s%s\x00%s" % (self.prefix, value[0].encode(), value[1].encode())
 
-    def convert(self, event):
-        tags = []
+    def convert(self, event: Event):
         for tag in event.tags:
             if len(tag[0]) == 1 or tag[0] in ("expiration", "delegation"):
                 yield self.to_key((tag[0], str(tag[1])))
@@ -266,14 +270,14 @@ class AuthorKindIndex(Index):
     prefix = b"\x04"
     cardinality = 20
 
-    def to_key(self, value):
+    def to_key(self, value: tuple[str, int]) -> bytes:
         return b"%s%s\x00%s" % (
             self.prefix,
             bytes_from_hex(value[0]),
             value[1].to_bytes(4, "big"),
         )
 
-    def convert(self, event):
+    def convert(self, event: Event):
         yield self.to_key((event.pubkey, event.kind))
 
 
@@ -283,7 +287,6 @@ class FTSIndex(Index):
     """
 
     cardinality = 1000
-    prefix = b""
 
     def __init__(self, index_path=Config.fts_index_path, enabled=Config.fts_enabled):
         self.index_path = index_path
@@ -324,13 +327,13 @@ class FTSIndex(Index):
                 self._index = storage.create_index(self.schema)
         return self._index
 
-    def _index_item(self, writer, event):
+    def _index_item(self, writer, event: Event):
         writer.update_document(
             id=event.id, content=event.content, created_at=event.created_at
         )
         self.log.debug("Indexed %s", event.id)
 
-    def write(self, event, txn):
+    def write(self, event: Event, txn):
         if event.kind in (1, 0):
             from whoosh.writing import AsyncWriter
 
@@ -346,7 +349,7 @@ class FTSIndex(Index):
                     self._index_item(writer, event)
             writer.commit()
 
-    def clear(self, event, txn):
+    def clear(self, event: Event, txn):
         with self.index.writer() as writer:
             writer.delete_by_term("id", event.id)
 
@@ -405,7 +408,7 @@ class MultiIndex:
     def __repr__(self):
         return f"MultiIndex({[i[0].__class__.__name__ for i in self.indexes]})"
 
-    def sort_key(self, item):
+    def sort_key(self, item: tuple[Index, list]):
         index, matches = item
         key = index.cardinality * len(matches)
         return key
@@ -415,7 +418,7 @@ class MultiIndex:
         if indexname == "ids":
             self._has_ids = len(self.indexes) - 1
 
-    def finalize(self):
+    def finalize(self) -> tuple[Index, list]:
         # if there are no matches, this is a date range scan
         if not self.indexes:
             best_index = INDEXES["created_at"]
@@ -503,14 +506,14 @@ class WriterThread(threading.Thread):
             finally:
                 self.processing = False
 
-    def _delete_event(self, txn, event, log):
+    def _delete_event(self, txn, event: Event, log):
         for index in reversed(self.write_indexes):
             index.clear(event, txn)
         log.info(
             "Deleted event %s kind=%d pubkey=%s", event.id, event.kind, event.pubkey
         )
 
-    def _post_save(self, txn, event, counter, log):
+    def _post_save(self, txn, event: Event, counter, log):
         if (
             event.kind
             in (
@@ -617,10 +620,12 @@ class LMDBStorage(BaseStorage):
         with self.db.begin(write=True) as txn:
             txn.put(b"\xee", b"")
 
-    async def delete_event(self, event_id):
+    async def delete_event(self, event_id: str):
         self.writer_queue.put(("del", [event_id]))
 
-    async def add_event(self, event_json: dict, auth_token=None):
+    async def add_event(
+        self, event_json: dict, auth_token: typing.Optional[dict] = None
+    ) -> tuple[Event, bool]:
         """
         Add an event from json object
         Return (status, event)
@@ -637,12 +642,14 @@ class LMDBStorage(BaseStorage):
         await self.post_save(event)
         return event, True
 
-    async def post_save(self, event, **kwargs):
+    async def post_save(self, event: Event, **kwargs):
         await self.notify_all_connected(event)
         # notify other processes
         await self.notify_other_processes(event)
 
-    async def reindex(self, index_name, batch_size=500, kinds=(1, 0), since=1, until=0):
+    async def reindex(
+        self, index_name: str, batch_size=500, kinds=(1, 0), since=1, until=0
+    ):
         query = {
             "kinds": kinds,
             "limit": batch_size,
@@ -679,14 +686,14 @@ class LMDBStorage(BaseStorage):
             "Done bulk updating %s. %d events indexed", index_name, full_count
         )
 
-    async def get_event(self, event_id: str):
+    async def get_event(self, event_id: str) -> Event:
         with self.db.begin(buffers=True) as txn:
             return decode_event(get_event_data(txn, bytes.fromhex(event_id)))
 
-    async def run_single_query(self, filters):
+    async def run_single_query(self, filters: list[NostrQuery]):
         if isinstance(filters, dict):
             filters = [filters]
-        plans = []
+        plans = QueryPlans()
         async for plan, events in executor(
             self.db, filters, self.query_pool, default_limit=600000, log=self.log
         ):
@@ -696,7 +703,7 @@ class LMDBStorage(BaseStorage):
             plans.append(plan)
         analyze(plans, log=self.log)
 
-    async def get_stats(self):
+    async def get_stats(self) -> dict:
         stats = {}
         subs = await self.num_subscriptions(True)
         num_subs = 0
@@ -722,7 +729,7 @@ class Subscription(BaseSubscription):
         sub_id = self.sub_id
         queue_put = self.queue.put
         with self.storage.stat_collector.timeit("query") as counter:
-            plans = []
+            plans = QueryPlans()
             iterator = executor(
                 self.storage.db,
                 self.query,
@@ -799,7 +806,9 @@ class KVGarbageCollector(BaseGarbageCollector):
         return len(to_del)
 
 
-def planner(filters, default_limit=6000, log=None, maximum_plans=5):
+def planner(
+    filters: list[NostrQuery], default_limit=6000, log=None, maximum_plans=5
+) -> QueryPlans:
     """
     Create a list of QueryPlans for the the list of REQ filters
     """
@@ -932,7 +941,7 @@ def matcher(txn, event_id_iterator, query_items: tuple, stats: dict):
 
 
 @functools.lru_cache()
-def compile_match_from_query(query_items):
+def compile_match_from_query(query_items: tuple):
     filter_clauses = set()
     for key, value in query_items:
         if key == "ids":
@@ -1023,7 +1032,7 @@ def execute_one_plan(
     """
     Run a single query plan, calling on_event for each event
     """
-    events = []
+    events: list[Event] = []
     on_event = events.append
     try:
         limit = plan.limit
@@ -1050,7 +1059,7 @@ def execute_one_plan(
         return plan, events
 
 
-def analysis_thread(work_queue, slow_query_threshold=500, delay=0.5):
+def analysis_thread(work_queue: SimpleQueue, slow_query_threshold=500, delay=0.5):
     from time import sleep
 
     log = logging.getLogger("nostr_relay.queries")
@@ -1065,7 +1074,7 @@ def analysis_thread(work_queue, slow_query_threshold=500, delay=0.5):
         del plans
 
 
-def _analyze(plans, log, slow_query_threshold=500):
+def _analyze(plans: QueryPlans, log: logging.Logger, slow_query_threshold=500):
     for plan in plans:
         log.debug("Executed plan. Stats: %s", plan.stats)
         stats = plan.stats
@@ -1094,7 +1103,7 @@ def _analyze(plans, log, slow_query_threshold=500):
 ANALYSIS_QUEUE = SimpleQueue()
 
 
-def analyze(plans, later=True, log=None):
+def analyze(plans: QueryPlans, later=True, log=None):
     """
     Analyze and log query stats from the completed task
     """
@@ -1115,7 +1124,7 @@ def analyze(plans, later=True, log=None):
 analyze.ANALYSIS_THREAD = None
 
 
-def encode_event(event):
+def encode_event(event: Event) -> bytes:
     row = (
         VERSION,
         event.id_bytes,
@@ -1129,7 +1138,7 @@ def encode_event(event):
     return packb(row, use_bin_type=True)
 
 
-def decode_event(data):
+def decode_event(data: tuple) -> Event:
     if data:
         assert data[0] == 1, "unknown version"
         event = Event(
@@ -1151,7 +1160,7 @@ def get_event_data(txn, event_id: bytes):
         return None
 
 
-def bytes_from_hex(hexstr: str):
+def bytes_from_hex(hexstr: str) -> bytes:
     try:
         return bytes.fromhex(hexstr)
     except ValueError:

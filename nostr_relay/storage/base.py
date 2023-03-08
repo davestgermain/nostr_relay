@@ -43,7 +43,7 @@ class BaseStorage:
         self.service_kind = 31494
 
     async def add_event(self, event_json: dict, auth_token=None):
-        raise NotImplentedError()
+        raise NotImplementedError()
 
     async def close(self):
         pass
@@ -321,7 +321,7 @@ class BaseSubscription:
         self.query_task = asyncio.create_task(self.run_query())
 
     async def run_query(self):
-        raise NotImplentedError()
+        raise NotImplementedError()
 
     async def notify(self, event):
         # every time an event is added, all subscribers are notified.
