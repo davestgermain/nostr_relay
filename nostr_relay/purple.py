@@ -135,6 +135,7 @@ def serve(config):
         return -1
     sock = socket.socket()
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sock.set_inheritable(True)
     sock.bind((opts["host"], opts["port"]))
     should_exit = threading.Event()
