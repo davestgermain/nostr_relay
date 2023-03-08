@@ -891,7 +891,7 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             query_items,
             best_index,
             matches,
-            query.limit,
+            min(query.limit, default_limit),
             query.since,
             query.until,
             {},

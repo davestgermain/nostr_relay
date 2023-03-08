@@ -378,9 +378,7 @@ class NostrQuery(BaseModel):
     kinds: typing.Optional[list[int]]
     since: typing.Optional[int] = Field(ge=0, lt=2145934800)
     until: typing.Optional[int] = Field(ge=0, lt=2145934800)
-    limit: typing.Optional[int] = Field(
-        ge=0, le=Config.max_limit, default=Config.max_limit
-    )
+    limit: typing.Optional[int] = Field(ge=0, default=Config.max_limit)
     search: typing.Optional[str]
     tags: typing.Optional[list[tuple[str, set]]]
 

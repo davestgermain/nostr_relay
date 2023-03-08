@@ -659,7 +659,7 @@ class Subscription(BaseSubscription):
             else:
                 where.add("false")
             if filter_obj.limit:
-                limit = filter_obj.limit
+                limit = min(filter_obj.limit, Config.max_limit)
             new_filters.append(filter_obj)
         if where:
             select += " WHERE (\n\t"
