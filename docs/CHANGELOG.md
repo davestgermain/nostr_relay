@@ -3,8 +3,10 @@
 ## 1.12
 
 * Added [full-text index](fulltext.md), compatible with NIP-50
+* Added the `purple` server – the fastest way to serve nostr websockets. See [Performance](performance.md)
 * Added validator to limit "hellthreads": `is_not_hellthread`. Configure `hellthread_limit` to number of tags
 * Enabled NIP-05 identity provider for LMDB backend
+* Made many micro-optimizations to the LMDB backend and json handling. See [Performance](performance.md)
 * Improve compatibility with python < 3.11
 * Consolidated and improved query validation
 

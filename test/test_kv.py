@@ -28,6 +28,7 @@ class BaseLMDBTests(BaseTestsWithStorage):
             "path": self.envdir,
         }
         Config.garbage_collector = self.garbage_collector
+        Config.analysis_delay = 0.0
         self.storage = kv.LMDBStorage(Config.storage)
         await self.storage.setup()
 
@@ -113,10 +114,12 @@ class LMDBStorageTests(BaseLMDBTests):
         assert 6 == len(results)
         with self.assertLogs("nostr_relay", level="INFO") as cm:
             await self.get_events([{}])
-            assert ["INFO:nostr_relay.kvquery:No range scans allowed ()"] == cm.output
+            assert ["INFO:nostr_relay.storage.kv:No empty queries allowed"] == cm.output
         with self.assertLogs("nostr_relay", level="INFO") as cm:
             await self.get_events([{"foo": 1}])
-            assert ["INFO:nostr_relay.kvquery:No range scans allowed ()"] == cm.output
+            assert [
+                "INFO:nostr_relay.storage.kv:No range scans allowed ()"
+            ] == cm.output
 
     async def test_good_query_plan(self):
         now = int(time.time())
@@ -291,7 +294,7 @@ class LMDBStorageTests(BaseLMDBTests):
         found = await self.get_events(query)
         assert 3 == len(found)
 
-        query = {"authors": ["1a0e8"], "since": 1676678130}
+        query = {"authors": ["1A0E8"], "since": 1676678130}
         found = await self.get_events(query)
         assert 7 == len(found)
 
@@ -316,9 +319,7 @@ class LMDBStorageTests(BaseLMDBTests):
         ]
         plan = kv.planner(query, log=self.storage.log)[0]
 
-        results = []
-        kv.execute_one_plan(self.storage.db, plan, results.append, log=self.storage.log)
-
+        plan, results = kv.execute_one_plan(self.storage.db, plan, log=self.storage.log)
         assert event["id"] == results[0].id
 
     async def test_date_scan(self):
@@ -529,6 +530,7 @@ class LMDBStorageTests(BaseLMDBTests):
             {"kinds": [], "authors": [""]},
             {"kinds": [None], "authors": [None]},
             {"kinds": [None]},
+            {"ids": ["ABC"]},
         ]
         for query in queries:
             print(query)
@@ -654,7 +656,7 @@ class FTSTests(BaseLMDBTests):
         assert 1 == len(results)
 
         await self.storage.delete_event(old_event["id"])
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         query = {"search": "hello earlier"}
         results = await self.get_events(query)
         assert 0 == len(results)

@@ -17,7 +17,8 @@ from ..util import (
     object_from_path,
     catchtime,
     Periodic,
-    json,
+    json_dumps,
+    json_loads,
 )
 from . import get_metadata
 from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
@@ -36,6 +37,21 @@ def validate_id(obj_id):
         obj_id = obj_id.translate(force_hex_translation)
         return obj_id
     return ""
+
+
+def event_from_tuple(row):
+    tags = row[4]
+    if isinstance(tags, str):
+        tags = json_loads(tags)
+    return Event(
+        id=row[0].hex(),
+        created_at=row[1],
+        kind=row[2],
+        pubkey=row[3].hex(),
+        tags=tags,
+        sig=row[5].hex(),
+        content=row[6],
+    )
 
 
 class DBStorage(BaseStorage):
@@ -120,8 +136,8 @@ class DBStorage(BaseStorage):
 
         self.db = create_async_engine(
             self.db_url,
-            json_deserializer=json.loads,
-            json_serializer=json.dumps,
+            json_deserializer=json_loads,
+            json_serializer=json_dumps,
             pool_pre_ping=True,
             **self.sqlalchemy_options,
         )
@@ -164,7 +180,7 @@ class DBStorage(BaseStorage):
                 )
                 row = result.first()
         if row:
-            return Event.from_tuple(row)
+            return event_from_tuple(row)
 
     async def delete_event(self, event_id):
         async with self.db.begin() as conn:
@@ -355,7 +371,7 @@ class DBStorage(BaseStorage):
                     async with self.db.connect() as conn:
                         async with conn.stream(query) as result:
                             async for row in result:
-                                yield Event.from_tuple(row)
+                                yield event_from_tuple(row)
                                 counter["count"] += 1
             duration = counter["duration"]
             if duration > 1.0 and if_long:
@@ -449,7 +465,7 @@ class DBStorage(BaseStorage):
             elif not (validate_id(pubkey) and len(pubkey) == 64):
                 raise StorageError("invalid public key")
             else:
-                pars = [identifier, pubkey, json.dumps(relays or [])]
+                pars = [identifier, pubkey, json_dumps(relays or [])]
                 await conn.execute(
                     sa.delete(self.IdentTable).where(
                         self.IdentTable.c.identifier == identifier
@@ -536,7 +552,7 @@ class Subscription(BaseSubscription):
                 "nostr_relay.long-queries"
             ).warning(
                 f"{self.client_id}/{self.sub_id} Long query: '{self.filters}' took %dms",
-                duration,
+                duration * 1000,
             ),
         )
         if check_output:
@@ -608,9 +624,9 @@ class Subscription(BaseSubscription):
         if filter_obj.until is not None:
             subwhere.append("created_at < %d" % filter_obj.until)
         if filter_obj.tags:
-            for tagname, tags in filter_obj.tags.items():
+            for tagname, tags in filter_obj.tags:
                 pstr = []
-                for val in set(tags):
+                for val in tags:
                     if val:
                         val = val.replace("'", "''")
                         pstr.append(f"'{val}'")
@@ -641,7 +657,7 @@ class Subscription(BaseSubscription):
                 where.add(subwhere)
             else:
                 where.add("false")
-            if "limit" in filter_obj:
+            if filter_obj.limit:
                 limit = filter_obj.limit
             new_filters.append(filter_obj)
         if where:

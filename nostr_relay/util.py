@@ -3,20 +3,43 @@ import importlib
 import statistics
 import collections
 import logging
+import json
 
 from contextlib import contextmanager, asynccontextmanager, suppress
 from time import perf_counter
-
-try:
-    import rapidjson as json
-except ImportError:
-    import json
-
 
 if hasattr(asyncio, "timeout"):
     timeout = asyncio.timeout
 else:
     from async_timeout import timeout
+
+encode_basestring = json.encoder.encode_basestring
+
+try:
+    import rapidjson
+
+    json_dumps = rapidjson.Encoder(ensure_ascii=False, indent=0).__call__
+    json_loads = rapidjson.Decoder().__call__
+    JSONDecodeError = rapidjson.JSONDecodeError
+except ImportError:
+    _default_encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+    json_dumps = _default_encoder.encode
+    json_loads = json.loads
+    JSONDecodeError = json.JSONDecodeError
+
+
+def event_as_json(sub_id, event):
+    """
+    Optimized function for returning event subscription json
+    """
+    if event.tags:
+        tags = ",".join(
+            f"""[{",".join((encode_basestring(i) if isinstance(i, str) else str(i)) for i in t)}]"""
+            for t in event.tags
+        )
+    else:
+        tags = ""
+    return f'["EVENT","{sub_id}",{{"id":"{event.id}","created_at":{event.created_at},"pubkey":"{event.pubkey}","kind":{event.kind},"sig":"{event.sig}","content":{encode_basestring(event.content)},"tags":[{tags}]}}]'
 
 
 class catchtime:
@@ -176,3 +199,5 @@ def easy_profiler():
     # ps.print_stats("nostr_relay")
     ps.print_stats()
     print(s.getvalue())
+    s.close()
+    del pr

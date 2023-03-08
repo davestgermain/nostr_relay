@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timedelta
 
 from .errors import VerificationError
-from .util import Periodic, timeout, json
+from .util import Periodic, timeout, json_loads, json_dumps
 
 
 class Verifier(Periodic):
@@ -43,7 +43,7 @@ class Verifier(Periodic):
     async def update_metadata(self, event):
         # metadata events are evaluated as candidates
         try:
-            meta = json.loads(event.content)
+            meta = json_loads(event.content)
         except Exception:
             self.log.exception("bad metadata")
         else:
@@ -176,7 +176,7 @@ class Verifier(Periodic):
         import aiohttp
 
         return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=10.0), json_serialize=json.dumps
+            timeout=aiohttp.ClientTimeout(total=10.0), json_serialize=json_dumps
         )
 
     async def process_verifications(self, candidates):
@@ -217,7 +217,7 @@ class Verifier(Periodic):
             async with session.get(url) as response:
                 # content_type=None will not check for the correct content-type
                 # lots of nostr.json files seem to be served with wrong types
-                data = await response.json(loads=json.loads, content_type=None)
+                data = await response.json(loads=json_loads, content_type=None)
             names = data["names"]
             assert isinstance(names, dict)
         except Exception as e:

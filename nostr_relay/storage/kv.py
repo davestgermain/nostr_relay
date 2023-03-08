@@ -14,7 +14,7 @@ import os.path
 
 from contextlib import contextmanager
 from queue import SimpleQueue
-from time import perf_counter, time
+from time import perf_counter, time, sleep
 
 from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
@@ -180,8 +180,9 @@ class Index:
                     elif key < stop:
                         break
 
-                    if key[-32:] in events:
-                        yield key[-32:]
+                    event_id = key[-32:]
+                    if event_id in events:
+                        yield event_id
                     if not prev():
                         break
                     key = bytes(get_key())
@@ -556,12 +557,16 @@ class WriterThread(threading.Thread):
                             counter["count"] += 1
 
 
+def _init_dbenv(options):
+    globals()["LMDB_ENV"] = lmdb.open(**options)
+
+
 class LMDBStorage(BaseStorage):
     DEFAULT_GARBAGE_COLLECTOR = "nostr_relay.storage.kv.KVGarbageCollector"
 
     def __init__(self, options):
         super().__init__(options)
-        pool_size = self.options.pop("pool_size", 20)
+        pool_size = self.options.pop("pool_size", 8)
         self.options.pop("class")
         # set this to the number of read threads
         self.options.setdefault("max_spare_txns", pool_size)
@@ -639,21 +644,20 @@ class LMDBStorage(BaseStorage):
         )
         full_count = 0
         while True:
-            task, events = executor(
-                self.db, [query], default_limit=batch_size, pool=self.query_pool
-            )
-            await task
-            while self.writer_queue.qsize() >= 1:
-                await asyncio.sleep(2.0)
-            self.writer_queue.put(("bulk_update", [index_name, events]))
-            full_count += len(events)
-            self.log.info(
-                "Bulk updating %s index. batch size: %d/%d count: %d",
-                index_name,
-                len(events),
-                batch_size,
-                full_count,
-            )
+            async for plan, events in executor(
+                self.db, [query], self.query_pool, default_limit=batch_size
+            ):
+                while self.writer_queue.qsize() >= 1:
+                    await asyncio.sleep(2.0)
+                self.writer_queue.put(("bulk_update", [index_name, events]))
+                full_count += len(events)
+                self.log.info(
+                    "Bulk updating %s index. batch size: %d/%d count: %d",
+                    index_name,
+                    len(events),
+                    batch_size,
+                    full_count,
+                )
             if len(events) == batch_size:
                 query["until"] = events[-1].created_at + 2
             else:
@@ -669,14 +673,15 @@ class LMDBStorage(BaseStorage):
     async def run_single_query(self, filters):
         if isinstance(filters, dict):
             filters = [filters]
-        task, events = executor(
-            self.db, filters, default_limit=600000, pool=self.query_pool
-        )
-        await task
-        for event in events:
-            if event is not None:
-                yield event
-        analyze(task, loop=self.loop, pool=self.query_pool)
+        plans = []
+        async for plan, events in executor(
+            self.db, filters, self.query_pool, default_limit=600000, log=self.log
+        ):
+            for event in events:
+                if event is not None:
+                    yield event
+            plans.append(plan)
+        analyze(plans, log=self.log)
 
     async def get_stats(self):
         stats = {}
@@ -702,20 +707,17 @@ class Subscription(BaseSubscription):
     async def run_query(self):
         check_output = self.storage.check_output
         sub_id = self.sub_id
-        queue = self.queue
+        queue_put = self.queue.put
         with self.storage.stat_collector.timeit("query") as counter:
-            task, events = executor(
+            plans = []
+            iterator = executor(
                 self.storage.db,
                 self.query,
-                loop=self.storage.loop,
+                self.storage.query_pool,
                 default_limit=self.default_limit,
                 log=self.log,
-                pool=self.storage.query_pool,
+                loop=self.storage.loop,
             )
-
-            # we could start consuming events before all queries are complete,
-            # but it creates more complexity and is actually slower because of thread contention
-            await task
             try:
                 if check_output:
                     context = {
@@ -723,19 +725,23 @@ class Subscription(BaseSubscription):
                         "client_id": self.client_id,
                         "auth_token": self.auth_token,
                     }
-                    for event in events:
-                        if check_output(event, context):
-                            await queue.put((sub_id, event))
-                            counter["count"] += 1
+                    async for plan, events in iterator:
+                        for event in events:
+                            if check_output(event, context):
+                                await queue_put((sub_id, event))
+                                counter["count"] += 1
+                        plans.append(plan)
                 else:
-                    for event in events:
-                        await queue.put((sub_id, event))
-                        counter["count"] += 1
+                    async for plan, events in iterator:
+                        for event in events:
+                            await queue_put((sub_id, event))
+                            counter["count"] += 1
+                        plans.append(plan)
             except:
                 self.log.exception("run_query")
             finally:
-                await queue.put((sub_id, None))
-                analyze(task, loop=self.storage.loop, pool=self.storage.query_pool)
+                await queue_put((sub_id, None))
+                analyze(plans)
 
         self.log.debug("Done with query")
 
@@ -787,16 +793,17 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
             plans.append(query)
             continue
         elif not isinstance(query, NostrQuery):
+            if not query:
+                if log:
+                    log.info("No empty queries allowed")
+                continue
             try:
                 query = NostrQuery.parse_obj(query)
             except ValidationError as e:
                 if log:
                     log.info("invalid query %s", e)
                 continue
-        if not query:
-            if log:
-                log.info("No empty queries allowed")
-            continue
+
         query_items = []
 
         if query.since is not None:
@@ -808,21 +815,21 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
         best_index = MultiIndex()
         has_authors = has_kinds = False
         if query.ids is not None:
-            ids = tuple(sorted(query.ids, reverse=True))
+            ids = tuple(query.ids)
             if ids:
                 query_items.append(("ids", ids))
                 best_index.add("ids", ids)
             else:
                 continue
         if query.kinds is not None:
-            kinds = tuple(sorted(query.kinds, reverse=True))
+            kinds = tuple(query.kinds)
             if kinds:
                 query_items.append(("kinds", kinds))
                 has_kinds = True
             else:
                 continue
         if query.authors is not None:
-            authors = tuple(sorted(query.authors, reverse=True))
+            authors = tuple(query.authors)
             if authors:
                 query_items.append(("authors", authors))
                 has_authors = True
@@ -850,7 +857,7 @@ def planner(filters, default_limit=6000, log=None, maximum_plans=5):
 
         if query.tags:
             tags = set()
-            for tag, values in query.tags.items():
+            for tag, values in query.tags:
                 for val in values:
                     tags.add((tag, val))
                 query_items.append((tag, tuple(values)))
@@ -960,58 +967,48 @@ def check(et):
     return loc["check"]
 
 
-def executor(
+async def executor(
     lmdb_environment: lmdb.Environment,
     plans: list,
-    loop=None,
+    pool,
     default_limit=6000,
     log=None,
-    pool=None,
+    loop=None,
 ):
     """
     Execute one or several queries.
-    Returns (future, event_list)
-    await the future before accessing the list
+    Returns iterator of (plan, events)
     """
     log = log or logging.getLogger("nostr_relay.kvquery")
 
     if not isinstance(plans, QueryPlans):
         plans = planner(plans, default_limit=default_limit, log=log)
-    loop = loop or asyncio.get_running_loop()
-
-    try:
-        # collections.deque is threadsafe for appends and pops
-        # and faster than using a Queue
-        events = collections.deque()
-
-        tasks = [
-            loop.run_in_executor(
-                pool,
-                execute_one_plan,
-                lmdb_environment,
-                plan,
-                events.append,
-                log,
+    if len(plans) == 1:
+        fut = asyncio.wrap_future(
+            pool.submit(execute_one_plan, lmdb_environment, plans[0], log), loop=loop
+        )
+        await fut
+        yield fut.result()
+    else:
+        submitted = [
+            asyncio.wrap_future(
+                pool.submit(execute_one_plan, lmdb_environment, plan, log), loop=loop
             )
             for plan in plans
         ]
-
-        if len(tasks) == 1:
-            task = tasks[0]
-        else:
-            task = asyncio.gather(*tasks)
-
-        return task, events
-    except:
-        log.exception("executor")
+        for fut in submitted:
+            await fut
+            yield fut.result()
 
 
 def execute_one_plan(
-    lmdb_environment: lmdb.Environment, plan: QueryPlan, on_event, log
+    lmdb_environment: lmdb.Environment, plan: QueryPlan, log: logging.Logger
 ):
     """
     Run a single query plan, calling on_event for each event
     """
+    events = []
+    on_event = events.append
     try:
         limit = plan.limit
         count = 0
@@ -1034,25 +1031,30 @@ def execute_one_plan(
         log.exception("execute_one_plan")
 
     finally:
-        return plan, log
+        return plan, events
 
 
-SLOW_QUERY_THRESHOLD = 500
+def analysis_thread(work_queue, slow_query_threshold=500, delay=0.5):
+    from time import sleep
+
+    log = logging.getLogger("nostr_relay.queries")
+    while True:
+        plans = work_queue.get()
+
+        sleep(delay)
+        try:
+            _analyze(plans, log, slow_query_threshold=slow_query_threshold)
+        except:
+            log.exception("analyze")
+        del plans
 
 
-def _analyze(task):
-    result = task.result()
-    if not isinstance(result, list):
-        plans, log = [result[0]], result[1]
-
-    else:
-        plans, log = [r[0] for r in result], result[0][1]
-
+def _analyze(plans, log, slow_query_threshold=500):
     for plan in plans:
         log.debug("Executed plan. Stats: %s", plan.stats)
         stats = plan.stats
         duration = (stats["end"] - stats["start"]) * 1000  # milliseconds
-        if duration > SLOW_QUERY_THRESHOLD:
+        if duration > slow_query_threshold:
             log.info(
                 "Slowish query: %s since:%s until:%s – took %.2fms",
                 plan.query,
@@ -1073,12 +1075,28 @@ def _analyze(task):
                 )
 
 
-def analyze(task, loop=None, pool=None):
+ANALYSIS_QUEUE = SimpleQueue()
+
+
+def analyze(plans, later=True, log=None):
     """
     Analyze and log query stats from the completed task
     """
-    loop = loop or asyncio.get_running_loop()
-    loop.run_in_executor(pool, _analyze, task)
+    if later:
+        if analyze.ANALYSIS_THREAD is None:
+            analyze.ANALYSIS_THREAD = threading.Thread(
+                target=analysis_thread,
+                args=(ANALYSIS_QUEUE,),
+                kwargs={"delay": Config.get("analysis_delay", 0.5)},
+            )
+            analyze.ANALYSIS_THREAD.daemon = True
+            analyze.ANALYSIS_THREAD.start()
+        ANALYSIS_QUEUE.put(plans)
+    else:
+        _analyze(plans, log)
+
+
+analyze.ANALYSIS_THREAD = None
 
 
 def encode_event(event):
