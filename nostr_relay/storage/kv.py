@@ -750,6 +750,9 @@ class Subscription(BaseSubscription):
                             await queue_put((sub_id, event))
                             counter["count"] += 1
                         plans.append(plan)
+            except asyncio.exceptions.CancelledError:
+                # cancellations are normal
+                self.log.debug("Cancelled run_query")
             except:
                 self.log.exception("run_query")
             finally:
