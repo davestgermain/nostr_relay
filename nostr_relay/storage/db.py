@@ -537,7 +537,7 @@ class Subscription(BaseSubscription):
                 "nostr_relay.long-queries"
             ).warning(
                 f"{self.client_id}/{self.sub_id} Long query: '{self.filters}' took %dms",
-                duration,
+                duration * 1000,
             ),
         )
         if check_output:
@@ -642,7 +642,7 @@ class Subscription(BaseSubscription):
                 where.add(subwhere)
             else:
                 where.add("false")
-            if "limit" in filter_obj:
+            if filter_obj.limit:
                 limit = filter_obj.limit
             new_filters.append(filter_obj)
         if where:
