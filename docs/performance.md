@@ -1,5 +1,7 @@
 # Performance
 
+nostr-relay is designed to be performant and scalable "out of the box". The default configuration can support hundreds of connections, serving about 100 requests per second. But the default sqlite storage backend offers the worst performance (because the aiosqlite driver is not optimized for async access). With a few configuration changes, you can greatly increase throughput.
+
 Here are some tips for squeezing the most performance out of nostr-relay:
 
 ## Use pypy
@@ -99,6 +101,12 @@ storage:
   sqlalchemy.pool_size: 4
   num_concurrent_reqs: 10
   num_concurrent_adds: 10
+```
+
+Then, be sure to run with the purple server:
+
+```console
+nostr-relay -c config.yaml serve --use-purple
 ```
 
 
