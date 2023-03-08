@@ -155,11 +155,11 @@ class BaseStorage:
             )
 
     async def notify_all_connected(self, event):
-        # notify all subscriptions
-        if self._notify_sub_tasks:
-            await asyncio.wait(self._notify_sub_tasks)
-            self._notify_sub_tasks.clear()
         with self.stat_collector.timeit("notify") as counter:
+            # notify all subscriptions
+            if self._notify_sub_tasks:
+                await asyncio.wait(self._notify_sub_tasks)
+                self._notify_sub_tasks.clear()
             for client in self.clients.values():
                 for sub in client.values():
                     self._notify_sub_tasks.append(

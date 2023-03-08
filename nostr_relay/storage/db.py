@@ -572,10 +572,9 @@ class Subscription(BaseSubscription):
 
     def evaluate_filter(self, filter_obj, subwhere):
         if filter_obj.ids is not None:
-            ids = set(filter_obj.ids)
-            if ids:
+            if filter_obj.ids:
                 exact = []
-                for eid in ids:
+                for eid in filter_obj.ids:
                     if len(eid) == 64:
                         if self.is_postgres:
                             exact.append(f"'\\x{eid}'")
