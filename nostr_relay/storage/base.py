@@ -391,11 +391,13 @@ class NostrQuery(BaseModel):
             raise ValueError("too small")
         return hexid
 
-    @validator("tags", each_item=True)
-    def check_tags(cls, tagvalue):
-        if not isinstance(tagvalue[1], str):
-            raise ValueError("tags must be strings")
-        return tagvalue
+    @validator("tags")
+    def check_tags(cls, values):
+        for tag, tagvalue in values:
+            for val in tagvalue:
+                if not isinstance(val, str):
+                    raise ValueError(f"{val} is not a string")
+        return values
 
     @validator("ids", "authors", "kinds")
     def sort_fields(cls, values):
