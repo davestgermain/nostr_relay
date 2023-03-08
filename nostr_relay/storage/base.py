@@ -386,9 +386,9 @@ class NostrQuery(BaseModel):
     def ids_are_hex(cls, hexid, field, **kwargs):
         hexid = hexid.lower()
         if any(i not in "abcdef0123456789" for i in hexid):
-            raise ValueError("not hex")
+            raise ValueError(f"{hexid} not hex")
         if len(hexid) < 2:
-            raise ValueError(f"{hexid} too small")
+            raise ValueError(f"'{hexid}' too small")
         return hexid
 
     @validator("tags")

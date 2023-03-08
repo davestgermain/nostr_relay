@@ -1,5 +1,9 @@
 # CHANGES
 
+## 1.12.2
+
+* Improved efficiency by keeping all client variables local
+
 ## 1.12.1
 
 * Added a demo mode: `nostr-relay --try-fast`

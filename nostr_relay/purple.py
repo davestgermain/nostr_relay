@@ -6,6 +6,7 @@ Currently, the implementation uses the `websockets` library.
 """
 
 import asyncio
+import gc
 import collections
 import multiprocessing
 import socket
@@ -97,6 +98,8 @@ async def main(config, sock=None):
                 del client
                 counters["clients"] -= 1
                 counters["served"] += 1
+                if counters["clients"] % 100 == 0:
+                    gc.collect()
 
         log.info("Starting server...")
         async with websockets.serve(nostr_api, **kwargs):

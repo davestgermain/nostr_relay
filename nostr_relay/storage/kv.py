@@ -573,7 +573,7 @@ class LMDBStorage(BaseStorage):
         pool_size = self.options.pop("pool_size", 8)
         self.options.pop("class")
         # set this to the number of read threads
-        self.options.setdefault("max_spare_txns", pool_size)
+        self.options.setdefault("max_spare_txns", pool_size + 1)
         self.log = logging.getLogger(__name__)
         self.subscription_class = Subscription
         self.db = None
