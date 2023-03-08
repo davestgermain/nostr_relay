@@ -35,6 +35,13 @@ gunicorn:
   reload: false
 
 
+purple:
+  host: 127.0.0.1
+  port: 6969
+  workers: 1
+  disable_compression: true
+
+
 # see docs/authentication.md
 authentication:
   enabled: false
@@ -59,3 +66,5 @@ max_limit: 6000
 
 # set this to the maximum number of "p" tags in an event
 hellthread_limit: 100
+
+

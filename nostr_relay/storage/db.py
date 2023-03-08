@@ -39,6 +39,21 @@ def validate_id(obj_id):
     return ""
 
 
+def event_from_tuple(row):
+    tags = row[4]
+    if isinstance(tags, str):
+        tags = json_loads(tags)
+    return Event(
+        id=row[0].hex(),
+        created_at=row[1],
+        kind=row[2],
+        pubkey=row[3].hex(),
+        tags=tags,
+        sig=row[5].hex(),
+        content=row[6],
+    )
+
+
 class DBStorage(BaseStorage):
     DEFAULT_GARBAGE_COLLECTOR = "nostr_relay.storage.db.QueryGarbageCollector"
 
@@ -165,7 +180,7 @@ class DBStorage(BaseStorage):
                 )
                 row = result.first()
         if row:
-            return Event.from_tuple(row)
+            return event_from_tuple(row)
 
     async def delete_event(self, event_id):
         async with self.db.begin() as conn:
@@ -356,7 +371,7 @@ class DBStorage(BaseStorage):
                     async with self.db.connect() as conn:
                         async with conn.stream(query) as result:
                             async for row in result:
-                                yield Event.from_tuple(row)
+                                yield event_from_tuple(row)
                                 counter["count"] += 1
             duration = counter["duration"]
             if duration > 1.0 and if_long:

@@ -42,6 +42,9 @@ class ConfigClass:
                 }
             },
             "loggers": {
+                "websockets.server": {
+                    "level": "WARNING",
+                },
                 "sqlalchemy.engine": {
                     "level": "WARNING",
                 },
