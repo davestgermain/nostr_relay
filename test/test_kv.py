@@ -529,6 +529,8 @@ class LMDBStorageTests(BaseLMDBTests):
             {"kinds": [None], "authors": [None]},
             {"kinds": [None]},
             {"ids": ["ABC"]},
+            {"#t": ["test", None, 1]},
+            {"#t": 12},
         ]
         for query in queries:
             print(query)

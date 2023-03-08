@@ -391,6 +391,12 @@ class NostrQuery(BaseModel):
             raise ValueError("too small")
         return hexid
 
+    @validator("tags", each_item=True)
+    def check_tags(cls, tagvalue):
+        if not isinstance(tagvalue[1], str):
+            raise ValueError("tags must be strings")
+        return tagvalue
+
     @validator("ids", "authors", "kinds")
     def sort_fields(cls, values):
         return sorted(set(values), reverse=True)
@@ -402,7 +408,7 @@ class NostrQuery(BaseModel):
         tags = []
         try:
             for k, v in obj.items():
-                if k.startswith("#") and len(k) == 2:
+                if k.startswith("#") and len(k) == 2 and isinstance(v, list):
                     tags.append((k[1], set(v)))
             tags.sort(reverse=True)
         except AttributeError as e:
