@@ -454,6 +454,7 @@ class WriterThread(threading.Thread):
         self.stat_collector = stat_collector
         self.queue = SimpleQueue()
         self.write_indexes = [i for i in INDEXES.values() if i.enabled]
+        self.processing = False
 
     def run(self):
         env = self.env
@@ -464,6 +465,7 @@ class WriterThread(threading.Thread):
 
         while self.running:
             task = qget()
+            self.processing = True
             if task is None:
                 break
             operation, args = task
@@ -498,6 +500,8 @@ class WriterThread(threading.Thread):
                     log.warning("Write queue size: %d", qs)
             except Exception as e:
                 log.exception("writer")
+            finally:
+                self.processing = False
 
     def _delete_event(self, txn, event, log):
         for index in reversed(self.write_indexes):
@@ -557,11 +561,11 @@ class WriterThread(threading.Thread):
                             counter["count"] += 1
 
 
-def _init_dbenv(options):
-    globals()["LMDB_ENV"] = lmdb.open(**options)
-
-
 class LMDBStorage(BaseStorage):
+    """
+    LMDB Storage backend
+    """
+
     DEFAULT_GARBAGE_COLLECTOR = "nostr_relay.storage.kv.KVGarbageCollector"
 
     def __init__(self, options):
@@ -596,6 +600,15 @@ class LMDBStorage(BaseStorage):
         self.writer_thread = WriterThread(self.db, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
+
+    async def wait_for_writer(self):
+        """
+        Wait for the writer thread to be idle.
+        ONLY USE THIS FOR TESTING
+        """
+        await asyncio.sleep(0.1)
+        while self.writer_thread.processing or not self.writer_queue.empty():
+            await asyncio.sleep(0.1)
 
     def write_tombstone(self):
         """

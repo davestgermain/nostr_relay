@@ -21,7 +21,7 @@ from ..util import (
     json_loads,
 )
 from . import get_metadata
-from .base import BaseStorage, BaseSubscription, BaseGarbageCollector
+from .base import BaseStorage, BaseSubscription, BaseGarbageCollector, NostrQuery
 
 
 force_hex_translation = str.maketrans(
@@ -355,9 +355,10 @@ class DBStorage(BaseStorage):
         """
         Run a single query, yielding json events
         """
+        nostr_queries = [NostrQuery.parse_obj(q) for q in query_filters]
         queue = asyncio.Queue()
         sub = self.subscription_class(
-            self, "", query_filters, queue=queue, default_limit=600000
+            self, "", nostr_queries, queue=queue, default_limit=600000
         )
         if sub.prepare():
             async for event in self.run_query(sub.query):
@@ -650,7 +651,7 @@ class Subscription(BaseSubscription):
                 filter_obj = self.evaluate_filter(filter_obj, subwhere)
             except ValueError:
                 self.log.debug("bad query %s", filter_obj)
-                filter_obj = {}
+                filter_obj = NostrQuery()
                 subwhere = []
             if subwhere:
                 subwhere = " AND ".join(subwhere)

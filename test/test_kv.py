@@ -74,8 +74,7 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(PK1, kind=1, content="test_get_event")
         result = await self.storage.add_event(event)
 
-        # adding event returns before queue completes
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
 
@@ -95,7 +94,7 @@ class LMDBStorageTests(BaseLMDBTests):
             )
             await self.storage.add_event(event)
 
-        await asyncio.sleep(0.4)
+        await self.storage.wait_for_writer()
         query = {"kinds": [1]}
         results = []
         async for event in self.storage.run_single_query(query):
@@ -142,7 +141,7 @@ class LMDBStorageTests(BaseLMDBTests):
                 tags=[["t", "bazbar"]],
             )
             await self.storage.add_event(event)
-        await asyncio.sleep(0.4)
+        await self.storage.wait_for_writer()
 
         query = {
             "kinds": [1, 4],
@@ -155,7 +154,7 @@ class LMDBStorageTests(BaseLMDBTests):
                 assert 1 == event.kind
                 results.append(event)
             assert 10 == len(results)
-            await asyncio.sleep(0.4)
+            await self.storage.wait_for_writer()
 
     async def test_subscription(self):
         now = int(time.time())
@@ -187,7 +186,7 @@ class LMDBStorageTests(BaseLMDBTests):
         )
         await self.storage.add_event(event)
 
-        await asyncio.sleep(0.5)
+        await self.storage.wait_for_writer()
         query = [
             {
                 "kinds": [1, 2, 3, 4, 5],
@@ -288,7 +287,7 @@ class LMDBStorageTests(BaseLMDBTests):
 
         for event in events:
             await self.storage.add_event(event)
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         query = {"ids": ["02"]}
         found = await self.get_events(query)
@@ -312,7 +311,7 @@ class LMDBStorageTests(BaseLMDBTests):
         )
         await self.storage.add_event(event)
 
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         query = [
             {"#p": ["5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"]}
@@ -330,7 +329,7 @@ class LMDBStorageTests(BaseLMDBTests):
             )
             # print(event['pubkey'])
             await self.storage.add_event(event)
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         results = []
 
@@ -369,13 +368,12 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(PK1, kind=1, content="test_delete_event")
         result = await self.storage.add_event(event)
 
-        # adding event returns before queue completes
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
 
         await self.storage.delete_event(event["id"])
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         retrieved = await self.storage.get_event(event["id"])
         assert None is retrieved
@@ -384,13 +382,13 @@ class LMDBStorageTests(BaseLMDBTests):
             PK1, kind=1, content="test_delete_event", created_at=int(time.time() - 10)
         )
         result = await self.storage.add_event(again)
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         assert (await self.storage.get_event(again["id"])).id == again["id"]
         # send a delete event
         del_event = self.make_event(PK1, kind=5, tags=[["e", again["id"]]])
         result = await self.storage.add_event(del_event)
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         assert (await self.storage.get_event(again["id"])) is None
 
@@ -400,13 +398,13 @@ class LMDBStorageTests(BaseLMDBTests):
             PK1, kind=10000, content="test_replaceable_event 1", created_at=now - 10
         )
         result = await self.storage.add_event(event)
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         replaced = self.make_event(
             PK1, kind=10000, content="test_replaceable_event 2", created_at=now
         )
         result = await self.storage.add_event(replaced)
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
 
         old_event = await self.storage.get_event(event["id"])
         assert old_event is None
@@ -458,7 +456,7 @@ class LMDBStorageTests(BaseLMDBTests):
         } == idp
 
         await self.storage.set_identified_pubkey("test@falconframework.org", "")
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
         idp = await self.storage.get_identified_pubkey("test@falconframework.org")
         assert {
             "names": {},
@@ -469,7 +467,7 @@ class LMDBStorageTests(BaseLMDBTests):
         async with self.storage:
             hello = self.make_event(PK1)
             await self.storage.add_event(hello)
-            await asyncio.sleep(0.3)
+            await self.storage.wait_for_writer()
             event = await self.storage.get_event(hello["id"])
         assert self.storage.db is None
 
@@ -482,7 +480,7 @@ class LMDBStorageTests(BaseLMDBTests):
         await self.storage.set_auth_roles(
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d", "rw"
         )
-        await asyncio.sleep(0.1)
+        await self.storage.wait_for_writer()
         roles = await self.storage.get_auth_roles(
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
         )
@@ -490,7 +488,7 @@ class LMDBStorageTests(BaseLMDBTests):
         await self.storage.set_auth_roles(
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394a", "r"
         )
-        await asyncio.sleep(0.1)
+        await self.storage.wait_for_writer()
         all_roles = []
         async for pubkey, roles in self.storage.get_all_auth_roles():
             all_roles.append((pubkey, roles))
@@ -516,7 +514,7 @@ class LMDBStorageTests(BaseLMDBTests):
             await self.storage.add_event(added)
             if first is None:
                 first = added
-        await asyncio.sleep(0.4)
+        await self.storage.wait_for_writer()
 
         queries = [
             {"authors": ["garbage"]},
@@ -552,7 +550,7 @@ class KVGCTests(BaseLMDBTests):
             )
             await self.storage.add_event(event)
 
-        await asyncio.sleep(0.2)
+        await self.storage.wait_for_writer()
         results = []
         async for event in self.storage.run_single_query({"kinds": [22222]}):
             assert event.kind == 22222
@@ -592,7 +590,7 @@ class KVGCTests(BaseLMDBTests):
             await self.storage.add_event(event1)
             await self.storage.add_event(event2)
             await self.storage.add_event(event3)
-            await asyncio.sleep(0.2)
+            await self.storage.wait_for_writer()
             results = []
             async for event in self.storage.run_single_query({"kinds": [1]}):
                 assert event.kind == 1
@@ -642,7 +640,7 @@ class FTSTests(BaseLMDBTests):
             created_at=1676678135,
         )
         await self.storage.add_event(old_event)
-        await asyncio.sleep(0.4)
+        await self.storage.wait_for_writer()
         query = {"search": "hello", "since": 1676678140}
         results = await self.get_events(query)
         assert 3 == len(results)
@@ -656,7 +654,7 @@ class FTSTests(BaseLMDBTests):
         assert 1 == len(results)
 
         await self.storage.delete_event(old_event["id"])
-        await asyncio.sleep(0.3)
+        await self.storage.wait_for_writer()
         query = {"search": "hello earlier"}
         results = await self.get_events(query)
         assert 0 == len(results)
@@ -665,12 +663,12 @@ class FTSTests(BaseLMDBTests):
         import time
 
         await self.add_events()
-        await asyncio.sleep(0.5)
+        await self.storage.wait_for_writer()
 
         until = int(time.time()) + 10
         with self.assertLogs("nostr_relay", level="INFO") as cm:
             await self.storage.reindex("search", until=until)
-            await asyncio.sleep(1.0)
+            await self.storage.wait_for_writer()
         assert [
             f"INFO:nostr_relay.storage.kv:Starting reindex for search from 1 to {until}",
             "INFO:nostr_relay.storage.kv:Bulk updating search index. batch size: 4/500 count: 4",
@@ -681,4 +679,4 @@ class FTSTests(BaseLMDBTests):
             # "DEBUG:nostr_relay.fts:Indexed 3ec01a9a03b9dbae8c79559639633011514ed696374b40c8d862a0774a9db489",
         ] == cm.output
         await self.storage.reindex("kinds")
-        await asyncio.sleep(0.4)
+        # await self.storage.wait_for_writer()

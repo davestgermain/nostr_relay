@@ -85,7 +85,7 @@ class BaseStorage:
         """
         Return the first event from the query
         """
-        async for event in self.run_single_query([NostrQuery.parse_obj(query)]):
+        async for event in self.run_single_query([query]):
             return event
 
     async def subscribe(
@@ -106,6 +106,7 @@ class BaseStorage:
         except ValidationError as e:
             self.log.error(str(e))
             await queue.put((sub_id, None))
+            return
 
         sub = self.subscription_class(
             self,
@@ -358,7 +359,7 @@ class BaseSubscription:
             if query.tags:
                 for tagname, values in query.tags:
                     matched.add(all(event.has_tag(tagname, values)))
-            if all(matched):
+            if matched and all(matched):
                 return True
         return False
 
@@ -398,6 +399,8 @@ class NostrQuery(BaseModel):
 
     @classmethod
     def parse_obj(cls, obj):
+        if isinstance(obj, cls):
+            return obj
         tags = []
         try:
             for k, v in obj.items():
