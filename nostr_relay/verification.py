@@ -79,6 +79,9 @@ class Verifier(Periodic):
             return True
         elif event.pubkey == self.storage.service_pubkey:
             return True
+        elif event.kind == 10002:
+            # NIP-65 kinds are ok
+            return True
 
         if event.kind == 0:
             is_candidate = await self.update_metadata(event)

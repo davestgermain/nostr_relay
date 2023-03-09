@@ -32,6 +32,7 @@ from ..auth import get_authenticator
 from ..config import Config
 from ..errors import StorageError
 from ..validators import get_validator
+from ..verification import Verifier
 
 
 # ids: b'\x00<32 bytes of id>'
@@ -620,6 +621,8 @@ class LMDBStorage(BaseStorage):
         self.writer_thread = WriterThread(self.db, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
+        self.verifier = Verifier(self, Config.get("verification", {}))
+        await self.verifier.start(self.db)
 
     async def wait_for_writer(self):
         """
