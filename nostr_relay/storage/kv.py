@@ -267,7 +267,9 @@ class TagIndex(Index):
 
     def convert(self, event: Event):
         for tag in event.tags:
-            if len(tag[0]) == 1 or tag[0] in ("expiration", "delegation"):
+            if len(tag) >= 2 and (
+                len(tag[0]) == 1 or tag[0] in ("expiration", "delegation")
+            ):
                 yield self.to_key((tag[0], str(tag[1])))
 
 
@@ -533,7 +535,10 @@ class WriterThread(threading.Thread):
             saved_id = event.id_bytes
             until = event.created_at - 1
             if event.is_paramaterized_replaceable:
-                d_tag = [tag[1] for tag in event.tags if tag[0] == "d"][0]
+                try:
+                    d_tag = [tag[1] for tag in event.tags if tag[0] == "d"][0]
+                except IndexError:
+                    d_tag = None
             else:
                 d_tag = None
 
@@ -541,7 +546,7 @@ class WriterThread(threading.Thread):
             with INDEXES["authorkinds"].scanner(
                 txn,
                 [(event.pubkey, event.kind)],
-                until=until,
+                until=event.created_at,
             ) as scanner:
                 for event_id in scanner:
                     if event_id == saved_id:
@@ -555,7 +560,12 @@ class WriterThread(threading.Thread):
 
         elif event.kind == EventKind.DELETE:
             # delete the referenced events
-            ids = set((bytes_from_hex(tag[1]) for tag in event.tags if tag[0] == "e"))
+            try:
+                ids = set(
+                    (bytes_from_hex(tag[1]) for tag in event.tags if tag[0] == "e")
+                )
+            except IndexError:
+                ids = []
             if not ids:
                 return
             with INDEXES["authors"].scanner(
@@ -635,7 +645,7 @@ class LMDBStorage(BaseStorage):
     ) -> tuple[Event, bool]:
         """
         Add an event from json object
-        Return (status, event)
+        Return (event, status)
         """
         try:
             event = Event(**event_json)

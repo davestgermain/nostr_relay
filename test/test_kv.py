@@ -45,11 +45,17 @@ class BaseLMDBTests(BaseTestsWithStorage):
             results.append(event)
         return results
 
+    async def add_event(self, event, wait=True):
+        result = await self.storage.add_event(event)
+        if wait:
+            await self.storage.wait_for_writer()
+        return result
+
 
 class LMDBStorageTests(BaseLMDBTests):
     async def test_add_event(self):
         event = self.make_event(PK1, kind=1, content="hello world")
-        result = await self.storage.add_event(event)
+        result = await self.add_event(event)
         assert event["id"] == result[0].id
 
         event = self.make_event(
@@ -59,11 +65,11 @@ class LMDBStorageTests(BaseLMDBTests):
             created_at=int(time.time() - 10),
             tags=[["p", event["id"]], ["expiration", "12345"]],
         )
-        result = await self.storage.add_event(event)
+        result = await self.add_event(event)
         assert event["id"] == result[0].id
 
         event = self.make_event(PK1, kind=0, content="hello world 2")
-        result = await self.storage.add_event(event)
+        result = await self.add_event(event)
         assert event["id"] == result[0].id
 
     async def test_add_bad_events(self):
@@ -72,9 +78,8 @@ class LMDBStorageTests(BaseLMDBTests):
 
     async def test_get_event(self):
         event = self.make_event(PK1, kind=1, content="test_get_event")
-        result = await self.storage.add_event(event)
+        result = await self.add_event(event)
 
-        await self.storage.wait_for_writer()
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
 
@@ -184,9 +189,8 @@ class LMDBStorageTests(BaseLMDBTests):
                 ]
             ],
         )
-        await self.storage.add_event(event)
+        await self.add_event(event)
 
-        await self.storage.wait_for_writer()
         query = [
             {
                 "kinds": [1, 2, 3, 4, 5],
@@ -309,9 +313,7 @@ class LMDBStorageTests(BaseLMDBTests):
                 ]
             ],
         )
-        await self.storage.add_event(event)
-
-        await self.storage.wait_for_writer()
+        await self.add_event(event)
 
         query = [
             {"#p": ["5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"]}
@@ -366,9 +368,8 @@ class LMDBStorageTests(BaseLMDBTests):
 
     async def test_delete_event(self):
         event = self.make_event(PK1, kind=1, content="test_delete_event")
-        result = await self.storage.add_event(event)
+        result = await self.add_event(event)
 
-        await self.storage.wait_for_writer()
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
 
@@ -381,14 +382,12 @@ class LMDBStorageTests(BaseLMDBTests):
         again = self.make_event(
             PK1, kind=1, content="test_delete_event", created_at=int(time.time() - 10)
         )
-        result = await self.storage.add_event(again)
-        await self.storage.wait_for_writer()
+        result = await self.add_event(again)
 
         assert (await self.storage.get_event(again["id"])).id == again["id"]
         # send a delete event
         del_event = self.make_event(PK1, kind=5, tags=[["e", again["id"]]])
-        result = await self.storage.add_event(del_event)
-        await self.storage.wait_for_writer()
+        result = await self.add_event(del_event)
 
         assert (await self.storage.get_event(again["id"])) is None
 
@@ -397,17 +396,96 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(
             PK1, kind=10000, content="test_replaceable_event 1", created_at=now - 10
         )
-        result = await self.storage.add_event(event)
-        await self.storage.wait_for_writer()
+        result = await self.add_event(event)
 
         replaced = self.make_event(
             PK1, kind=10000, content="test_replaceable_event 2", created_at=now
         )
-        result = await self.storage.add_event(replaced)
-        await self.storage.wait_for_writer()
+        result = await self.add_event(replaced)
 
         old_event = await self.storage.get_event(event["id"])
         assert old_event is None
+
+    async def test_parameterized_replaceable_event(self):
+        now = int(time.time())
+        event = self.make_event(
+            PK1,
+            kind=30000,
+            content="test_replaceable_event 1",
+            tags=[["d", "test"]],
+            created_at=now - 10,
+        )
+        result = await self.add_event(event)
+
+        replaced = self.make_event(
+            PK1,
+            kind=30000,
+            content="test_replaceable_event 2",
+            tags=[["d", "test"]],
+            created_at=now,
+        )
+        result = await self.add_event(replaced)
+
+        old_event = await self.storage.get_event(event["id"])
+        assert old_event is None
+
+        # event with different "d" tag will not replace
+
+        not_replaced = self.make_event(
+            PK1,
+            kind=30000,
+            content="test_replaceable_event 3",
+            tags=[["d", "foo"]],
+            created_at=now,
+        )
+        result = await self.add_event(not_replaced)
+
+        old_event = await self.storage.get_event(replaced["id"])
+        assert old_event is not None
+
+        # event without a "d" tag also works
+
+        not_replaced = self.make_event(
+            PK1, kind=30001, content="test_replaceable_event 4", created_at=now
+        )
+        result = await self.add_event(not_replaced)
+
+        old_event = await self.storage.get_event(replaced["id"])
+        assert old_event is not None
+
+        # replace it with an equivalent
+
+        equiv = self.make_event(
+            PK1,
+            kind=30001,
+            content="test_replaceable_event 5",
+            tags=[["d"]],
+            created_at=now,
+        )
+        result = await self.add_event(equiv)
+
+        old_event = await self.storage.get_event(not_replaced["id"])
+        assert old_event is None
+
+        # replace it again
+        equiv = self.make_event(
+            PK1, kind=30001, content="test_replaceable_event 6", created_at=now
+        )
+        result = await self.add_event(equiv)
+
+        events = await self.get_events({"kinds": [30001]})
+        assert 1 == len(events)
+        assert equiv["id"] == events[0].id
+
+        # older event will not replace newer one
+        older_event = self.make_event(
+            PK1, kind=30001, content="ancient", created_at=now - 10
+        )
+        result = await self.add_event(equiv)
+
+        events = await self.get_events({"kinds": [30001]})
+        assert 1 == len(events)
+        assert equiv["id"] == events[0].id
 
     async def test_get_stats(self):
         queue = asyncio.Queue()
@@ -466,8 +544,7 @@ class LMDBStorageTests(BaseLMDBTests):
     async def test_context_manager(self):
         async with self.storage:
             hello = self.make_event(PK1)
-            await self.storage.add_event(hello)
-            await self.storage.wait_for_writer()
+            await self.add_event(hello)
             event = await self.storage.get_event(hello["id"])
         assert self.storage.db is None
 
@@ -567,7 +644,7 @@ class LMDBStorageTests(BaseLMDBTests):
         assert ("test_ephemeral", None) == done
 
         event = self.make_event(PK1, kind=22222, content="hello world")
-        result = await self.storage.add_event(event)
+        result = await self.add_event(event)
         assert event["id"] == result[0].id
         assert result[1] == True
 
@@ -606,10 +683,10 @@ class KVGCTests(BaseLMDBTests):
             created_at=now,
         )
         with self.assertLogs("nostr_relay.storage:gc", level="INFO") as cm:
-            await self.storage.add_event(event1)
-            await self.storage.add_event(event2)
-            await self.storage.add_event(event3)
-            await self.storage.wait_for_writer()
+            await self.add_event(event1)
+            await self.add_event(event2)
+            await self.add_event(event3)
+
             results = []
             async for event in self.storage.run_single_query({"kinds": [1]}):
                 assert event.kind == 1
@@ -648,6 +725,7 @@ class FTSTests(BaseLMDBTests):
                 created_at=1676678145,
             )
             await self.storage.add_event(event)
+        await self.storage.wait_for_writer()
 
     async def test_fts_search(self):
         await self.add_events()
@@ -658,8 +736,8 @@ class FTSTests(BaseLMDBTests):
             content="hello earlier",
             created_at=1676678135,
         )
-        await self.storage.add_event(old_event)
-        await self.storage.wait_for_writer()
+        await self.add_event(old_event)
+
         query = {"search": "hello", "since": 1676678140}
         results = await self.get_events(query)
         assert 3 == len(results)
@@ -682,7 +760,6 @@ class FTSTests(BaseLMDBTests):
         import time
 
         await self.add_events()
-        await self.storage.wait_for_writer()
 
         until = int(time.time()) + 10
         with self.assertLogs("nostr_relay", level="INFO") as cm:
