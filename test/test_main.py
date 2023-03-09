@@ -704,8 +704,10 @@ class MainTests(APITests):
             for i in range(10):
                 data = await self.send_event(ws, EVENTS[1], True)
                 assert data[3] != "rate-limited: slow down"
-            data = await self.send_event(ws, EVENTS[1], True)
-            assert data[3] == "rate-limited: slow down"
+            with self.assertRaises(asyncio.TimeoutError):
+                # rate limiter will slow down the request
+                async with timeout(0.2):
+                    data = await self.send_event(ws, EVENTS[1], True)
 
     async def test_timeout(self):
         """

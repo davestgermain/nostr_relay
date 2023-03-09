@@ -18,7 +18,7 @@ encode_basestring = json.encoder.encode_basestring
 try:
     import rapidjson
 
-    json_dumps = rapidjson.Encoder(ensure_ascii=False, indent=0).__call__
+    json_dumps = rapidjson.Encoder(ensure_ascii=False).__call__
     json_loads = rapidjson.Decoder().__call__
     JSONDecodeError = rapidjson.JSONDecodeError
 except ImportError:

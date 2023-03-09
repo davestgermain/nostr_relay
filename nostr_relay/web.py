@@ -111,6 +111,8 @@ async def start_client(
                     else:
                         response = ["NOTICE", "rate-limited"]
                     await ws_send(json_dumps(response))
+                    throttle = max(throttle, 0.25) * 2
+                    await asyncio.sleep(throttle)
                     continue
 
                 if command == "REQ":
@@ -167,12 +169,18 @@ async def start_client(
 
             except StorageError as e:
                 log.warning("storage error: %s for %s", e, client_id)
-                await ws_send(json_dumps(["NOTICE", str(e)]))
+                try:
+                    await ws_send(json_dumps(["NOTICE", str(e)]))
+                except ConnectionClosedError:
+                    break
             except AuthenticationError as e:
                 log.warning(
                     "Auth error: %s for %s token:%s", str(e), client_id, auth_token
                 )
-                await ws_send(json_dumps(["NOTICE", str(e)]))
+                try:
+                    await ws_send(json_dumps(["NOTICE", str(e)]))
+                except ConnectionClosedError:
+                    break
             except (
                 falcon.WebSocketDisconnected,
                 ConnectionClosedError,
