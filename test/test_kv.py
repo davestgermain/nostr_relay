@@ -88,7 +88,7 @@ class LMDBStorageTests(BaseLMDBTests):
         for i in range(10):
             event = self.make_event(
                 PK1,
-                kind=22222,
+                kind=7,
                 content=f"test_good_queries {now} {i}",
                 created_at=now - i,
             )
@@ -103,11 +103,11 @@ class LMDBStorageTests(BaseLMDBTests):
 
         assert 10 == len(results)
 
-        query = [{"kinds": [1], "since": now - 3}, {"kinds": [22222], "until": now - 4}]
+        query = [{"kinds": [1], "since": now - 3}, {"kinds": [7], "until": now - 4}]
         results = []
         with self.assertNoLogs("nostr_relay", level="INFO"):
             async for event in self.storage.run_single_query(query):
-                assert event.kind in (1, 22222)
+                assert event.kind in (1, 7)
                 results.append(event)
 
         assert 6 == len(results)
@@ -551,32 +551,35 @@ class LMDBStorageTests(BaseLMDBTests):
             with self.assertNoLogs("nostr_relay", level="DEBUG"):
                 assert not list(await self.get_events(query))
 
+    async def test_ephemeral_not_saved(self):
+        """
+        Test that ephemeral events are not saved
+        """
+        query = [{"kinds": [22222]}]
+        queue = asyncio.Queue()
+        sub = await self.storage.subscribe(
+            "ephem",
+            "test_ephemeral",
+            query,
+            queue,
+        )
+        done = await queue.get()
+        assert ("test_ephemeral", None) == done
+
+        event = self.make_event(PK1, kind=22222, content="hello world")
+        result = await self.storage.add_event(event)
+        assert event["id"] == result[0].id
+        assert result[1] == True
+
+        results = await self.get_events(query)
+        assert [] == results
+
+        notified = await queue.get()
+        assert event == notified[1].to_json_object()
+
 
 class KVGCTests(BaseLMDBTests):
     garbage_collector = {"collect_interval": 2}
-
-    async def test_collect_ephemeral(self):
-        now = int(time.time())
-        for i in range(10):
-            event = self.make_event(
-                PK1,
-                kind=22222,
-                content=f"test_garbage_collector {now} {i}",
-                created_at=now - i,
-            )
-            await self.storage.add_event(event)
-
-        await self.storage.wait_for_writer()
-        results = []
-        async for event in self.storage.run_single_query({"kinds": [22222]}):
-            assert event.kind == 22222
-            results.append(event)
-        assert len(results) == 10
-
-        await asyncio.sleep(2.2)
-
-        results = await self.get_events({"kinds": [22222]})
-        assert 0 == len(results)
 
     async def test_collect_expired(self):
         now = int(time.time())

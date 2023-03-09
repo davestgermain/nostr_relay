@@ -103,7 +103,12 @@ class Index:
 
     @contextmanager
     def scanner(
-        self, txn, matches: list, since=None, until=None, events=FakeContainer()
+        self,
+        txn,
+        matches: list,
+        since: typing.Optional[int] = None,
+        until: typing.Optional[int] = None,
+        events=FakeContainer(),
     ):
         cursor = txn.cursor()
         # compile the matches to the expected format for the index,
@@ -295,6 +300,7 @@ class FTSIndex(Index):
 
         self.log = logging.getLogger("nostr_relay.fts")
         self.enabled = Config.fts_enabled
+        self.fts_kinds = Config.get("fts_kinds", (1, 0))
 
     @property
     def schema(self):
@@ -334,7 +340,7 @@ class FTSIndex(Index):
         self.log.debug("Indexed %s", event.id)
 
     def write(self, event: Event, txn):
-        if event.kind in (1, 0):
+        if event.kind in self.fts_kinds:
             from whoosh.writing import AsyncWriter
 
             with AsyncWriter(self.index) as writer:
@@ -350,8 +356,9 @@ class FTSIndex(Index):
             writer.commit()
 
     def clear(self, event: Event, txn):
-        with self.index.writer() as writer:
-            writer.delete_by_term("id", event.id)
+        if event.kind in self.fts_kinds:
+            with self.index.writer() as writer:
+                writer.delete_by_term("id", event.id)
 
     @contextmanager
     def scanner(
@@ -638,7 +645,8 @@ class LMDBStorage(BaseStorage):
 
         await self.validate_event(event, Config)
 
-        self.writer_queue.put(("add", [event]))
+        if not event.is_ephemeral:
+            self.writer_queue.put(("add", [event]))
         await self.post_save(event)
         return event, True
 
