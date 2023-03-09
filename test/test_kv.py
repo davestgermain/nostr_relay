@@ -537,6 +537,20 @@ class LMDBStorageTests(BaseLMDBTests):
             with self.assertNoLogs("nostr_relay", level="ERROR"):
                 assert not list(await self.get_events(query))
 
+    async def test_skip_queries(self):
+        """
+        Test that empty queries are not executed
+        """
+        queries = [
+            {"ids": []},
+            {"#t": []},
+            {"authors": []},
+            {"kinds": []},
+        ]
+        for query in queries:
+            with self.assertNoLogs("nostr_relay", level="DEBUG"):
+                assert not list(await self.get_events(query))
+
 
 class KVGCTests(BaseLMDBTests):
     garbage_collector = {"collect_interval": 2}

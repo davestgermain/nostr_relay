@@ -882,10 +882,16 @@ def planner(
 
         if query.tags:
             tags = set()
+            has_empty_tags = False
             for tag, values in query.tags:
+                if not values:
+                    has_empty_tags = True
+                    break
                 for val in values:
                     tags.add((tag, val))
                 query_items.append((tag, tuple(values)))
+            if has_empty_tags:
+                continue
             best_index.add("tags", sorted(tags, reverse=True))
 
         query_items = tuple(query_items)

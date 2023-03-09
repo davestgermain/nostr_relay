@@ -252,7 +252,7 @@ async def dump(ctx, event):
     """
     Dump all events
     """
-    query = [{"since": 1}]
+    query = [{"since": 1, "limit": 500000}]
     as_event = event
     from .storage import get_storage
 
