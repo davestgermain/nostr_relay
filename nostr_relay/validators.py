@@ -76,7 +76,7 @@ def is_not_hellthread(event, config):
     """
     Ensure that the event does not have too many "p" tags
     """
-    if config.hellthread_limit:
+    if config.hellthread_limit and event.kind in (1, 7):
         num_tags = len([t for t in event.tags if t[0] == "p"])
         if num_tags > config.hellthread_limit:
             raise StorageError(
