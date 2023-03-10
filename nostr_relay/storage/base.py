@@ -18,6 +18,7 @@ from ..util import (
     Periodic,
 )
 from ..auth import get_authenticator, Action
+from ..validators import get_validator
 
 
 class BaseStorage:
@@ -29,6 +30,9 @@ class BaseStorage:
         self.notifier = None
         self.garbage_collector_task = None
         self.service_privatekey = Config.get("service_privatekey", "")
+        self.validate_event = get_validator(
+            self.options.pop("validators", ["nostr_relay.validators.is_signed"])
+        )
         if self.service_privatekey:
             from aionostr.key import PrivateKey
 
@@ -64,6 +68,7 @@ class BaseStorage:
         self.stat_collector = StatsCollector(self.options.pop("stats_interval", 60.0))
         await self.stat_collector.start()
         self.authenticator = get_authenticator(self, Config.get("authentication", {}))
+
         output_validator = Config.get("output_validator")
         if output_validator:
             self.check_output = object_from_path(output_validator)

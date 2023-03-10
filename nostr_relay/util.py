@@ -86,13 +86,18 @@ class Periodic:
 
     @staticmethod
     def register(periodic_task):
+        print(f"Registering {periodic_task}")
+        # raise Exception()
         Periodic._pending_tasks.append(periodic_task.start())
 
     @staticmethod
     async def start_pending():
+        print(Periodic._pending_tasks)
         while Periodic._pending_tasks:
             task = Periodic._pending_tasks.pop()
+            print(task)
             await task
+            print("done")
 
     @classmethod
     def cancel_running(cls):

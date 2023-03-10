@@ -88,6 +88,12 @@ class ConfigClass:
         self._is_loaded = True
         self.config_file = filename
 
+    def configure_logging(self):
+        if self.logging:
+            import logging.config
+
+            logging.config.dictConfig(self.logging)
+
     def dump(self, filename):
         obj = self.__dict__
         with open(filename, "w") as fp:
@@ -101,6 +107,24 @@ class ConfigClass:
 
     def get(self, key, default=None):
         return self.__dict__.get(key, default)
+
+    @property
+    def local_relay_url(self):
+        if self.purple:
+            host = self.purple["host"]
+            port = self.purple["port"]
+        else:
+            host, port = self.gunicorn["bind"].rsplit(":", 1)
+        address = f"ws://{host}:{port}/"
+        return address
+
+    @property
+    def service_pubkey(self):
+        if self.service_privatekey:
+            from aionostr.key import PrivateKey
+
+            pk = PrivateKey(bytes.fromhex(self.service_privatekey))
+            return pk.public_key.hex()
 
     @property
     def should_run_notifier(self):

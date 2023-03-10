@@ -356,15 +356,20 @@ class SetupMiddleware:
     async def process_startup(self, scope, event):
         if Config.DEBUG:
             asyncio.get_running_loop().set_debug(True)
+        await self.storage.setup()
         if Config.should_run_notifier:
             from .notifier import NotifyServer
 
             self.notify_server = NotifyServer()
             self.notify_server.start()
-        await self.storage.setup()
-        from .util import Periodic
+        if Config.foaf:
+            from .foaf import FOAFBuilder
 
-        await Periodic.start_pending()
+            await FOAFBuilder().start()
+        if Config.dynamic_lists:
+            from .dynamic_lists import ListBuilder
+
+            await ListBuilder().start()
 
     async def process_shutdown(self, scope, event):
         await self.storage.optimize()

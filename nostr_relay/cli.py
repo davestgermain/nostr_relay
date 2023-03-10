@@ -11,10 +11,34 @@ except ImportError:
     pass
 
 
+def stop():
+    loop = asyncio.get_running_loop()
+    try:
+        loop.stop()
+    except RuntimeError:
+        return
+
+
 def async_cmd(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        return asyncio.run(func(*args, **kwargs))
+        async def _run(coro):
+            from signal import SIGINT, SIGTERM
+
+            loop = asyncio.get_running_loop()
+            for signal_enum in [SIGINT, SIGTERM]:
+                loop.add_signal_handler(signal_enum, stop)
+
+            await coro
+
+        coro = func(*args, **kwargs)
+        try:
+            asyncio.run(_run(coro))
+        except KeyboardInterrupt:
+            stop()
+            return
+        except RuntimeError:
+            return
 
     return wrapper
 
@@ -564,3 +588,47 @@ async def bench():
 
         # tasks = [asyncio.get_running_loop().run_in_executor(None, do_queries) for i in range(4)]
         await asyncio.wait(tasks)
+
+
+@click.group()
+@click.pass_context
+def verify(ctx):
+    """
+    NIP-05 Verification Commands
+    """
+    pass
+
+
+@verify.command()
+@async_cmd
+async def reverify():
+    """
+    Reverify all metadata
+    """
+    Config.configure_logging()
+
+    from nostr_relay.verification import NIP05CheckerBot
+
+    bot = NIP05CheckerBot(Config.verification)
+
+    await bot.manager.connect()
+
+    await bot.verify_all_metadata()
+
+
+@verify.command()
+@async_cmd
+async def bot():
+    """
+    Start the verification bot
+    """
+    Config.configure_logging()
+
+    from nostr_relay.verification import NIP05CheckerBot
+
+    bot = NIP05CheckerBot(Config.verification)
+
+    await bot.start()
+
+
+main.add_command(verify)

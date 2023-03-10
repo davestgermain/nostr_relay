@@ -31,8 +31,6 @@ from .base import (
 from ..auth import get_authenticator
 from ..config import Config
 from ..errors import StorageError
-from ..validators import get_validator
-from ..verification import Verifier
 
 
 # ids: b'\x00<32 bytes of id>'
@@ -613,16 +611,11 @@ class LMDBStorage(BaseStorage):
 
     async def setup(self):
         await super().setup()
-        self.validate_event = get_validator(
-            self.options.pop("validators", ["nostr_relay.validators.is_signed"])
-        )
         self.db = lmdb.open(**self.options)
         self.write_tombstone()
         self.writer_thread = WriterThread(self.db, self.stat_collector)
         self.writer_queue = self.writer_thread.queue
         self.writer_thread.start()
-        self.verifier = Verifier(self, Config.get("verification", {}))
-        await self.verifier.start(self.db)
 
     async def wait_for_writer(self):
         """

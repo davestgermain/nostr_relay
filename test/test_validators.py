@@ -119,11 +119,11 @@ class ValidatorTests(BaseTestsWithStorage):
     async def test_not_hellthread(self):
         self.config.hellthread_limit = 10
         tags = [["p", f"ptag{i}"] for i in range(11)]
-        bad_event = self.make_event(PK1, tags=tags, as_dict=False)
+        bad_event = self.make_event(PK1, kind=1, tags=tags, as_dict=False)
 
         with self.assertRaises(StorageError) as e:
             validators.is_not_hellthread(bad_event, self.config)
         assert e.exception.args[0] == f"rejected: too many 'p' tags: 11. limit: 10"
 
-        good_event = self.make_event(PK1, tags=tags[:10], as_dict=False)
+        good_event = self.make_event(PK1, kind=1, tags=tags[:10], as_dict=False)
         validators.is_not_hellthread(good_event, self.config)

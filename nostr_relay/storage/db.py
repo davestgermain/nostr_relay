@@ -10,7 +10,6 @@ from sqlalchemy.engine.base import Engine
 
 from aionostr.event import Event, EventKind
 from ..config import Config
-from ..verification import Verifier
 from ..auth import get_authenticator, Action
 from ..errors import StorageError, AuthenticationError
 from ..util import (
@@ -61,7 +60,6 @@ class DBStorage(BaseStorage):
         super().__init__(options)
         self.options, self.sqlalchemy_options = self.parse_options(options)
         self.subscription_class = self.options["subscription_class"]
-        self.validate_event = self.options["validator_function"]
         self.db_url = self.sqlalchemy_options.pop(
             "url", "sqlite+aiosqlite:///nostr.sqlite3"
         )
@@ -75,8 +73,6 @@ class DBStorage(BaseStorage):
             sa.event.listen(Engine, "connect", self._set_sqlite_pragma)
 
     def parse_options(self, options):
-        from nostr_relay.validators import get_validator
-
         sqlalchemy_options = {}
         storage_options = {
             "validators": ["nostr_relay.validators.is_signed"],
@@ -89,9 +85,6 @@ class DBStorage(BaseStorage):
                 storage_options["subscription_class"] = object_from_path(value)
             else:
                 storage_options[key] = value
-        storage_options["validator_function"] = get_validator(
-            storage_options.pop("validators")
-        )
         return storage_options, sqlalchemy_options
 
     def _set_sqlite_pragma(self, dbapi_connection, connection_record):
@@ -113,7 +106,6 @@ class DBStorage(BaseStorage):
     async def close(self):
         if self.garbage_collector_task:
             self.garbage_collector_task.cancel()
-        await self.verifier.stop()
         await self.db.dispose()
 
     async def optimize(self):
@@ -163,8 +155,6 @@ class DBStorage(BaseStorage):
                 "OR IGNORE"
             )
 
-        self.verifier = Verifier(self, Config.get("verification", {}))
-        await self.verifier.start(self.db)
         self.log.debug("done setting up")
 
     async def get_event(self, event_id):
@@ -237,8 +227,6 @@ class DBStorage(BaseStorage):
         Pre-process the event to check permissions, duplicates, etc.
         Return None to skip adding the event.
         """
-        # check NIP05 verification, if enabled
-        await self.verifier.verify(event)
 
         if event.is_replaceable or event.is_paramaterized_replaceable:
             # check for older event from same pubkey

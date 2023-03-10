@@ -11,136 +11,49 @@ for verification if it contains a nip05 tag.
 Every Config.verification_update_frequency, the verifications will be reprocessed.
 """
 import asyncio
-import logging
 import re
 import time
 
-from datetime import datetime, timedelta
-
 from .errors import VerificationError
-from .util import Periodic, timeout, json_loads, json_dumps
+from .util import json_loads, json_dumps
+from .dynamic_lists import ALLOWED_PUBKEYS
+from .config import Config
+
+from nostr_bot import CommunicatorBot
 
 
-class Verifier(Periodic):
-    def __init__(self, storage, options: dict = None):
-        self.storage = storage
-        self.options = options or {}
+def get_aiohttp_session():
+    import aiohttp
+
+    return aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=60.0), json_serialize=json_dumps
+    )
+
+
+class NIP05CheckerBot(CommunicatorBot):
+    LISTEN_KIND = 0
+    LISTEN_PUBKEY = None
+    PRIVATE_KEY = Config.service_privatekey
+
+    def __init__(self, options):
+        super().__init__()
+        self.options = options
         self.options.setdefault("update_frequency", 3600)
         self.options.setdefault("expiration", 86400)
-        Periodic.__init__(self, self.options["update_frequency"])
-        self._candidates = []
         self._last_run = 0
-        self.queue = asyncio.Queue()
-        # nip05_verification can be "enabled", "disabled", or "passive"
-        self.is_enabled = options.get("nip05_verification", "") == "enabled"
-        self.should_verify = options.get("nip05_verification", "") in (
-            "enabled",
-            "passive",
-        )
-        if self.should_verify:
-            self.log = logging.getLogger(__name__)
 
-    async def update_metadata(self, event):
-        # metadata events are evaluated as candidates
-        try:
-            meta = json_loads(event.content)
-        except Exception:
-            self.log.exception("bad metadata")
-        else:
-            identifier = meta.get("nip05", "").lower().strip()
-            self.log.debug("Found identifier %s in event %s", identifier, event)
-            if "@" in identifier:
-                # queue this identifier as a candidate
-                uname, domain = identifier.split("@", 1)
-                if self.check_allowed_domains(domain) and re.fullmatch(
-                    "[a-z0-9\\._-]+", uname
-                ):
-                    await self.queue.put([identifier, 0, event.pubkey])
-                    return True
-                else:
-                    self.log.error("Illegal identifier %s", identifier)
-        return False
-
-    def check_allowed_domains(self, domain):
-        if "/" in domain:
-            return False
-        if self.options.get("whitelist"):
-            return domain in self.options["whitelist"]
-        elif self.options.get("blacklist"):
-            return domain not in self.options["blacklist"]
-        return True
-
-    async def verify(self, event):
-        """
-        Check an event against the NIP-05
-        verification table
-        """
-        if not self.should_verify:
-            return True
-        elif event.pubkey == self.storage.service_pubkey:
-            return True
-        elif event.kind == 10002:
-            # NIP-65 kinds are ok
-            return True
-
-        if event.kind == 0:
-            is_candidate = await self.update_metadata(event)
-            if not is_candidate:
-                if self.is_enabled:
-                    raise VerificationError("rejected: metadata must have nip05 tag")
-                else:
-                    self.log.warning(
-                        "Attempt to save metadata event %s from %s without nip05 tag",
-                        event.id,
-                        event.pubkey,
-                    )
-            else:
-                return True
-
-        query = {
-            "kinds": [self.storage.service_kind],
-            "#d": [f"verify:{event.pubkey}"],
-            "authors": [self.storage.service_pubkey],
-        }
-        verify_record = await self.storage.get_event_from_query(query)
-
-        if not verify_record:
-            if self.is_enabled:
-                raise VerificationError(
-                    f"rejected: pubkey {event.pubkey} must be verified"
-                )
-            else:
-                self.log.warning("pubkey %s is not verified.", event.pubkey)
-        elif not verify_record.has_tag("failed")[0]:
-            identifier = verify_record.content
-            self.log.debug(
-                "Checking verification for %s verified:%s",
-                identifier,
-                verify_record.created_at,
-            )
-
-            uname, domain = identifier.split("@", 1)
-            domain = domain.lower()
-            if not self.check_allowed_domains(domain):
-                if self.is_enabled:
-                    raise VerificationError(f"rejected: {domain} not allowed")
-                else:
-                    self.log.warning("verification for %s not allowed", identifier)
-        self.log.debug("Verified %s", event.pubkey)
-        return True
-
-    async def run_once(self):
+    async def reverify(self):
         candidates = []
         try:
             if (time.time() - self._last_run) > self.options["update_frequency"]:
                 self.log.debug("running batch query %s", self._last_run)
                 query = {
-                    "kinds": [self.storage.service_kind],
+                    "kinds": [31494],
                     "#t": ["verification"],
-                    "authors": [self.storage.service_pubkey],
+                    "authors": [self.PUBLIC_KEY],
                     "until": int(time.time()) - (self.options["expiration"] - 300),
                 }
-                async for verify_record in self.storage.run_single_query([query]):
+                async for verify_record in self.manager.get_events(query):
                     pubkey = [t[1] for t in verify_record.tags if t[0] == "p"][0]
                     candidates.append(
                         [verify_record.content, verify_record.created_at, pubkey]
@@ -149,44 +62,25 @@ class Verifier(Periodic):
         except Exception:
             self.log.exception("batch_query")
             return
-        if self._candidates:
-            candidates.extend(self._candidates)
 
-        try:
-            await self.process_verifications(candidates)
-        except Exception:
-            self.log.exception("process_verifications")
+        if candidates:
+            await self._process_candidates(candidates)
         self._last_run = time.time()
 
-    async def _mark_done(self, identifier, pubkey, success=False):
-        expiration = str(int(time.time()) + self.options["expiration"])
-        tags = {
-            "t": "verification",
-            "d": f"verify:{pubkey}",
-            "n": identifier,
-            "expiration": expiration,
-        }
-        if not success:
-            tags["failed"] = str(int(time.time()))
-        verify_record = await self.storage.add_service_event(
-            content=identifier, tags=tags
-        )
-        self.log.info(
-            "Saved verification for %s=%s success=%s", identifier, pubkey, success
-        )
+    async def verify_all_metadata(self):
+        query = {"kinds": [0]}
 
-    def get_aiohttp_session(self):
-        import aiohttp
+        candidates = []
+        async for event in self.manager.get_events(query):
+            identifier = self.get_nip05_identifier(event)
+            if identifier:
+                candidates.append((identifier, 0, event.pubkey))
+        if candidates:
+            await self._process_candidates(candidates)
 
-        return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=10.0), json_serialize=json_dumps
-        )
-
-    async def process_verifications(self, candidates):
-        if not candidates:
-            return
+    async def _process_candidates(self, candidates):
         tasks = []
-        async with self.get_aiohttp_session() as session:
+        async with get_aiohttp_session() as session:
             for identifier, verified_at, pubkey in candidates:
                 self.log.info(
                     "Checking verification for %s. Last verified %s",
@@ -194,15 +88,13 @@ class Verifier(Periodic):
                     verified_at,
                 )
                 tasks.append(
-                    asyncio.create_task(
-                        self._fetch_one_verification(session, identifier, pubkey)
-                    )
+                    asyncio.create_task(self.verify_nip05(session, identifier, pubkey))
                 )
             if tasks:
                 self.log.info("Waiting for %d tasks", len(tasks))
                 await asyncio.wait(tasks)
 
-    async def _fetch_one_verification(self, session, identifier, pubkey):
+    async def verify_nip05(self, session, identifier, pubkey):
         uname, domain = identifier.split("@", 1)
         if not self.check_allowed_domains(domain):
             # how did this record get here?
@@ -224,6 +116,8 @@ class Verifier(Periodic):
             names = data["names"]
             assert isinstance(names, dict)
         except Exception as e:
+            # self.log.exception("verify")
+            # breakpoint()
             self.log.error("Failure verifying %s from %s %s", identifier, url, str(e))
         else:
             if names.get(uname, "") != pubkey:
@@ -235,30 +129,84 @@ class Verifier(Periodic):
                 success = True
         await self._mark_done(identifier, pubkey, success=success)
 
-    async def wait_function(self):
-        self._candidates = []
-        flag = True
+    async def _mark_done(self, identifier, pubkey, success=False):
+        expiration = str(int(time.time()) + self.options["expiration"])
+        tags = [
+            ["t", "verification"],
+            ["d", f"verify:{pubkey}"],
+            ["n", identifier],
+            ["expiration", expiration],
+        ]
+        if success:
+            tags.append(["p", pubkey])
+        else:
+            tags.append(["failed", str(int(time.time()))])
+            try:
+                ALLOWED_PUBKEYS.remove(bytes.fromhex(pubkey))
+            except KeyError:
+                pass
+        verify_record = self.make_event(kind=31494, content=identifier, tags=tags)
+        await self.reply(verify_record)
+        self.log.info(
+            "Saved verification for %s=%s success=%s", identifier, pubkey, success
+        )
+
+    def check_allowed_domains(self, domain):
+        if "/" in domain:
+            return False
+        if self.options.get("whitelist"):
+            return domain in self.options["whitelist"]
+        elif self.options.get("blacklist"):
+            return domain not in self.options["blacklist"]
+        return True
+
+    def get_nip05_identifier(self, event):
         try:
-            async with timeout(self.options["update_frequency"]):
-                while flag or self.queue.qsize():
-                    candidate = await self.queue.get()
-                    if candidate is None:
-                        self.running = False
-                        return
-                    else:
-                        self._candidates.append(candidate)
-                        flag = False
-            self.log.debug("Got candidates %s", self._candidates)
-        except asyncio.TimeoutError:
-            self.log.debug("timed out waiting for queue")
+            meta = json_loads(event.content)
+        except Exception:
+            self.log.exception("bad metadata")
+            return
+        identifier = meta.get("nip05", "").lower().strip()
+        self.log.debug("Found identifier %s in event %s", identifier, event)
+        if "@" in identifier:
+            # queue this identifier as a candidate
+            uname, domain = identifier.split("@", 1)
+            if self.check_allowed_domains(domain) and re.fullmatch(
+                "[a-z0-9\\._-]+", uname
+            ):
+                return identifier
+            else:
+                self.log.error("Illegal identifier %s", identifier)
 
-    async def start(self, db=None):
-        if self.should_verify:
-            self.log.info(
-                "Starting verification task. Interval %s",
-                self.options["update_frequency"],
-            )
-            await super().start()
+    async def handle_event(self, event):
+        identifier = self.get_nip05_identifier(event)
+        if identifier:
+            async with get_aiohttp_session() as session:
+                await self.verify_nip05(session, identifier, event.pubkey)
 
-    def is_processing(self):
-        return bool(self._candidates) or not self.queue.empty()
+            await self.reverify()
+            return True
+
+
+def is_nip05_verified(event, config):
+    status = config.get("nip05_verification")
+    if status not in ("enabled", "passive"):
+        return True
+    elif event.kind == 10002:
+        # NIP-65 kinds are ok
+        return True
+
+    if event.kind == 0:
+        if "nip05" not in event.content:
+            if status == "enabled":
+                raise VerificationError("rejected: metadata must have nip05 tag")
+            else:
+                self.log.warning(
+                    "Attempt to save metadata event %s from %s without nip05 tag",
+                    event.id,
+                    event.pubkey,
+                )
+        else:
+            if ALLOWED_PUBKEYS:
+                ALLOWED_PUBKEYS.add(bytes.fromhex(event.pubkey))
+            return True
