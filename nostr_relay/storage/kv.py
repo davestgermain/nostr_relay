@@ -12,9 +12,9 @@ import traceback
 import typing
 import re
 import os.path
+import queue
 
 from contextlib import contextmanager
-from queue import SimpleQueue
 from time import perf_counter, time, sleep
 
 from aionostr.event import Event, EventKind
@@ -465,7 +465,7 @@ class WriterThread(threading.Thread):
         self.running = True
         self.env = env
         self.stat_collector = stat_collector
-        self.queue = SimpleQueue()
+        self.queue = queue.SimpleQueue()
         self.write_indexes = [i for i in INDEXES.values() if i.enabled]
         self.processing = False
 
@@ -1086,23 +1086,27 @@ def execute_one_plan(
         return plan, events
 
 
-def analysis_thread(work_queue: SimpleQueue, slow_query_threshold=500, delay=0.5):
+def analysis_thread(work_queue: queue.Queue, slow_query_threshold=500, delay=0.5):
     from time import sleep
 
     log = logging.getLogger("nostr_relay.queries")
+    log.debug("Running")
     while True:
         plans = work_queue.get()
 
         sleep(delay)
+        log.debug("Analyzing %s", plans)
         try:
             _analyze(plans, log, slow_query_threshold=slow_query_threshold)
         except:
             log.exception("analyze")
         del plans
+        log.debug("Done")
 
 
 def _analyze(plans: QueryPlans, log: logging.Logger, slow_query_threshold=500):
-    for plan in plans:
+    while plans:
+        plan = plans.pop()
         log.debug("Executed plan. Stats: %s", plan.stats)
         stats = plan.stats
         duration = (stats["end"] - stats["start"]) * 1000  # milliseconds
@@ -1127,7 +1131,7 @@ def _analyze(plans: QueryPlans, log: logging.Logger, slow_query_threshold=500):
                 )
 
 
-ANALYSIS_QUEUE = SimpleQueue()
+ANALYSIS_QUEUE = queue.Queue(maxsize=30)
 
 
 def analyze(plans: QueryPlans, later=True, log=None):
@@ -1143,7 +1147,10 @@ def analyze(plans: QueryPlans, later=True, log=None):
             )
             analyze.ANALYSIS_THREAD.daemon = True
             analyze.ANALYSIS_THREAD.start()
-        ANALYSIS_QUEUE.put(plans)
+        try:
+            ANALYSIS_QUEUE.put_nowait(plans)
+        except queue.Full:
+            log.debug("Analysis queue full")
     else:
         _analyze(plans, log)
 
