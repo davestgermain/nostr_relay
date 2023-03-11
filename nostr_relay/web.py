@@ -306,9 +306,9 @@ class NostrAPI(BaseResource):
 class NostrStats(BaseResource):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from pympler.tracker import SummaryTracker
+        # from pympler.tracker import SummaryTracker
 
-        self.tracker = SummaryTracker()
+        # self.tracker = SummaryTracker()
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         try:
@@ -318,7 +318,7 @@ class NostrStats(BaseResource):
         import gc
 
         gc.collect()
-        self.log.info("\n" + "\n".join(self.tracker.format_diff()))
+        # self.log.info("\n" + "\n".join(self.tracker.format_diff()))
 
 
 class ViewEventResource(BaseResource):
