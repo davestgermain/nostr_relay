@@ -211,6 +211,7 @@ async def start_client(
                 pass
         rate_limiter.cleanup()
         duration = time() - start_time
+        del subscription_queue
         log.info(
             "Done %s@%s. Sent: %d Bytes. Duration: %d Seconds",
             auth_token.get("pubkey", "anon"),
