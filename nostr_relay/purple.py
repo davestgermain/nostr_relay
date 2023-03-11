@@ -100,7 +100,7 @@ async def main(config, sock=None):
                 del client
                 counters["clients"] -= 1
                 counters["served"] += 1
-                if counters["clients"] % 100 == 0:
+                if counters["served"] % 10 == 0:
                     gc.collect()
 
         log.info("Starting server...")

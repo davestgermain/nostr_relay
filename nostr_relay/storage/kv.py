@@ -66,6 +66,8 @@ class QueryPlans(list):
     Container for QueryPlan objects
     """
 
+    __slots__ = ("__weakref__",)
+
 
 class FakeContainer:
     def __contains__(self, anything):
@@ -1090,7 +1092,7 @@ def analysis_thread(work_queue: queue.Queue, slow_query_threshold=500, delay=0.5
     from time import sleep
 
     log = logging.getLogger("nostr_relay.queries")
-    log.debug("Running")
+    # log.debug("Running")
     while True:
         plans = work_queue.get()
 

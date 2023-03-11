@@ -4,6 +4,7 @@ import statistics
 import collections
 import logging
 import json
+import secrets
 
 from contextlib import contextmanager, asynccontextmanager, suppress
 from time import perf_counter
@@ -74,6 +75,24 @@ def call_from_path(path, *args, **kwargs):
     with args and kwargs
     """
     return object_from_path(path)(*args, **kwargs)
+
+
+class ClientID:
+    """
+    An object that stores a client id
+    and can be used in a WeakKeyDictionary
+    """
+
+    __slots__ = ("_idstr", "__weakref__")
+
+    def __init__(self, remote_addr):
+        self._idstr = f"{remote_addr}-{secrets.token_hex(2)}"
+
+    def __hash__(self):
+        return hash(self._idstr)
+
+    def __str__(self):
+        return self._idstr
 
 
 class Periodic:

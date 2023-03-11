@@ -3,6 +3,7 @@ import logging
 import collections
 import functools
 import typing
+import weakref
 
 from aionostr.event import Event
 from pydantic import BaseModel, Field, validator, ValidationError
@@ -24,7 +25,8 @@ class BaseStorage:
     def __init__(self, options):
         self.options = options
         self.log = logging.getLogger("nostr_relay.storage")
-        self.clients = collections.defaultdict(dict)
+        self.clients = weakref.WeakKeyDictionary()
+
         self.authenticator = None
         self.notifier = None
         self.garbage_collector_task = None
@@ -92,13 +94,11 @@ class BaseStorage:
         self, client_id, sub_id, filters, queue, auth_token=None, **kwargs
     ):
         self.log.debug("%s/%s filters: %s", client_id, sub_id, filters)
-        if sub_id in self.clients[client_id]:
+        subs = self.clients.setdefault(client_id, {})
+        if sub_id in subs:
             await self.unsubscribe(client_id, sub_id)
 
-        if (
-            Config.subscription_limit
-            and len(self.clients[client_id]) == Config.subscription_limit
-        ):
+        if Config.subscription_limit and len(subs) == Config.subscription_limit:
             raise StorageError("rejected: too many subscriptions")
 
         try:
@@ -123,7 +123,7 @@ class BaseStorage:
             ):
                 raise AuthenticationError("restricted: permission denied")
             sub.start()
-            self.clients[client_id][sub_id] = sub
+            subs[sub_id] = sub
             self.log.debug("%s/%s +", client_id, sub_id)
         else:
             await queue.put((sub_id, None))
@@ -276,6 +276,7 @@ class BaseStorage:
 
 class BaseSubscription:
     __slots__ = (
+        "__weakref__",
         "storage",
         "sub_id",
         "client_id",

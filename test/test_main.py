@@ -13,7 +13,7 @@ from nostr_relay.config import Config
 from nostr_relay.web import create_app
 from nostr_relay.storage import get_storage
 from nostr_relay.auth import Authenticator
-from nostr_relay.util import timeout
+from nostr_relay.util import timeout, ClientID
 from aionostr.event import Event, PrivateKey
 from nostr_relay.errors import StorageError
 
@@ -267,12 +267,12 @@ class DBTests(BaseTestsWithStorage):
 
         queue = asyncio.Queue()
         sub = await self.storage.subscribe(
-            "test", "test", [{"kinds": [1], "limit": 100}], queue
+            ClientID("test"), "test", [{"kinds": [1], "limit": 100}], queue
         )
         stats = await self.storage.get_stats()
         assert stats["total"] == 3
         assert stats["active_subscriptions"] == 1
-        await self.storage.unsubscribe("test")
+        await self.storage.unsubscribe(ClientID("test"))
 
     async def test_set_idp_identifier(self):
         await self.storage.set_identified_pubkey(

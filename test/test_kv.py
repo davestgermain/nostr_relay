@@ -8,6 +8,7 @@ from . import BaseTestsWithStorage, PK1, PK2
 from nostr_relay.errors import StorageError
 from nostr_relay.storage import kv
 from nostr_relay.config import Config
+from nostr_relay.util import ClientID
 
 
 class BaseLMDBTests(BaseTestsWithStorage):
@@ -203,9 +204,10 @@ class LMDBStorageTests(BaseLMDBTests):
             {"ids": ["abcdef"]},
             {"ids": [event["id"]]},
         ]
+        client = ClientID("test")
         queue = asyncio.Queue()
         sub = await self.storage.subscribe(
-            "test",
+            client,
             "test_subscriptions",
             query,
             queue,
@@ -220,7 +222,7 @@ class LMDBStorageTests(BaseLMDBTests):
             assert 1 == event.kind
             count += 1
         assert 11 == count
-        await self.storage.unsubscribe("test", "test_subscriptions")
+        await self.storage.unsubscribe(client, "test_subscriptions")
 
     async def test_prefix_queries(self):
         events = [
@@ -490,7 +492,7 @@ class LMDBStorageTests(BaseLMDBTests):
     async def test_get_stats(self):
         queue = asyncio.Queue()
         sub = await self.storage.subscribe(
-            "test",
+            ClientID("test"),
             "test_subscriptions",
             [{"ids": ["abcdef"]}],
             queue,
@@ -635,7 +637,7 @@ class LMDBStorageTests(BaseLMDBTests):
         query = [{"kinds": [22222]}]
         queue = asyncio.Queue()
         sub = await self.storage.subscribe(
-            "ephem",
+            ClientID("ephem"),
             "test_ephemeral",
             query,
             queue,
