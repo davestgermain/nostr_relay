@@ -234,6 +234,8 @@ class NostrAPI(BaseResource):
     def __init__(self, storage, rate_limiter=None):
         super().__init__(storage)
         self.rate_limiter = rate_limiter
+        from pympler.tracker import SummaryTracker
+        self.tracker = SummaryTracker()
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         if req.accept == "application/nostr+json":
@@ -293,7 +295,7 @@ class NostrAPI(BaseResource):
             rate_limiter=self.rate_limiter,
             message_timeout=Config.get("message_timeout", 1800),
         )
-
+        self.log.warning('\n' + '\n'.join(self.tracker.format_diff()))
 
 class NostrStats(BaseResource):
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
