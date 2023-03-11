@@ -70,7 +70,7 @@ class ListBuilder(Periodic):
                 )
         if ALLOWED_PUBKEYS and self.initial:
             # add the preconfigured keys
-            ALLOWED_PUBKEYS.update([bytes.fromhex(p) for p in self.initial])
+            ALLOWED_PUBKEYS.update(bytes.fromhex(p) for p in self.initial)
 
     async def start(self):
         if self.options:

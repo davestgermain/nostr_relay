@@ -19,6 +19,7 @@ from itertools import islice
 from aionostr import Manager
 from aionostr.event import Event
 from nostr_relay.errors import StorageError
+from nostr_relay.dynamic_lists import ALLOWED_PUBKEYS
 from nostr_relay.util import Periodic, json, JSONDecodeError
 from nostr_relay.config import Config
 from nostr_relay.storage import get_storage
@@ -67,6 +68,7 @@ class FOAFBuilder(Periodic):
             self.log.warning("Config.service_privatekey is not set")
             return
         self.log.info("Saving network to storage")
+        ALLOWED_PUBKEYS.update(bytes.fromhex(pubkey) for pubkey in network)
         storage = get_storage()
         # first, clear out old events
         del_count = 0
@@ -93,7 +95,19 @@ class FOAFBuilder(Periodic):
             self.log.info("Saved batch of %d pubkeys in event %s", len(batch), event.id)
 
     async def wait_function(self):
-        await asyncio.sleep(self.interval)
+        interval = self.interval
+        if self._first_run:
+            # if there are already records, wait for the normal amount of time
+            async for event in get_storage().run_single_query(
+                [{"kinds": [31494], "#t": ["foaf"]}]
+            ):
+                interval = max(time.time() - event.created_at, interval)
+                break
+            else:
+                # otherwise, query right away
+                interval = 1.0
+            self._first_run = False
+        await asyncio.sleep(interval)
 
     async def run_once(self):
         find_query = {
@@ -112,6 +126,7 @@ class FOAFBuilder(Periodic):
             found = 1
             while found < self.network_levels:
                 self.log.info("Getting extended network. Level %d", found)
+
                 for batch in batched(list(network), 100):
                     find_query["authors"] = batch
                     async for event in manager.get_events(find_query):
