@@ -29,7 +29,10 @@ def is_in_foaf(event, config):
     Check that the pubkey is in the configured social network
     """
     import warnings
-    warnings.warn("Deprecated. See https://code.pobblelabs.org/fossil/nostr_relay/doc/tip/docs/foaf.md")
+
+    warnings.warn(
+        "Deprecated. See https://code.pobblelabs.org/fossil/nostr_relay/doc/tip/docs/foaf.md"
+    )
 
 
 class FOAFBuilder(Periodic):

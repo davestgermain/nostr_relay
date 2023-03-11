@@ -2,7 +2,7 @@
 
 nostr-relay can restrict access to publishing if the pubkey is not in your social network.
 
-To configure, add `nostr_relay.foaf.is_in_foaf` to your list of validators (see [Storage](storage.md) for more) and configure which pubkey(s) to search for:
+To configure, add `nostr_relay.dynamic_lists.is_pubkey_allowed` to your list of validators (see [Dynamic Lists](dynamic_lists.md) for more) and configure which pubkey(s) to search for:
 
 ```yaml
 storage:

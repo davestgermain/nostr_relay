@@ -1,14 +1,14 @@
 """
 This handles pubkey verification according to NIP-05
 
-if Config.nip05_verification is set to 'enabled',
-the verification table will be consulted for every event addition.
-If set to 'passive', the table will be consulted, but failures will only be logged.
+if Config.verification.nip05_verification is set to 'enabled', NIP-05 identifiers will be validated
 
 When a kind=0 (metadata) event is saved, it will be considered a candidate
 for verification if it contains a nip05 tag.
 
-Every Config.verification_update_frequency, the verifications will be reprocessed.
+Every Config.verification.update_frequency, the verifications will be reprocessed.
+
+See https://code.pobblelabs.org/fossil/nostr_relay/doc/tip/docs/dynamic_lists.md for all of the configuration options
 """
 import asyncio
 import re
@@ -31,6 +31,10 @@ def get_aiohttp_session():
 
 
 class NIP05CheckerBot(CommunicatorBot):
+    """
+    A bot that listens for kind=0 events and verifies NIP-05 identifiers
+    """
+
     LISTEN_KIND = 0
     LISTEN_PUBKEY = None
     PRIVATE_KEY = Config.service_privatekey
@@ -40,7 +44,7 @@ class NIP05CheckerBot(CommunicatorBot):
         self.options = options
         self.options.setdefault("update_frequency", 3600)
         self.options.setdefault("expiration", 86400)
-        self._last_run = 0
+        self._last_run = options.get("last_run", 0)
 
     async def reverify(self):
         candidates = []
@@ -163,6 +167,8 @@ class NIP05CheckerBot(CommunicatorBot):
         return True
 
     def get_nip05_identifier(self, event):
+        if event.kind != 0:
+            return
         try:
             meta = json_loads(event.content)
         except Exception:
@@ -191,7 +197,7 @@ class NIP05CheckerBot(CommunicatorBot):
 
 
 def is_nip05_verified(event, config):
-    status = config.get("nip05_verification")
+    status = config.get("verification", {}).get("nip05_verification")
     if status not in ("enabled", "passive"):
         return True
     elif event.kind == 10002:

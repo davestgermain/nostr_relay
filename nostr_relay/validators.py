@@ -84,6 +84,14 @@ def is_not_hellthread(event, config):
             )
 
 
+def is_service_event(event, config):
+    """
+    Ensure that service events are authored by the serivce pubkey
+    """
+    if event.kind == 31494 and event.pubkey != config.service_pubkey:
+        raise StorageError(f"rejected: {event.pubkey} must be {config.service_pubkey}")
+
+
 def get_validator(function_names):
     """
     Given a list of function names, return an async validator function to run them all
