@@ -80,6 +80,8 @@ class NIP05CheckerBot(CommunicatorBot):
 
     async def _process_candidates(self, candidates):
         tasks = []
+        self.log.info("Processing %d candidates", len(candidates))
+        candidates.sort(key=lambda item: item[0].rsplit("@", 1)[1])
         async with get_aiohttp_session() as session:
             for identifier, verified_at, pubkey in candidates:
                 self.log.info(

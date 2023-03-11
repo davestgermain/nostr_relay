@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import secrets
 import falcon
 
 from time import time
@@ -18,7 +17,14 @@ import falcon.asgi
 from .rate_limiter import get_rate_limiter
 from . import __version__
 from .config import Config
-from .util import timeout, json_dumps, json_loads, event_as_json, JSONDecodeError
+from .util import (
+    ClientID,
+    timeout,
+    json_dumps,
+    json_loads,
+    event_as_json,
+    JSONDecodeError,
+)
 from .errors import AuthenticationError, StorageError
 
 
@@ -72,7 +78,7 @@ async def start_client(
     """
     Start the client loop
     """
-    client_id = f"{remote_addr}-{secrets.token_hex(2)}"
+    client_id = ClientID(remote_addr)
     auth_token = {}
     subscription_queue = asyncio.Queue()
     send_task = None
@@ -211,6 +217,8 @@ async def start_client(
                 pass
         rate_limiter.cleanup()
         duration = time() - start_time
+        del subscription_queue
+
         log.info(
             "Done %s@%s. Sent: %d Bytes. Duration: %d Seconds",
             auth_token.get("pubkey", "anon"),
@@ -296,11 +304,21 @@ class NostrAPI(BaseResource):
 
 
 class NostrStats(BaseResource):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # from pympler.tracker import SummaryTracker
+
+        # self.tracker = SummaryTracker()
+
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         try:
             resp.media = await self.storage.get_stats()
         except:
             self.log.exception("stats")
+        import gc
+
+        gc.collect()
+        # self.log.info("\n" + "\n".join(self.tracker.format_diff()))
 
 
 class ViewEventResource(BaseResource):

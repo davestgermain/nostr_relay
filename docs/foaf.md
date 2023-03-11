@@ -7,11 +7,16 @@ To configure, add `nostr_relay.foaf.is_in_foaf` to your list of validators (see 
 ```yaml
 storage:
     validators:
-        - nostr_relay.foaf.is_in_foaf
+        - nostr_relay.dynamic_lists.is_pubkey_allowed
 
 foaf:
     network_pubkeys: 
         - <your pubkey here>
+
+dynamic_lists:
+  allow_list_queries:
+    - {"kinds": [31494], "#t": ["foaf"]}
+
 ```
 
 Here are the complete configuration options:

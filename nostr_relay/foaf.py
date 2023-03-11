@@ -3,10 +3,6 @@ Validate that the pubkey is in your network
 
 To enable, add this to your configuration file:
 
-storage:
-    validators:
-        - nostr_relay.foaf.is_in_foaf
-
 foaf:
     network_pubkeys: 
         - <your pubkey here>
@@ -32,13 +28,8 @@ def is_in_foaf(event, config):
     """
     Check that the pubkey is in the configured social network
     """
-    if event.kind == 10002:
-        # per NIP-65, relays should allow anyone to post a relay list event
-        return
-    # if config.foaf:
-    #     if ALLOWED_PUBKEYS:
-    #         if bytes.fromhex(event.pubkey) not in ALLOWED_PUBKEYS:
-    #             raise StorageError(f"{event.pubkey} is not in my known network")
+    import warnings
+    warnings.warn("Deprecated. See https://code.pobblelabs.org/fossil/nostr_relay/doc/tip/docs/foaf.md")
 
 
 class FOAFBuilder(Periodic):

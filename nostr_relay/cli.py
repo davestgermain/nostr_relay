@@ -239,34 +239,6 @@ async def update_tags(ctx, query):
 
 
 @main.command()
-@click.pass_context
-@async_cmd
-async def reverify(ctx):
-    """
-    Reverify all NIP-05 metadata events
-    """
-    from .storage import get_storage
-    from .util import json_loads
-
-    async with get_storage() as storage:
-        count = 0
-        async for event in storage.run_single_query([{"kinds": [0]}]):
-            meta = json_loads(event.content)
-            if "nip05" in meta:
-                try:
-                    await storage.verifier.verify(event)
-                except Exception as e:
-                    print(e)
-                    continue
-                count += 1
-
-        click.echo("Found %d events" % count)
-        if count:
-            while storage.verifier.is_processing():
-                await asyncio.sleep(1)
-
-
-@main.command()
 @click.option(
     "--event/--no-event", "-e", help="Return as EVENT message JSON", default=True
 )
@@ -592,14 +564,14 @@ async def bench():
 
 @click.group()
 @click.pass_context
-def verify(ctx):
+def nip05(ctx):
     """
     NIP-05 Verification Commands
     """
     pass
 
 
-@verify.command()
+@nip05.command()
 @async_cmd
 async def reverify():
     """
@@ -616,7 +588,7 @@ async def reverify():
     await bot.verify_all_metadata()
 
 
-@verify.command()
+@nip05.command()
 @async_cmd
 async def bot():
     """
@@ -631,4 +603,4 @@ async def bot():
     await bot.start()
 
 
-main.add_command(verify)
+main.add_command(nip05)
