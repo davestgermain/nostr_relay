@@ -454,6 +454,10 @@ class MultiIndex:
                     txn, imatches, since=since, until=until, events=events
                 ) as scanner:
                     events = set(scanner)
+                    # if there are no events further up the chain,
+                    # any index after this will not match anything
+                    if not events:
+                        break
             yield from events
 
         yield iterator(events or FakeContainer())
