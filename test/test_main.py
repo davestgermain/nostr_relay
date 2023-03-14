@@ -620,6 +620,7 @@ class MainTests(APITests):
                 async with timeout(1.2):
                     data = await ws.receive_json()
 
+    @unittest.skip("prefix feature disabled")
     async def test_prefix_search(self):
         async with self.conductor.simulate_ws("/") as ws:
             await self.send_event(ws, EVENTS[1], True)

@@ -6,11 +6,16 @@ import secrets
 
 from . import BaseTestsWithStorage, PK1, PK2
 from nostr_relay.errors import StorageError
-from nostr_relay.storage import kv
 from nostr_relay.config import Config
 from nostr_relay.util import ClientID
 
+try:
+    from nostr_relay.storage import kv
+except ImportError:
+    kv = None
 
+
+@unittest.skipIf(kv is None, "LMDB not available")
 class BaseLMDBTests(BaseTestsWithStorage):
     envdir = "/tmp/nostrtests/"
     garbage_collector = None
@@ -32,6 +37,7 @@ class BaseLMDBTests(BaseTestsWithStorage):
         Config.analysis_delay = 0.0
         self.storage = kv.LMDBStorage(Config.storage)
         await self.storage.setup()
+        self.storage.start_garbage_collector()
 
     async def asyncTearDown(self):
         await self.storage.close()
@@ -84,6 +90,9 @@ class LMDBStorageTests(BaseLMDBTests):
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
 
+    @unittest.skipUnless(
+        hasattr(BaseTestsWithStorage, "assertNoLogs"), "assertNoLogs not available"
+    )
     async def test_good_queries(self):
         now = int(time.time())
         for i in range(10):
@@ -126,6 +135,9 @@ class LMDBStorageTests(BaseLMDBTests):
                 "INFO:nostr_relay.storage.kv:No range scans allowed ()"
             ] == cm.output
 
+    @unittest.skipUnless(
+        hasattr(BaseTestsWithStorage, "assertNoLogs"), "assertNoLogs not available"
+    )
     async def test_good_query_plan(self):
         now = int(time.time())
         for i in range(10):
@@ -134,19 +146,34 @@ class LMDBStorageTests(BaseLMDBTests):
                 kind=1,
                 content=f"test_good_query_plan {now} {i}",
                 created_at=now - i,
-                tags=[["t", "foobar"]],
+                tags=[["t", "zebra"]],
             )
             await self.storage.add_event(event)
-
-        for i in range(20):
             event = self.make_event(
                 PK1,
                 kind=1,
                 content=f"test_good_query_plan {now} {i}",
                 created_at=now - i,
+                tags=[["t", "foobar"]],
+            )
+            await self.storage.add_event(event)
+            event = self.make_event(
+                PK1,
+                kind=4,
+                content=f"test_good_query_plan {now} {i}",
+                created_at=now - i,
                 tags=[["t", "bazbar"]],
             )
             await self.storage.add_event(event)
+            event = self.make_event(
+                PK1,
+                kind=2,
+                content=f"test_good_query_plan {now} {i - 1}",
+                created_at=now - i - 1,
+                tags=[["t", "bazbar"]],
+            )
+            await self.storage.add_event(event)
+
         await self.storage.wait_for_writer()
 
         query = {
@@ -225,6 +252,7 @@ class LMDBStorageTests(BaseLMDBTests):
         await self.storage.unsubscribe(client, "test_subscriptions")
 
     async def test_prefix_queries(self):
+        self.skipTest("prefix searching disabled")
         events = [
             {
                 "id": "021bbc32a8c2ec2d20b6616615d7a5b5e30a23af9d5072a4bfb4d2be1dac0618",
@@ -494,7 +522,7 @@ class LMDBStorageTests(BaseLMDBTests):
         sub = await self.storage.subscribe(
             ClientID("test"),
             "test_subscriptions",
-            [{"ids": ["abcdef"]}],
+            [{"kinds": [1]}],
             queue,
         )
         stats = await self.storage.get_stats()
@@ -515,6 +543,7 @@ class LMDBStorageTests(BaseLMDBTests):
             "test@example.com",
             "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618a",
         )
+        await self.storage.wait_for_writer()
         idp = await self.storage.get_identified_pubkey("foo@falconframework.org")
         assert {
             "names": {
@@ -583,6 +612,9 @@ class LMDBStorageTests(BaseLMDBTests):
             ),
         ] == all_roles
 
+    @unittest.skipUnless(
+        hasattr(BaseTestsWithStorage, "assertNoLogs"), "assertNoLogs not available"
+    )
     async def test_bogus_queries(self):
         now = int(time.time())
         first = None
@@ -616,6 +648,9 @@ class LMDBStorageTests(BaseLMDBTests):
             with self.assertNoLogs("nostr_relay", level="ERROR"):
                 assert not list(await self.get_events(query))
 
+    @unittest.skipUnless(
+        hasattr(BaseTestsWithStorage, "assertNoLogs"), "assertNoLogs not available"
+    )
     async def test_skip_queries(self):
         """
         Test that empty queries are not executed
@@ -649,7 +684,6 @@ class LMDBStorageTests(BaseLMDBTests):
         result = await self.add_event(event)
         assert event["id"] == result[0].id
         assert result[1] == True
-
         results = await self.get_events(query)
         assert [] == results
 
@@ -666,7 +700,7 @@ class KVGCTests(BaseLMDBTests):
             PK1,
             kind=1,
             content=f"will expire {now} + 2",
-            tags=[["expiration", now + 2]],
+            tags=[["expiration", str(now + 2)]],
             created_at=now,
         )
 
@@ -674,14 +708,14 @@ class KVGCTests(BaseLMDBTests):
             PK1,
             kind=1,
             content=f"will expire {now} - 3",
-            tags=[["expiration", now - 3]],
+            tags=[["expiration", str(now - 3)]],
             created_at=now,
         )
         event3 = self.make_event(
             PK1,
             kind=1,
             content=f"will expire {now} + 30",
-            tags=[["expiration", now + 30]],
+            tags=[["expiration", str(now + 30)]],
             created_at=now,
         )
         with self.assertLogs("nostr_relay.storage:gc", level="INFO") as cm:

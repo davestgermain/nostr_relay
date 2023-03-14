@@ -115,7 +115,7 @@ class Index:
         # compile the matches to the expected format for the index,
         # to make substring checks quicker
         compiled_matches = []
-        for match in sorted(matches, reverse=True):
+        for match in matches:
             try:
                 compiled_matches.append(self.to_key(match))
             except ValueError:
@@ -131,23 +131,26 @@ class Index:
         prev = cursor.prev
         get_key = cursor.key
 
-        def skip(key):
-            # print(f'skipping to {key}')
-            found = cursor.set_range(key + b"\xff")
-            if found:
-                prev()
-            return found
-
         if compiled_matches:
-            next_match = iter(compiled_matches).__next__
-            match = next_match()
+            matchiter = iter(compiled_matches)
+
+            def next_match():
+                try:
+                    match = next(matchiter)
+                except StopIteration:
+                    return None, None
+                skipped = cursor.set_range(match + add_time + b"\xff")
+                if skipped:
+                    prev()
+                return match, skipped
+
             if len(compiled_matches) > 1:
                 stop = compiled_matches[-1]
             else:
                 stop = self.prefix
             if since:
                 stop += b"\x00" + since
-            skip(match + add_time)
+            match, skipped = next_match()
         else:
             match = None
             if until:
@@ -175,15 +178,14 @@ class Index:
                         or (since and ts < since)
                         or (until and ts > until)
                     ):
-                        try:
-                            match = next_match()
-                            matchlen = len(match)
-                        except StopIteration:
-                            break
+                        match, skipped = next_match()
 
-                        skipped = skip(match + add_time)
+                        if match is None:
+                            break
+                        else:
+                            matchlen = len(match)
+
                         if skipped:
-                            # print(f"found {match} {skipped} {cursor.key()}")
                             key = bytes(get_key())
                             continue
                         else:
@@ -714,6 +716,7 @@ class LMDBStorage(BaseStorage):
         if isinstance(filters, dict):
             filters = [filters]
         plans = QueryPlans()
+
         async for plan, events in executor(
             self.db, filters, self.query_pool, default_limit=600000, log=self.log
         ):

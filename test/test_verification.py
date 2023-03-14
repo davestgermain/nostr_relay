@@ -1,3 +1,4 @@
+import unittest
 import time
 import json
 import os.path
@@ -9,9 +10,12 @@ from . import BaseTestsWithStorage
 
 from nostr_relay.storage import get_storage
 from nostr_relay.config import Config
-from nostr_relay import verification
 from nostr_relay.errors import VerificationError
 
+try:
+    from nostr_relay import verification
+except ImportError:
+    verification = None
 
 PK1 = "f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753"
 PK2 = "8f50290eaa19f3cefc831270f3c2b5ddd3f26d11b0b72bc957067d6811bc618d"
@@ -28,6 +32,7 @@ class MockSessionGet:
         pass
 
 
+@unittest.skipIf(verification is None, "nostr_bot not available")
 class VerificationTests(BaseTestsWithStorage):
     async def get_events(self, query):
         async for event in self.storage.run_single_query([query]):

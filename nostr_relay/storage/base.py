@@ -76,6 +76,8 @@ class BaseStorage:
             self.check_output = object_from_path(output_validator)
         else:
             self.check_output = None
+
+    def start_garbage_collector(self):
         self.garbage_collector_task = start_garbage_collector(self)
 
     async def __aenter__(self):
@@ -106,17 +108,20 @@ class BaseStorage:
         if Config.subscription_limit and len(subs) == Config.subscription_limit:
             raise StorageError("rejected: too many subscriptions")
 
-        try:
-            filters = [NostrQuery.parse_obj(q) for q in filters]
-        except ValidationError as e:
-            self.log.error(str(e))
+        cleaned_filters = []
+        for raw_query in filters:
+            try:
+                cleaned_filters.append(NostrQuery.parse_obj(raw_query))
+            except ValidationError as e:
+                self.log.error(str(e))
+        if not cleaned_filters:
             await queue.put((sub_id, None))
             return
 
         sub = self.subscription_class(
             self,
             sub_id,
-            filters,
+            cleaned_filters,
             queue=queue,
             client_id=client_id,
             auth_token=auth_token,
@@ -393,7 +398,7 @@ class NostrQuery(BaseModel):
         hexid = hexid.lower()
         if any(i not in "abcdef0123456789" for i in hexid):
             raise ValueError(f"{hexid} not hex")
-        if len(hexid) < 2:
+        if len(hexid) < 64:
             raise ValueError(f"'{hexid}' too small")
         return hexid
 
