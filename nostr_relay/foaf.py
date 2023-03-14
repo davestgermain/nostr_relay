@@ -59,16 +59,18 @@ class FOAFBuilder(Periodic):
             Config.foaf.get("check_interval", 7200),
             swallow_exceptions=True,
             run_at_start=False,
+            timeout=10,
         )
 
     async def save(self, network):
         if not network:
             return
-        elif not self.private_key:
-            self.log.warning("Config.service_privatekey is not set")
+
+        ALLOWED_PUBKEYS.update(bytes.fromhex(pubkey) for pubkey in network)
+        if not self.private_key:
+            self.log.error("Config.service_privatekey is not set")
             return
         self.log.info("Saving network to storage")
-        ALLOWED_PUBKEYS.update(bytes.fromhex(pubkey) for pubkey in network)
         storage = get_storage()
         # first, clear out old events
         del_count = 0

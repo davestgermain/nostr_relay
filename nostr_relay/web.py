@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import multiprocessing
 import falcon
 
 from time import time
@@ -375,23 +376,34 @@ class SetupMiddleware:
         if Config.DEBUG:
             asyncio.get_running_loop().set_debug(True)
         await self.storage.setup()
-        if Config.should_run_notifier:
-            from .notifier import NotifyServer
-
-            self.notify_server = NotifyServer()
-            self.notify_server.start()
-        if Config.foaf:
-            from .foaf import FOAFBuilder
-
-            await FOAFBuilder().start()
-        if Config.dynamic_lists:
-            from .dynamic_lists import ListBuilder
-
-            await ListBuilder().start()
+        await start_mainprocess_tasks(self.storage)
 
     async def process_shutdown(self, scope, event):
         await self.storage.optimize()
         await self.storage.close()
+
+
+is_main_process = multiprocessing.Event()
+
+
+async def start_mainprocess_tasks(storage):
+    if not is_main_process.is_set():
+        is_main_process.set()
+        storage.start_garbage_collector()
+        if Config.should_run_notifier:
+            from .notifier import NotifyServer
+
+            NotifyServer().start()
+
+        if Config.foaf:
+            from .foaf import FOAFBuilder
+
+            await FOAFBuilder().start()
+
+    if Config.dynamic_lists:
+        from .dynamic_lists import ListBuilder
+
+        await ListBuilder().start()
 
 
 def create_app(conf_file=None, storage=None):
@@ -455,6 +467,7 @@ def run_with_gunicorn(conf_file=None):
             self.cfg.set("worker_class", worker_class)
             for k, v in Config.gunicorn.items():
                 self.cfg.set(k.lower(), v)
+            self.cfg.set("preload_app", True)
 
         def load(self):
             # this should fix a memory leak in websocket compression

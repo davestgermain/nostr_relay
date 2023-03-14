@@ -93,6 +93,8 @@ class ConfigClass:
             import logging.config
 
             logging.config.dictConfig(self.logging)
+        else:
+            logging.basicConfig(level=logging.INFO)
 
     def dump(self, filename):
         obj = self.__dict__

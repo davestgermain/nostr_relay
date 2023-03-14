@@ -119,9 +119,12 @@ class Periodic:
             task.cancel()
         cls._running_tasks.clear()
 
-    def __init__(self, interval, run_at_start=False, swallow_exceptions=False):
+    def __init__(
+        self, interval, run_at_start=False, swallow_exceptions=False, timeout=None
+    ):
         self.interval = interval
         self.running = False
+        self._timeout = timeout
         self._task = None
         self._run_at_start = run_at_start
         self._swallow_exceptions = swallow_exceptions
@@ -158,7 +161,14 @@ class Periodic:
         while self.running:
             await self.wait_function()
             try:
-                await self.run_once()
+                if self._timeout is not None:
+                    async with timeout(self._timeout):
+                        await self.run_once()
+                else:
+                    await self.run_once()
+            except asyncio.TimeoutError:
+                if hasattr(self, "log"):
+                    self.log.error("timed out")
             except Exception:
                 if not self._swallow_exceptions:
                     raise
