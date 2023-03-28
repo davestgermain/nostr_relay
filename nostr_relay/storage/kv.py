@@ -743,7 +743,7 @@ class LMDBStorage(BaseStorage):
 class Subscription(BaseSubscription):
     def prepare(self):
         self.query = planner(
-            self.filters, default_limit=self.default_limit, log=self.log
+            self.filters, log=self.log
         )
         return bool(self.query)
 
@@ -757,7 +757,6 @@ class Subscription(BaseSubscription):
                 self.storage.db,
                 self.query,
                 self.storage.query_pool,
-                default_limit=self.default_limit,
                 log=self.log,
                 loop=self.storage.loop,
             )
@@ -830,7 +829,7 @@ class KVGarbageCollector(BaseGarbageCollector):
 
 
 def planner(
-    filters: list[NostrQuery], default_limit=6000, log=None, maximum_plans=5
+    filters: list[NostrQuery], default_limit=None, log=None, maximum_plans=5
 ) -> QueryPlans:
     """
     Create a list of QueryPlans for the the list of REQ filters
@@ -932,7 +931,7 @@ def planner(
             query_items,
             best_index,
             matches,
-            min(query.limit, default_limit),
+            default_limit or query.limit,
             query.since,
             query.until,
             {},
@@ -1025,7 +1024,7 @@ async def executor(
     lmdb_environment: lmdb.Environment,
     plans: list,
     pool,
-    default_limit=6000,
+    default_limit=None,
     log=None,
     loop=None,
 ):
