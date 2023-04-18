@@ -402,6 +402,17 @@ async def start_mainprocess_tasks(storage):
 
         await ListBuilder().start()
 
+    def _dump_subs(*args, **kwargs):
+        logger = logging.getLogger("nostr_relay.stats")
+        for client_id, client in storage.clients.items():
+            subs = []
+            for sub_id, sub in client.items():
+                subs.append(f"{sub_id} = {sub.filters}")
+            logger.info("%s: %s", client_id, ','.join(subs))
+
+    import signal
+    signal.signal(signal.SIGUSR1, _dump_subs)
+
 
 def create_app(conf_file=None, storage=None):
     import logging
