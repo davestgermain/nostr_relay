@@ -4,7 +4,7 @@ import secrets
 from time import time
 
 from aionostr.event import Event
-from .errors import StorageError, AuthenticationError
+from .errors import AuthenticationError
 from .util import call_from_path
 
 

@@ -8,3 +8,8 @@ addopts = "--cov=nostr_relay --cov-report html -n auto"
 
 [tool.isort]
 profile = "black"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+

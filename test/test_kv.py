@@ -81,11 +81,11 @@ class LMDBStorageTests(BaseLMDBTests):
 
     async def test_add_bad_events(self):
         with self.assertRaises(StorageError):
-            result = await self.storage.add_event(["foo"])
+            await self.storage.add_event(["foo"])
 
     async def test_get_event(self):
         event = self.make_event(PK1, kind=1, content="test_get_event")
-        result = await self.add_event(event)
+        await self.add_event(event)
 
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
@@ -209,7 +209,7 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(
             PK2,
             kind=1,
-            content=f"test_good_queries tag",
+            content="test_good_queries tag",
             tags=[
                 [
                     "p",
@@ -233,7 +233,7 @@ class LMDBStorageTests(BaseLMDBTests):
         ]
         client = ClientID("test")
         queue = asyncio.Queue()
-        sub = await self.storage.subscribe(
+        await self.storage.subscribe(
             client,
             "test_subscriptions",
             query,
@@ -335,7 +335,7 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(
             PK2,
             kind=1,
-            content=f"test_good_queries tag",
+            content="test_good_queries tag",
             tags=[
                 [
                     "p",
@@ -398,7 +398,7 @@ class LMDBStorageTests(BaseLMDBTests):
 
     async def test_delete_event(self):
         event = self.make_event(PK1, kind=1, content="test_delete_event")
-        result = await self.add_event(event)
+        await self.add_event(event)
 
         retrieved = await self.storage.get_event(event["id"])
         assert event["id"] == retrieved.id
@@ -412,12 +412,12 @@ class LMDBStorageTests(BaseLMDBTests):
         again = self.make_event(
             PK1, kind=1, content="test_delete_event", created_at=int(time.time() - 10)
         )
-        result = await self.add_event(again)
+        await self.add_event(again)
 
         assert (await self.storage.get_event(again["id"])).id == again["id"]
         # send a delete event
         del_event = self.make_event(PK1, kind=5, tags=[["e", again["id"]]])
-        result = await self.add_event(del_event)
+        await self.add_event(del_event)
 
         assert (await self.storage.get_event(again["id"])) is None
 
@@ -426,12 +426,12 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(
             PK1, kind=10000, content="test_replaceable_event 1", created_at=now - 10
         )
-        result = await self.add_event(event)
+        await self.add_event(event)
 
         replaced = self.make_event(
             PK1, kind=10000, content="test_replaceable_event 2", created_at=now
         )
-        result = await self.add_event(replaced)
+        await self.add_event(replaced)
 
         old_event = await self.storage.get_event(event["id"])
         assert old_event is None
@@ -445,7 +445,7 @@ class LMDBStorageTests(BaseLMDBTests):
             tags=[["d", "test"]],
             created_at=now - 10,
         )
-        result = await self.add_event(event)
+        await self.add_event(event)
 
         replaced = self.make_event(
             PK1,
@@ -454,7 +454,7 @@ class LMDBStorageTests(BaseLMDBTests):
             tags=[["d", "test"]],
             created_at=now,
         )
-        result = await self.add_event(replaced)
+        await self.add_event(replaced)
 
         old_event = await self.storage.get_event(event["id"])
         assert old_event is None
@@ -468,7 +468,7 @@ class LMDBStorageTests(BaseLMDBTests):
             tags=[["d", "foo"]],
             created_at=now,
         )
-        result = await self.add_event(not_replaced)
+        await self.add_event(not_replaced)
 
         old_event = await self.storage.get_event(replaced["id"])
         assert old_event is not None
@@ -478,7 +478,7 @@ class LMDBStorageTests(BaseLMDBTests):
         not_replaced = self.make_event(
             PK1, kind=30001, content="test_replaceable_event 4", created_at=now
         )
-        result = await self.add_event(not_replaced)
+        await self.add_event(not_replaced)
 
         old_event = await self.storage.get_event(replaced["id"])
         assert old_event is not None
@@ -492,7 +492,7 @@ class LMDBStorageTests(BaseLMDBTests):
             tags=[["d"]],
             created_at=now,
         )
-        result = await self.add_event(equiv)
+        await self.add_event(equiv)
 
         old_event = await self.storage.get_event(not_replaced["id"])
         assert old_event is None
@@ -501,17 +501,17 @@ class LMDBStorageTests(BaseLMDBTests):
         equiv = self.make_event(
             PK1, kind=30001, content="test_replaceable_event 6", created_at=now
         )
-        result = await self.add_event(equiv)
+        await self.add_event(equiv)
 
         events = await self.get_events({"kinds": [30001]})
         assert 1 == len(events)
         assert equiv["id"] == events[0].id
 
         # older event will not replace newer one
-        older_event = self.make_event(
+        self.make_event(
             PK1, kind=30001, content="ancient", created_at=now - 10
         )
-        result = await self.add_event(equiv)
+        await self.add_event(equiv)
 
         events = await self.get_events({"kinds": [30001]})
         assert 1 == len(events)
@@ -519,7 +519,7 @@ class LMDBStorageTests(BaseLMDBTests):
 
     async def test_get_stats(self):
         queue = asyncio.Queue()
-        sub = await self.storage.subscribe(
+        await self.storage.subscribe(
             ClientID("test"),
             "test_subscriptions",
             [{"kinds": [1]}],
@@ -576,7 +576,7 @@ class LMDBStorageTests(BaseLMDBTests):
         async with self.storage:
             hello = self.make_event(PK1)
             await self.add_event(hello)
-            event = await self.storage.get_event(hello["id"])
+            await self.storage.get_event(hello["id"])
         assert self.storage.db is None
 
     async def test_authentication(self):
@@ -671,7 +671,7 @@ class LMDBStorageTests(BaseLMDBTests):
         """
         query = [{"kinds": [22222]}]
         queue = asyncio.Queue()
-        sub = await self.storage.subscribe(
+        await self.storage.subscribe(
             ClientID("ephem"),
             "test_ephemeral",
             query,
@@ -683,7 +683,7 @@ class LMDBStorageTests(BaseLMDBTests):
         event = self.make_event(PK1, kind=22222, content="hello world")
         result = await self.add_event(event)
         assert event["id"] == result[0].id
-        assert result[1] == True
+        assert result[1] is True
         results = await self.get_events(query)
         assert [] == results
 

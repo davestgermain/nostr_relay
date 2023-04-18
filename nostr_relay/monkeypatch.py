@@ -3,7 +3,8 @@ try:
 
     from uvicorn.protocols.websockets import websockets_impl
 except ImportError:
-    monkey = lambda: None
+    def monkey():
+        return None
 else:
 
     class MonkeyServerPerMessageDeflateFactory(ServerPerMessageDeflateFactory):

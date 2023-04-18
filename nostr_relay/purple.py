@@ -11,7 +11,6 @@ import collections
 import multiprocessing
 import socket
 import signal
-import time
 import threading
 
 import logging, logging.config
@@ -21,8 +20,7 @@ import websockets
 from .config import Config
 from .rate_limiter import get_rate_limiter
 from .storage import get_storage
-from .web import start_client
-from .notifier import NotifyServer
+from .web import start_client, start_mainprocess_tasks
 from .util import Periodic, easy_profiler
 
 
@@ -30,14 +28,8 @@ multiprocessing.allow_connection_pickling()
 spawn = multiprocessing.get_context("spawn")
 
 
-async def main(config, sock=None):
-    if config.logging:
-        logging.config.dictConfig(config.logging)
-    else:
-        logging.basicConfig(
-            format="%(asctime)s %(name)s %(levelname)s %(message)s",
-            level=logging.INFO,
-        )
+async def main(config, sock=None, mainprocess=True):
+    config.configure_logging()
 
     log = logging.getLogger("nostr_relay.web")
 
@@ -65,9 +57,7 @@ async def main(config, sock=None):
         log.info("Enabled profiler")
 
     async with get_storage(config.storage) as storage:
-        if config.garbage_collector and config.purple.get("workers", 1) > 1:
-            notify_server = NotifyServer()
-            notify_server.start()
+        await start_mainprocess_tasks(storage)
         await Periodic.start_pending()
 
         async def nostr_api(websocket):
@@ -112,15 +102,12 @@ async def main(config, sock=None):
                 return
 
 
-def worker_process(conf_file=None, sock=None, gc=True):
+def worker_process(conf_file=None, sock=None, mainprocess=True):
     Config.load(conf_file)
     if Config.purple.get("workers", 1) > 1:
         Config.run_notifier = True
-    # HACK: only run the gc in the first worker process
-    if not gc:
-        Config.garbage_collector = None
     try:
-        asyncio.run(main(Config, sock=sock))
+        asyncio.run(main(Config, sock=sock, mainprocess=mainprocess))
     except KeyboardInterrupt:
         return
 
@@ -152,7 +139,11 @@ def serve(config):
         proc = spawn.Process(
             name=f"Worker-{i}",
             target=worker_process,
-            kwargs={"conf_file": config.config_file, "sock": sock, "gc": i == 0},
+            kwargs={
+                "conf_file": config.config_file,
+                "sock": sock,
+                "mainprocess": i == 0,
+            },
         )
         proc.start()
         procs.append(proc)

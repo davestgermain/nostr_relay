@@ -424,7 +424,7 @@ class NostrQuery(BaseModel):
                 if k.startswith("#") and len(k) == 2 and isinstance(v, list):
                     tags.append((k[1], set(v)))
             tags.sort(reverse=True)
-        except AttributeError as e:
+        except AttributeError:
             raise StorageError("not a query")
         if tags:
             obj["tags"] = tags

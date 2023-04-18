@@ -1,7 +1,4 @@
-import unittest
 import time
-import os.path
-import asyncio
 
 from nostr_relay.config import Config
 from nostr_relay.storage import get_storage
@@ -49,7 +46,7 @@ class AuthTests(BaseTestsWithStorage):
         }
         auth = self.storage.authenticator
 
-        from aionostr.event import Event, PrivateKey
+        from aionostr.event import Event
 
         privkey1 = "f6d7c79924aa815d0d408bc28c1a23af208209476c1b7691df96f7d7b72a2753"
         pubkey1 = "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"

@@ -95,7 +95,6 @@ class RateLimiter(BaseRateLimiter):
         self.log.debug("Checking limits for %s %s", command, client_address)
         if not self.rules:
             return False
-        matches = []
         for key in (client_address, "global", "ip"):
             rules = self.rules.get(key, {})
             if rules:

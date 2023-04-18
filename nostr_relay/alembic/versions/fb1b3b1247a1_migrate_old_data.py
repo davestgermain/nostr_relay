@@ -7,7 +7,6 @@ Create Date: 2023-01-13 15:36:06.861535
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.exc import OperationalError, ProgrammingError
 from aionostr.event import Event
 
 try:
@@ -30,6 +29,7 @@ def upgrade() -> None:
     if "event" not in metadata_obj.tables:
         print("Old data does not exist")
         return
+    result = connection.execute(sa.text('select id, event from event'))
 
     insert = sa.insert(
         sa.table(
@@ -71,7 +71,7 @@ def upgrade() -> None:
             elif len(tag[0]) == 1:
                 tags.add((tag[0], tag[1]))
         if tags:
-            result = connection.execute(
+            connection.execute(
                 tag_insert,
                 [
                     {"id": event.id_bytes, "name": tag[0], "value": tag[1]}

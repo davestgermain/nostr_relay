@@ -8,14 +8,13 @@ import asyncio
 import collections
 import threading
 import functools
-import traceback
 import typing
 import re
 import os.path
 import queue
 
 from contextlib import contextmanager
-from time import perf_counter, time, sleep
+from time import perf_counter, time
 
 from aionostr.event import Event, EventKind
 from msgpack import packb, unpackb
@@ -28,7 +27,6 @@ from .base import (
     NostrQuery,
     ValidationError,
 )
-from ..auth import get_authenticator
 from ..config import Config
 from ..errors import StorageError
 
@@ -517,7 +515,7 @@ class WriterThread(threading.Thread):
                     # since we can do about 1,000 writes per second (end-to-end),
                     # this would indicate very heavy load
                     log.warning("Write queue size: %d", qs)
-            except Exception as e:
+            except Exception:
                 log.exception("writer")
             finally:
                 self.processing = False
@@ -540,7 +538,7 @@ class WriterThread(threading.Thread):
             or event.is_paramaterized_replaceable
         ):
             saved_id = event.id_bytes
-            until = event.created_at - 1
+            event.created_at - 1
             if event.is_paramaterized_replaceable:
                 try:
                     d_tag = [tag[1] for tag in event.tags if tag[0] == "d"][0]
@@ -653,7 +651,7 @@ class LMDBStorage(BaseStorage):
         """
         try:
             event = Event(**event_json)
-        except Exception as e:
+        except Exception:
             self.log.error("bad json")
             raise StorageError("invalid: Bad JSON")
 
@@ -782,7 +780,7 @@ class Subscription(BaseSubscription):
             except asyncio.exceptions.CancelledError:
                 # cancellations are normal
                 self.log.debug("Cancelled run_query")
-            except:
+            except Exception:
                 self.log.exception("run_query")
             finally:
                 await queue_put((sub_id, None))
@@ -1080,7 +1078,7 @@ def execute_one_plan(
                     count += 1
         plan.stats["count"] = count
         plan.stats["end"] = perf_counter()
-    except:
+    except Exception:
         log.exception("execute_one_plan")
 
     finally:
@@ -1099,7 +1097,7 @@ def analysis_thread(work_queue: queue.Queue, slow_query_threshold=500, delay=0.5
         log.debug("Analyzing %s", plans)
         try:
             _analyze(plans, log, slow_query_threshold=slow_query_threshold)
-        except:
+        except Exception:
             log.exception("analyze")
         del plans
         log.debug("Done")

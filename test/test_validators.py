@@ -1,10 +1,8 @@
-import unittest
 import time
 from . import BaseTestsWithStorage, PK1, PK2
 from nostr_relay import validators
 from nostr_relay.errors import StorageError
 from nostr_relay.config import ConfigClass
-from aionostr.event import Event
 
 
 class ValidatorTests(BaseTestsWithStorage):
@@ -30,7 +28,7 @@ class ValidatorTests(BaseTestsWithStorage):
             validators.is_not_too_large(bad_event, self.config)
         assert (
             e.exception.args[0]
-            == f"invalid: 280 characters should be enough for anybody"
+            == "invalid: 280 characters should be enough for anybody"
         )
 
         good_event = self.make_event(PK1, content="x" * 255, as_dict=False)
@@ -58,7 +56,7 @@ class ValidatorTests(BaseTestsWithStorage):
         bad_event = self.make_event(PK1, kind=1, as_dict=False)
         with self.assertRaises(StorageError) as e:
             validators.is_certain_kind(bad_event, self.config)
-        assert e.exception.args[0] == f"invalid: kind=1 not allowed"
+        assert e.exception.args[0] == "invalid: kind=1 not allowed"
 
         good_event = self.make_event(PK1, kind=1000, as_dict=False)
         validators.is_certain_kind(good_event, self.config)
@@ -68,7 +66,7 @@ class ValidatorTests(BaseTestsWithStorage):
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
         ]
         bad_event = self.make_event(PK2, as_dict=False)
-        with self.assertRaises(StorageError) as e:
+        with self.assertRaises(StorageError):
             validators.is_author_whitelisted(bad_event, self.config)
 
         good_event = self.make_event(PK1, as_dict=False)
@@ -79,7 +77,7 @@ class ValidatorTests(BaseTestsWithStorage):
             "5faaae4973c6ed517e7ed6c3921b9842ddbc2fc5a5bc08793d2e736996f6394d"
         ]
         bad_event = self.make_event(PK1, as_dict=False)
-        with self.assertRaises(StorageError) as e:
+        with self.assertRaises(StorageError):
             validators.is_author_blacklisted(bad_event, self.config)
 
         good_event = self.make_event(PK2, as_dict=False)
@@ -91,7 +89,7 @@ class ValidatorTests(BaseTestsWithStorage):
 
         with self.assertRaises(StorageError) as e:
             validators.is_pow(bad_event, self.config)
-        assert e.exception.args[0] == f"rejected: 20 PoW required. Found: 0"
+        assert e.exception.args[0] == "rejected: 20 PoW required. Found: 0"
 
         bad_event = self.make_event(
             PK1,
@@ -104,7 +102,7 @@ class ValidatorTests(BaseTestsWithStorage):
 
         with self.assertRaises(StorageError) as e:
             validators.is_pow(bad_event, self.config)
-        assert e.exception.args[0] == f"rejected: 20 PoW required. Found: 19"
+        assert e.exception.args[0] == "rejected: 20 PoW required. Found: 19"
 
         good_event = self.make_event(
             PK1,
@@ -123,7 +121,7 @@ class ValidatorTests(BaseTestsWithStorage):
 
         with self.assertRaises(StorageError) as e:
             validators.is_not_hellthread(bad_event, self.config)
-        assert e.exception.args[0] == f"rejected: too many 'p' tags: 11. limit: 10"
+        assert e.exception.args[0] == "rejected: too many 'p' tags: 11. limit: 10"
 
         good_event = self.make_event(PK1, kind=1, tags=tags[:10], as_dict=False)
         validators.is_not_hellthread(good_event, self.config)

@@ -1,16 +1,12 @@
 import unittest
-import time
 import json
-import os.path
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from . import BaseTestsWithStorage
 
-from nostr_relay.storage import get_storage
 from nostr_relay.config import Config
-from nostr_relay.errors import VerificationError
 
 try:
     from nostr_relay import verification
@@ -215,7 +211,7 @@ class VerificationTests(BaseTestsWithStorage):
             self.make_profile(PK2, identifier="foo@localhost").to_json_object()
         )
         assert await verifier.handle_event(profile_event)
-        task = asyncio.create_task(verifier.start())
+        asyncio.create_task(verifier.start())
         await asyncio.sleep(1)
 
         await verifier.handle_event(

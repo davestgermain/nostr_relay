@@ -6,7 +6,7 @@ import logging
 import json
 import secrets
 
-from contextlib import contextmanager, asynccontextmanager, suppress
+from contextlib import contextmanager, suppress
 from time import perf_counter
 
 if hasattr(asyncio, "timeout"):
@@ -215,7 +215,9 @@ class StatsCollector(Periodic):
 
 @contextmanager
 def easy_profiler():
-    import cProfile, pstats, io
+    import cProfile
+    import pstats
+    import io
     from pstats import SortKey
 
     pr = cProfile.Profile()

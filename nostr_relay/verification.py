@@ -207,12 +207,6 @@ def is_nip05_verified(event, config):
         if "nip05" not in event.content:
             if status == "enabled":
                 raise VerificationError("rejected: metadata must have nip05 tag")
-            else:
-                self.log.warning(
-                    "Attempt to save metadata event %s from %s without nip05 tag",
-                    event.id,
-                    event.pubkey,
-                )
         else:
             if ALLOWED_PUBKEYS:
                 ALLOWED_PUBKEYS.add(bytes.fromhex(event.pubkey))

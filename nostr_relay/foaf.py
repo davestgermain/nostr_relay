@@ -18,9 +18,8 @@ import time
 from itertools import islice
 from aionostr import Manager
 from aionostr.event import Event
-from nostr_relay.errors import StorageError
 from nostr_relay.dynamic_lists import ALLOWED_PUBKEYS
-from nostr_relay.util import Periodic, json, JSONDecodeError
+from nostr_relay.util import Periodic
 from nostr_relay.config import Config
 from nostr_relay.storage import get_storage
 

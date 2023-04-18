@@ -205,7 +205,7 @@ async def start_client(
                 log.exception("client loop")
                 await ws_close(code=1013)
                 break
-    except:
+    except Exception:
         log.exception("client_loop")
     finally:
         await storage.unsubscribe(client_id)
@@ -307,14 +307,11 @@ class NostrAPI(BaseResource):
 class NostrStats(BaseResource):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # from pympler.tracker import SummaryTracker
-
-        # self.tracker = SummaryTracker()
 
     async def on_get(self, req: falcon.Request, resp: falcon.Response):
         try:
             resp.media = await self.storage.get_stats()
-        except:
+        except Exception:
             self.log.exception("stats")
         import gc
 
@@ -407,9 +404,8 @@ async def start_mainprocess_tasks(storage):
 
 
 def create_app(conf_file=None, storage=None):
-    import os
-    import os.path
-    import logging, logging.config
+    import logging
+    import logging.config
 
     Config.load(conf_file)
     if Config.DEBUG:
@@ -458,7 +454,6 @@ def run_with_gunicorn(conf_file=None):
             import sys
 
             if sys.implementation.name == "pypy":
-                from uvicorn.workers import UvicornH11Worker
 
                 # UvicornH11Worker.CONFIG_KWARGS["ws"] = "wsproto"
                 worker_class = "uvicorn.workers.UvicornH11Worker"

@@ -1,5 +1,3 @@
-import os
-import os.path
 import asyncio
 import logging
 from datetime import datetime
@@ -10,12 +8,10 @@ from sqlalchemy.engine.base import Engine
 
 from aionostr.event import Event, EventKind
 from ..config import Config
-from ..auth import get_authenticator, Action
+from ..auth import Action
 from ..errors import StorageError, AuthenticationError
 from ..util import (
     object_from_path,
-    catchtime,
-    Periodic,
     json_dumps,
     json_loads,
 )
@@ -187,7 +183,7 @@ class DBStorage(BaseStorage):
         """
         try:
             event = Event(**event_json)
-        except Exception as e:
+        except Exception:
             self.log.error("bad json")
             raise StorageError("invalid: Bad JSON")
 
@@ -300,7 +296,7 @@ class DBStorage(BaseStorage):
                 elif len(tag[0]) == 1:
                     tags.add((tag[0], tag[1] if len(tag) > 1 else ""))
             if tags:
-                result = await conn.execute(
+                await conn.execute(
                     self.tag_insert_query,
                     [
                         {"id": event.id_bytes, "name": tag[0], "value": tag[1]}
@@ -318,7 +314,7 @@ class DBStorage(BaseStorage):
                             (self.EventTable.c.pubkey == bytes.fromhex(event.pubkey))
                             & (self.EventTable.c.id == bytes.fromhex(event_id))
                         )
-                        result = await conn.execute(query)
+                        await conn.execute(query)
                         self.log.info("Deleted event %s", event_id)
 
     async def post_save(self, event, connection=None, changed=None):
@@ -426,7 +422,6 @@ class DBStorage(BaseStorage):
             self.IdentTable.c.identifier,
             self.IdentTable.c.relays,
         )
-        pars = []
         if domain:
             query = query.where(self.IdentTable.c.identifier.like(f"%@{domain}"))
         if identifier:
@@ -454,7 +449,7 @@ class DBStorage(BaseStorage):
             elif not (validate_id(pubkey) and len(pubkey) == 64):
                 raise StorageError("invalid public key")
             else:
-                pars = [identifier, pubkey, json_dumps(relays or [])]
+                [identifier, pubkey, json_dumps(relays or [])]
                 await conn.execute(
                     sa.delete(self.IdentTable).where(
                         self.IdentTable.c.identifier == identifier

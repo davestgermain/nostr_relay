@@ -173,7 +173,6 @@ async def query(ctx, query, results):
 
     logging.basicConfig(level=logging.DEBUG)
     from .storage import get_storage
-    from .storage.db import Subscription
 
     if not query:
         click.echo("query is required")
@@ -524,7 +523,6 @@ main.add_command(fts)
 async def bench():
     from nostr_relay.storage import get_storage
     from nostr_relay.storage import kv
-    from nostr_relay.util import easy_profiler
 
     import time
 

@@ -79,7 +79,7 @@ def get_metadata():
         )
         sa.Index("tagidx", TagTable.c.name, TagTable.c.value)
 
-        IdentTable = sa.Table(
+        sa.Table(
             "identity",
             _METADATA,
             sa.Column("identifier", sa.Text(), primary_key=True),
@@ -87,7 +87,7 @@ def get_metadata():
             sa.Column("relays", sa.JSON()),
         )
 
-        AuthTable = sa.Table(
+        sa.Table(
             "auth",
             _METADATA,
             sa.Column("pubkey", sa.Text(), primary_key=True),

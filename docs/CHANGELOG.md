@@ -1,8 +1,10 @@
 # CHANGES
 
-## 1.12.2
+## 1.13
 
+* [Dynamic Lists](dynamic_lists.md) allow for flexible allow/deny lists
 * Improved efficiency by keeping all client variables local
+* Fixed real and potential memory leaks
 
 ## 1.12.1
 

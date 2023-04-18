@@ -1,20 +1,12 @@
 import asyncio
-import os.path
-import os
 import unittest
-import logging
 import time
-import threading
 
-import sqlalchemy as sa
 from falcon import testing, errors
 
 from nostr_relay.config import Config
 from nostr_relay.web import create_app
-from nostr_relay.storage import get_storage
-from nostr_relay.auth import Authenticator
 from nostr_relay.util import timeout, ClientID
-from aionostr.event import Event, PrivateKey
 from nostr_relay.errors import StorageError
 
 
@@ -124,7 +116,7 @@ class DBTests(BaseTestsWithStorage):
             await self.storage.add_event(evt)
         assert (
             e.exception.args[0]
-            == f"invalid: 280 characters should be enough for anybody"
+            == "invalid: 280 characters should be enough for anybody"
         )
 
     async def test_add_event(self):
@@ -156,7 +148,7 @@ class DBTests(BaseTestsWithStorage):
         assert evt is None
 
         # an event from a different pubkey won't replace event 2
-        evt3 = self.make_event(PK2, kind=11111, content="event 3")
+        self.make_event(PK2, kind=11111, content="event 3")
         event, changed = await self.storage.add_event(evt2)
         assert event.id == evt2["id"]
         evt = await self.storage.get_event(evt2["id"])
@@ -248,7 +240,6 @@ class DBTests(BaseTestsWithStorage):
     async def test_delegation_event(self):
         event, changed = await self.storage.add_event(DELEGATION_EVENT)
         assert changed
-        import json
 
         async for event in self.storage.run_single_query(
             [
@@ -266,7 +257,7 @@ class DBTests(BaseTestsWithStorage):
             await self.storage.add_event(evt)
 
         queue = asyncio.Queue()
-        sub = await self.storage.subscribe(
+        await self.storage.subscribe(
             ClientID("test"), "test", [{"kinds": [1], "limit": 100}], queue
         )
         stats = await self.storage.get_stats()
@@ -482,19 +473,19 @@ class MainTests(APITests):
             large_event["content"] = "x" * 8192
             await self.send_event(ws, large_event)
             data = await ws.receive_json()
-            assert data[2] == False
+            assert data[2] is False
             assert data[3] == "invalid: 280 characters should be enough for anybody"
             # send an event with wrong signature
             bad_sig = EVENTS[1].copy()
             bad_sig["content"] = "bad"
             await self.send_event(ws, bad_sig)
             data = await ws.receive_json()
-            assert data[2] == False
+            assert data[2] is False
             assert data[3] == "invalid: Bad signature"
             # send a non-json event
             await self.send_event(ws, "bad event")
             data = await ws.receive_json()
-            assert data[2] == False
+            assert data[2] is False
             assert data[3] == "invalid: Bad JSON"
 
     async def test_send_event(self):
@@ -719,7 +710,7 @@ class MainTests(APITests):
             await self.send_event(ws, EVENTS[1], True)
             await asyncio.sleep(1.6)
             with self.assertRaises(errors.WebSocketDisconnected):
-                data = await ws.send_json(["REQ", "test", {"kinds": 0}])
+                await ws.send_json(["REQ", "test", {"kinds": 0}])
 
         Config.message_timeout = None
 
@@ -866,7 +857,7 @@ class AuthTests(APITests):
             challenge = await self.get_challenge(ws)
 
             response = await self.send_event(ws, EVENTS[1], True)
-            assert response[2] == False
+            assert response[2] is False
             assert response[3] == "restricted: permission denied"
 
             await ws.send_json(
@@ -879,7 +870,7 @@ class AuthTests(APITests):
             )
 
             response = await self.send_event(ws, EVENTS[1], True)
-            assert response[2] == True
+            assert response[2] is True
             assert response[3] == ""
 
             # role is write only, so read will fail
@@ -892,7 +883,7 @@ class AuthTests(APITests):
             challenge = await self.get_challenge(ws)
 
             response = await self.send_event(ws, EVENTS[2], True)
-            assert response[2] == False
+            assert response[2] is False
             assert response[3] == "restricted: permission denied"
 
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
@@ -909,7 +900,7 @@ class AuthTests(APITests):
                 ]
             )
             response = await self.send_event(ws, EVENTS[2], True)
-            assert response[2] == False
+            assert response[2] is False
             assert response[3] == "restricted: permission denied"
 
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
@@ -932,7 +923,7 @@ class AuthTests(APITests):
 
             # authenticated, but can't do anything
             response = await self.send_event(ws, EVENTS[2], True)
-            assert response[2] == False
+            assert response[2] is False
             assert response[3] == "restricted: permission denied"
 
             await ws.send_json(["REQ", "read", {"ids": [EVENTS[1]["id"]]}])
@@ -949,7 +940,7 @@ class AuthTests(APITests):
             # unauthenticated throttled 1 second
             with self.assertRaises(asyncio.TimeoutError):
                 async with timeout(0.5):
-                    response = await self.send_event(ws, EVENTS[2], True)
+                    await self.send_event(ws, EVENTS[2], True)
             await ws.receive_json()
 
             # throttled user set to 10 seconds
@@ -963,7 +954,7 @@ class AuthTests(APITests):
             )
             with self.assertRaises(asyncio.TimeoutError):
                 async with timeout(2.0):
-                    response = await self.send_event(ws, EVENTS[2], True)
+                    await self.send_event(ws, EVENTS[2], True)
             await ws.receive_json()
 
             # ordinary user is not throttled
@@ -976,7 +967,7 @@ class AuthTests(APITests):
                 ]
             )
             async with timeout(0.5):
-                response = await self.send_event(ws, EVENTS[2], True)
+                await self.send_event(ws, EVENTS[2], True)
 
 
 if __name__ == "__main__":
