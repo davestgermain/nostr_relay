@@ -408,7 +408,7 @@ async def start_mainprocess_tasks(storage):
             subs = []
             for sub_id, sub in client.items():
                 subs.append(f"{sub_id} = {sub.filters}")
-            logger.info("%s: %s", client_id, ','.join(subs))
+            logger.info("%s: %s", client_id, '\n'.join(subs))
 
     import signal
     signal.signal(signal.SIGUSR1, _dump_subs)

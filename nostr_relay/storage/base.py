@@ -113,7 +113,7 @@ class BaseStorage:
             try:
                 cleaned_filters.append(NostrQuery.parse_obj(raw_query))
             except ValidationError as e:
-                self.log.error(str(e))
+                self.log.debug(str(e))
         if not cleaned_filters:
             await queue.put((sub_id, None))
             return
