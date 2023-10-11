@@ -61,6 +61,9 @@ class AuthTests(BaseTestsWithStorage):
         wrong_kind.sign(privkey1)
 
         with self.assertRaises(AuthenticationError) as e:
+            await auth.authenticate("some junk", challenge)
+
+        with self.assertRaises(AuthenticationError) as e:
             await auth.authenticate(wrong_kind.to_json_object(), challenge)
 
         assert e.exception.args[0] == "invalid: Wrong kind. Must be 22242."

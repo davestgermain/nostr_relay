@@ -104,6 +104,8 @@ class Authenticator:
 
         This will always return a token which can be used with can_do(auth_token, action)
         """
+        if not isinstance(auth_event_json, dict):
+            raise AuthenticationError("Invalid")
         auth_event = Event(**auth_event_json)
         self.check_auth_event(auth_event, challenge)
 

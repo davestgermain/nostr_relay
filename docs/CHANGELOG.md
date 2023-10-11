@@ -5,6 +5,8 @@
 * [Dynamic Lists](dynamic_lists.md) allow for flexible allow/deny lists
 * Improved efficiency by keeping all client variables local
 * Fixed real and potential memory leaks
+* Updated Pydantic
+* Fixed authentication bug
 
 ## 1.12.1
 
