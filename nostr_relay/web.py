@@ -408,9 +408,10 @@ async def start_mainprocess_tasks(storage):
             subs = []
             for sub_id, sub in client.items():
                 subs.append(f"{sub_id} = {sub.filters}")
-            logger.info("%s: %s", client_id, '\n'.join(subs))
+            logger.info("%s: %s", client_id, "\n".join(subs))
 
     import signal
+
     signal.signal(signal.SIGUSR1, _dump_subs)
 
 
@@ -465,7 +466,6 @@ def run_with_gunicorn(conf_file=None):
             import sys
 
             if sys.implementation.name == "pypy":
-
                 # UvicornH11Worker.CONFIG_KWARGS["ws"] = "wsproto"
                 worker_class = "uvicorn.workers.UvicornH11Worker"
             else:

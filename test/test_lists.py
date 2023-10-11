@@ -1,4 +1,3 @@
-
 from . import BaseTestsWithStorage
 
 from nostr_relay.config import Config

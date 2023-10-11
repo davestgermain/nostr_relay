@@ -740,9 +740,7 @@ class LMDBStorage(BaseStorage):
 
 class Subscription(BaseSubscription):
     def prepare(self):
-        self.query = planner(
-            self.filters, log=self.log
-        )
+        self.query = planner(self.filters, log=self.log)
         return bool(self.query)
 
     async def run_query(self):
@@ -843,7 +841,7 @@ def planner(
                     log.info("No empty queries allowed")
                 continue
             try:
-                query = NostrQuery.parse_obj(query)
+                query = NostrQuery.model_validate(query)
             except ValidationError as e:
                 if log:
                     log.info("invalid query %s", e)

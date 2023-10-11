@@ -6,7 +6,9 @@ import typing
 import weakref
 
 from aionostr.event import Event
-from pydantic import BaseModel, Field, validator, ValidationError
+from pydantic import field_validator, BaseModel, Field, validator, ValidationError
+from pydantic.functional_validators import AfterValidator
+from typing_extensions import Annotated
 
 from ..config import Config
 from ..errors import StorageError, AuthenticationError
@@ -111,7 +113,7 @@ class BaseStorage:
         cleaned_filters = []
         for raw_query in filters:
             try:
-                cleaned_filters.append(NostrQuery.parse_obj(raw_query))
+                cleaned_filters.append(NostrQuery.model_validate(raw_query))
             except ValidationError as e:
                 self.log.debug(str(e))
         if not cleaned_filters:
@@ -375,34 +377,34 @@ class BaseSubscription:
         return False
 
 
-class NostrQuery(BaseModel):
-    """
-    Represents a valid nostr REQ query
-    """
-
-    ids: typing.Optional[list[str]] = Field(
-        anystr_lower=True, min_anystr_length=2, max_anystr_length=64
-    )
-    authors: typing.Optional[list[str]] = Field(
-        anystr_lower=True, min_anystr_length=2, max_anystr_length=64
-    )
-    kinds: typing.Optional[list[int]]
-    since: typing.Optional[int] = Field(ge=0, lt=2145934800)
-    until: typing.Optional[int] = Field(ge=0, lt=2145934800)
-    limit: typing.Optional[int] = Field(ge=0, default=Config.max_limit)
-    search: typing.Optional[str]
-    tags: typing.Optional[list[tuple[str, set]]]
-
-    @validator("ids", "authors", each_item=True)
-    def ids_are_hex(cls, hexid, field, **kwargs):
+def ids_are_hex(hexids) -> list[str]:
+    new_ids = []
+    for hexid in hexids:
         hexid = hexid.lower()
         if any(i not in "abcdef0123456789" for i in hexid):
             raise ValueError(f"{hexid} not hex")
         if len(hexid) < 64:
             raise ValueError(f"'{hexid}' too small")
-        return hexid
+        new_ids.append(hexid)
+    return new_ids
 
-    @validator("tags")
+
+class NostrQuery(BaseModel):
+    """
+    Represents a valid nostr REQ query
+    """
+
+    ids: Annotated[list[str], AfterValidator(ids_are_hex)] = None
+    authors: Annotated[list[str], AfterValidator(ids_are_hex)] = None
+    kinds: typing.Optional[list[int]] = None
+    since: typing.Optional[int] = Field(None, ge=0, lt=2145934800)
+    until: typing.Optional[int] = Field(None, ge=0, lt=2145934800)
+    limit: typing.Optional[int] = Field(ge=0, default=Config.max_limit)
+    search: typing.Optional[str] = None
+    tags: typing.Optional[list[tuple[str, set]]] = None
+
+    @field_validator("tags")
+    @classmethod
     def check_tags(cls, values):
         for tag, tagvalue in values:
             for val in tagvalue:
@@ -410,12 +412,13 @@ class NostrQuery(BaseModel):
                     raise ValueError(f"{val} is not a string")
         return values
 
-    @validator("ids", "authors", "kinds")
+    @field_validator("ids", "authors", "kinds")
+    @classmethod
     def sort_fields(cls, values):
         return sorted(set(values), reverse=True)
 
     @classmethod
-    def parse_obj(cls, obj):
+    def model_validate(cls, obj):
         if isinstance(obj, cls):
             return obj
         tags = []
@@ -430,7 +433,7 @@ class NostrQuery(BaseModel):
             obj["tags"] = tags
         else:
             obj.pop("tags", None)
-        return super().parse_obj(obj)
+        return super().model_validate(obj)
 
 
 class BaseGarbageCollector(Periodic):

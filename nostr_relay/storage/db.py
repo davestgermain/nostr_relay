@@ -339,7 +339,7 @@ class DBStorage(BaseStorage):
         """
         Run a single query, yielding json events
         """
-        nostr_queries = [NostrQuery.parse_obj(q) for q in query_filters]
+        nostr_queries = [NostrQuery.model_validate(q) for q in query_filters]
         queue = asyncio.Queue()
         sub = self.subscription_class(
             self, "", nostr_queries, queue=queue, default_limit=600000

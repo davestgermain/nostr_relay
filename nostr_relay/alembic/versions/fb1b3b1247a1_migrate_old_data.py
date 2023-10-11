@@ -29,7 +29,7 @@ def upgrade() -> None:
     if "event" not in metadata_obj.tables:
         print("Old data does not exist")
         return
-    result = connection.execute(sa.text('select id, event from event'))
+    result = connection.execute(sa.text("select id, event from event"))
 
     insert = sa.insert(
         sa.table(

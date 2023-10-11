@@ -508,9 +508,7 @@ class LMDBStorageTests(BaseLMDBTests):
         assert equiv["id"] == events[0].id
 
         # older event will not replace newer one
-        self.make_event(
-            PK1, kind=30001, content="ancient", created_at=now - 10
-        )
+        self.make_event(PK1, kind=30001, content="ancient", created_at=now - 10)
         await self.add_event(equiv)
 
         events = await self.get_events({"kinds": [30001]})
