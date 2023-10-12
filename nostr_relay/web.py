@@ -450,6 +450,7 @@ def create_app(conf_file=None, storage=None):
     app.add_route("/e/{event_id}", ViewEventResource(store))
     app.add_route("/.well-known/nostr.json", NostrIDP(store))
     app.ws_options.media_handlers[falcon.WebSocketPayloadType.TEXT] = json_handler
+    app.ws_options.media_handlers[falcon.WebSocketPayloadType.BINARY] = json_handler
 
     return app
 

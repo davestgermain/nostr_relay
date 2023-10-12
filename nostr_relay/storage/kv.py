@@ -12,6 +12,7 @@ import typing
 import re
 import os.path
 import queue
+import gc
 
 from contextlib import contextmanager
 from time import perf_counter, time
@@ -1088,10 +1089,17 @@ def analysis_thread(work_queue: queue.Queue, slow_query_threshold=500, delay=0.5
 
     log = logging.getLogger("nostr_relay.queries")
     # log.debug("Running")
+    i = 0
     while True:
+        i += 1
         plans = work_queue.get()
 
         sleep(delay)
+        if i == 4:
+            log.debug("gc.collect()")
+            gc.collect()
+            i = 0
+
         log.debug("Analyzing %s", plans)
         try:
             _analyze(plans, log, slow_query_threshold=slow_query_threshold)

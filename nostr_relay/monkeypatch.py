@@ -14,7 +14,7 @@ else:
 
         def __init__(
             self,
-            server_no_context_takeover: bool = False,
+            server_no_context_takeover: bool = True,
             client_no_context_takeover: bool = False,
             server_max_window_bits=None,
             client_max_window_bits=None,
